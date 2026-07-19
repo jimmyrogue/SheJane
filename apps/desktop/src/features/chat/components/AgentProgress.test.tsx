@@ -98,14 +98,13 @@ describe('AgentProgress', () => {
       />,
     )
 
-    // Finished: the headline is a terminal-state label; the aggregate work
-    // tally moves into the compact drawer so success and failure share the
-    // same card structure.
+    // Finished: the headline carries the terminal state and aggregate tally;
+    // the activity history stays collapsed behind the same compact card.
     expect(screen.getByText('执行成功')).toBeInTheDocument()
-    expect(screen.queryByText('读取 1 个文件')).not.toBeInTheDocument()
+    expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
     expect(screen.queryByText('任务完成')).not.toBeInTheDocument()
     expect(document.querySelector('.agent-progress-notice-card')).toBeInTheDocument()
-    expect(document.querySelector('.agent-progress-tool-card')).toBeInTheDocument()
+    expect(document.querySelectorAll('.agent-progress-stage')).toHaveLength(1)
     // None of the removed UI should be present anywhere — even collapsed.
     expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
     expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
@@ -113,8 +112,7 @@ describe('AgentProgress', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
 
-    // Source/artifact tallies, per-step internals, and the old diagnostics
-    // action are all absent from the aggregate drawer.
+    // Source/artifact tallies and the old diagnostics action remain absent.
     expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
     expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
     expect(screen.queryByText('生成 1 个 Artifact')).not.toBeInTheDocument()
@@ -243,7 +241,9 @@ describe('AgentProgress', () => {
       />,
     )
 
-    expect(screen.getByText('发现文件名冲突：snake.html')).toBeInTheDocument()
+    expect(screen.queryByText('发现文件名冲突：snake.html')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    expect(screen.getAllByText('发现文件名冲突：snake.html')).toHaveLength(2)
     expect(container.querySelector('[data-state="conflict"]')).toBeInTheDocument()
     expect(screen.queryByText('任务失败')).not.toBeInTheDocument()
   })
@@ -266,9 +266,37 @@ describe('AgentProgress', () => {
       />,
     )
 
-    expect(container.querySelectorAll('.agent-progress-tool-card')).toHaveLength(1)
+    expect(container.querySelectorAll('.agent-progress-stage')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    expect(container.querySelectorAll('.agent-progress-history-group')).toHaveLength(1)
     expect(consoleError).not.toHaveBeenCalled()
     consoleError.mockRestore()
+  })
+
+  it('collapses repeated completed Tool activity into one expandable summary', () => {
+    const { container } = renderAgentProgress(
+      <AgentProgress
+        message={message({
+          status: 'done',
+          agentEvents: [
+            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'snake.html' },
+            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'snake.html' },
+            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-2', target: 'snake.html' },
+            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-2', target: 'snake.html' },
+            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-3', target: 'snake.html' },
+            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-3', target: 'snake.html' },
+            { type: 'run.completed', label: '任务完成' },
+          ],
+        })}
+      />,
+    )
+
+    expect(container.querySelectorAll('.agent-progress-stage')).toHaveLength(1)
+    expect(screen.getByText('写入 3 个文件')).toBeInTheDocument()
+    expect(screen.queryByText('已完成写入文件 × 3')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    expect(screen.getByText('已完成写入文件 × 3')).toBeInTheDocument()
   })
 
   it('keeps an active tool failure in the working progress state', () => {
@@ -300,13 +328,15 @@ describe('AgentProgress', () => {
       />,
     )
 
-    expect(screen.getByText('已完成搜索网页')).toBeInTheDocument()
+    expect(screen.queryByText('已完成搜索网页')).not.toBeInTheDocument()
     // verb and target render in separate spans now
     expect(screen.getByText('读取文件')).toBeInTheDocument()
     expect(screen.getByText('README.md')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开步骤' }))
+    expect(screen.getByText('已完成搜索网页')).toBeInTheDocument()
   })
 
-  it('shows completed work inside the compact success drawer once the run is done', () => {
+  it('shows the completed-work tally on the compact success summary', () => {
     renderAgentProgress(
       <AgentProgress
         message={message({
@@ -323,17 +353,14 @@ describe('AgentProgress', () => {
     )
 
     expect(screen.getByText('执行成功')).toBeInTheDocument()
-    expect(screen.queryByText('搜索 1 次')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     expect(screen.getByText('搜索 1 次')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    expect(screen.getByText('已完成搜索网页')).toBeInTheDocument()
   })
 
   it('marks the failed state with the failed tone class', () => {
-    // The old version of this test asserted that expanding the row
-    // revealed individual step labels. The step list is gone — there's
-    // no per-step view anymore — so this test now just verifies the
-    // failed-tone class lands on the wrapper for CSS styling. The
-    // headline itself still summarises the failure.
+    // The failed-tone class stays on the single summary wrapper. Its activity
+    // history is present only after the user expands the summary.
     const current = message({
       status: 'error',
       agentEvents: [
@@ -351,8 +378,6 @@ describe('AgentProgress', () => {
     )
 
     expect(container.querySelector('.agent-progress-failed')).toBeInTheDocument()
-    // The expanded drawer (when opened) carries only the diagnostics
-    // button — no step labels regardless of state.
     expect(screen.queryByText('调用工具：打开受控网页')).not.toBeInTheDocument()
   })
 
@@ -548,7 +573,7 @@ describe('AgentProgress', () => {
     expect(onFailureAction).toHaveBeenCalledWith('retry', current)
   })
 
-  it('keeps each run phase as an independently expandable card and separates user actions', () => {
+  it('keeps run phases in one expandable activity history and separates user actions', () => {
     const onFailureAction = vi.fn()
     const current = message({
       status: 'error',
@@ -590,22 +615,21 @@ describe('AgentProgress', () => {
       />,
     )
 
-    expect(screen.getByText('准备重试尝试 1')).toBeInTheDocument()
-    expect(screen.getByText('已完成读取文件')).toBeInTheDocument()
     expect(screen.getByText('需要选择保存位置')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '展开步骤：准备重试尝试 1' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '展开步骤：已完成读取文件' })).toBeInTheDocument()
+    expect(screen.queryByText('准备重试尝试 1')).not.toBeInTheDocument()
+    expect(screen.queryByText('已完成读取文件')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '展开详情' })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '展开步骤：准备重试尝试 1' }))
-    expect(screen.getByText('请求操作：重试尝试 1')).toBeInTheDocument()
-
+    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
+    expect(screen.getByText('准备重试尝试 1')).toBeInTheDocument()
+    expect(screen.getByText('已完成读取文件')).toBeInTheDocument()
     const actionButton = screen.getByRole('button', { name: '选择保存位置' })
     expect(actionButton.closest('.agent-progress-user-action')).toBeInTheDocument()
     expect(actionButton.closest('.tool-card')).toBeNull()
     fireEvent.click(actionButton)
     expect(onFailureAction).toHaveBeenCalledWith('workspace', current)
-    expect(container.querySelectorAll('.agent-progress-stage')).toHaveLength(3)
+    expect(container.querySelectorAll('.agent-progress-stage')).toHaveLength(1)
+    expect(container.querySelectorAll('.agent-progress-history-group')).toHaveLength(2)
   })
 
   it('offers retry for permission failures so the user can grant again', () => {

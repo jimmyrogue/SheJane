@@ -9648,10 +9648,75 @@ button.settings-row-button:focus-visible,
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 42%, transparent);
 }
 
+.agent-progress-expanded-body {
+  max-height: min(260px, 46vh);
+  overflow-y: auto;
+  border-top: 0.5px solid var(--sj-line, #E8E5DE);
+  scrollbar-width: thin;
+  scrollbar-color: var(--sj-line-strong, #D9D5CC) transparent;
+}
+
+.agent-progress-history {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 0;
+}
+
+.agent-progress-history-group {
+  min-width: 0;
+}
+
+.agent-progress-history-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  color: var(--sj-ink-soft, #6F6B63);
+  cursor: pointer;
+  font-size: 11.5px;
+  list-style: none;
+}
+
+.agent-progress-history-summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-progress-history-summary:hover {
+  background: var(--sj-paper-wash, #EFEDE7);
+}
+
+.agent-progress-history-summary:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 42%, transparent);
+}
+
+.agent-progress-history-summary .name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-progress-history-summary .tool-card-caret {
+  margin-left: auto;
+}
+
+.agent-progress-history-group[open] .tool-card-caret {
+  transform: rotate(90deg);
+}
+
+.agent-progress-history-group[data-state="failed"] .agent-progress-status-dot {
+  background: var(--accent-danger-text, #B3532F);
+}
+
+.agent-progress-history-group[data-state="conflict"] .agent-progress-status-dot {
+  background: var(--sj-ink-faint, #A49E94);
+}
+
 .agent-progress-stage-body {
   gap: 3px;
-  border-top: 0.5px solid var(--sj-line, #E8E5DE);
-  padding: 7px 10px 8px 28px;
+  padding: 2px 10px 7px 28px;
 }
 
 .agent-progress-stage-event {
@@ -9724,12 +9789,7 @@ button.settings-row-button:focus-visible,
 }
 
 .agent-progress-notice-body {
-  border-top: 0.5px solid var(--sj-line, #E8E5DE);
   padding: 7px 10px 8px;
-  max-height: min(220px, 42vh);
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--sj-line-strong, #D9D5CC) transparent;
 }
 
 .agent-progress-notice-card[data-state="done"] .agent-progress-notice-body {

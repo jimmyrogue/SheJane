@@ -38,6 +38,7 @@ interface AgentProgressStage {
   label: string
   detail?: AgentToolDetail
   events: AgentTimelineItem[]
+  count: number
 }
 
 export function AgentProgress({
@@ -59,7 +60,7 @@ export function AgentProgress({
   const [expanded, setExpanded] = useState(false)
   const progress = deriveAgentProgress(message, t)
   // Permission prompts are surfaced once in the approval bar above the
-  // composer. Other work is retained as independently expandable phases.
+  // composer. Other work stays available in one expandable activity history.
   if (!progress || progress.tone === 'permission') {
     return null
   }
@@ -74,7 +75,7 @@ export function AgentProgress({
   const bodyId = `agent-progress-body-${message.id}`
   // While the run is active: the current action + its concrete target
   // ("正在打开 weather.com"). Once finished: the card headline carries the
-  // terminal state, and the expanded body carries the aggregate work tally.
+  // terminal state and aggregate work tally; details hold the activity history.
   const successSummary = progress.tone === 'done'
     ? summaryHeadline(events, message, t).label
     : undefined
@@ -104,11 +105,13 @@ export function AgentProgress({
   const isNoticeCard = isHandoffWarning || progress.tone === 'failed' || progress.tone === 'done'
   const hasNoticeBody = isNoticeCard && Boolean(
     detail?.text ||
-    successSummary ||
     progress.failureMessage ||
     progress.detail,
   )
-  const headerCanToggle = hasNoticeBody
+  const headerCanToggle = hasNoticeBody || stageHistory.length > 0
+  const headerDetail = progress.tone === 'done' && successSummary
+    ? { kind: 'text' as const, text: successSummary }
+    : detail
   const NoticeTitleIcon = isNoticeCard && progress.tone !== 'done'
     ? progress.tone === 'failed' ? IconAlertCircle : IconInfoCircle
     : undefined
@@ -131,14 +134,14 @@ export function AgentProgress({
         <NoticeTitleIcon className="agent-progress-notice-title-icon" size={14} aria-hidden="true" />
       ) : null}
       <span className="name" key={headline.label}>{headline.label}</span>
-      {detail ? (
+      {headerDetail ? (
         <>
-          {!isNoticeCard ? <span className="agent-progress-sep" aria-hidden="true">·</span> : null}
-          {detail.showWebIcon ? (
+          {!isNoticeCard || progress.tone === 'done' ? <span className="agent-progress-sep" aria-hidden="true">·</span> : null}
+          {headerDetail.showWebIcon ? (
             <IconWorld className="agent-progress-target-icon" size={12} aria-hidden="true" />
           ) : null}
-          <span className="agent-progress-target" title={detail.tooltip ?? detail.text}>
-            {detail.text}
+          <span className="agent-progress-target" title={headerDetail.tooltip ?? headerDetail.text}>
+            {headerDetail.text}
           </span>
         </>
       ) : null}
@@ -154,10 +157,6 @@ export function AgentProgress({
 
   return (
     <div className="agent-progress-stages mt-4">
-      {stageHistory.map((stage) => (
-        <AgentProgressStageCard key={stage.id} stage={stage} messageID={message.id} />
-      ))}
-
       <div
         className={cn(
           'tool-card agent-progress agent-progress-stage',
@@ -191,13 +190,16 @@ export function AgentProgress({
         </div>
       )}
 
-      {isNoticeCard && expanded ? (
-        <AgentProgressNoticeBody
-          bodyId={bodyId}
-          progress={progress}
-          targetDetail={detail}
-          successSummary={successSummary}
-        />
+      {expanded ? (
+        <div id={bodyId} className="agent-progress-expanded-body">
+          {isNoticeCard ? (
+            <AgentProgressNoticeBody
+              progress={progress}
+              targetDetail={detail}
+            />
+          ) : null}
+          {stageHistory.length > 0 ? <AgentProgressHistory stages={stageHistory} /> : null}
+        </div>
       ) : null}
 
       {/* Per-subagent list, shown whenever ≥2 `task` dispatches are
@@ -258,36 +260,27 @@ export function AgentProgress({
   )
 }
 
-function AgentProgressStageCard({
-  stage,
-  messageID,
-}: {
-  stage: AgentProgressStage
-  messageID: string
-}) {
-  const { t } = useI18n()
-  const [expanded, setExpanded] = useState(false)
-  const bodyId = `agent-progress-stage-${messageID}-${stage.id}`
+function AgentProgressHistory({ stages }: { stages: AgentProgressStage[] }) {
+  return (
+    <div className="agent-progress-history">
+      {stages.map((stage) => (
+        <AgentProgressStageRow key={stage.id} stage={stage} />
+      ))}
+    </div>
+  )
+}
+
+function AgentProgressStageRow({ stage }: { stage: AgentProgressStage }) {
+  const label = stage.count > 1 ? `${stage.label} × ${stage.count}` : stage.label
 
   return (
-    <div
-      className={cn(
-        'tool-card agent-progress agent-progress-stage agent-progress-tool-card',
-        `agent-progress-${stage.tone}`,
-      )}
+    <details
+      className="agent-progress-history-group"
       data-state={stage.tone}
-      data-expanded={expanded}
     >
-      <button
-        type="button"
-        className="tool-card-header agent-progress-summary"
-        aria-expanded={expanded}
-        aria-controls={bodyId}
-        aria-label={`${expanded ? t('agent.collapseSteps') : t('agent.expandSteps')}：${stage.label}`}
-        onClick={() => setExpanded((value) => !value)}
-      >
+      <summary className="agent-progress-history-summary">
         <span className="agent-progress-status-dot" aria-hidden="true" />
-        <span className="name">{stage.label}</span>
+        <span className="name">{label}</span>
         {stage.detail ? (
           <>
             <span className="agent-progress-sep" aria-hidden="true">·</span>
@@ -299,43 +292,32 @@ function AgentProgressStageCard({
             </span>
           </>
         ) : null}
-        {expanded ? (
-          <IconChevronDown className="tool-card-caret" aria-hidden="true" />
-        ) : (
-          <IconChevronRight className="tool-card-caret" aria-hidden="true" />
-        )}
-      </button>
-
-      {expanded ? (
-        <div className="tool-card-results agent-progress-stage-body" id={bodyId}>
-          {stage.events.map((event, index) => (
-            <div className="agent-progress-stage-event" key={event.eventId ?? `${stage.id}-${index}`}>
-              {event.label}
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
+        <IconChevronRight className="tool-card-caret" aria-hidden="true" />
+      </summary>
+      <div className="tool-card-results agent-progress-stage-body">
+        {stage.events.map((event, index) => (
+          <div className="agent-progress-stage-event" key={event.eventId ?? `${stage.id}-${index}`}>
+            {event.label}
+          </div>
+        ))}
+      </div>
+    </details>
   )
 }
 
 function AgentProgressNoticeBody({
-  bodyId,
   progress,
   targetDetail,
-  successSummary,
 }: {
-  bodyId: string
   progress: AgentProgressState
   targetDetail?: AgentToolDetail
-  successSummary?: string
 }) {
-  if (!targetDetail?.text && !successSummary && !progress.failureMessage && !progress.detail) {
+  if (!targetDetail?.text && !progress.failureMessage && !progress.detail) {
     return null
   }
 
   return (
-    <div className="agent-progress-notice-body" id={bodyId}>
+    <div className="agent-progress-notice-body">
       {targetDetail?.text ? (
         <div className="agent-progress-notice-target-full" title={targetDetail.tooltip ?? targetDetail.text}>
           {targetDetail.text}
@@ -345,12 +327,6 @@ function AgentProgressNoticeBody({
       {progress.failureMessage ? (
         <div className="agent-progress-notice-raw">
           {progress.failureMessage}
-        </div>
-      ) : null}
-
-      {successSummary ? (
-        <div className="agent-progress-notice-line">
-          <span>{successSummary}</span>
         </div>
       ) : null}
 
@@ -494,10 +470,10 @@ function historicalProgressStages(
   }
 
   const visibleGroups = ACTIVE_RUN_STATUSES.has(message.status) ? groups.slice(0, -1) : groups
-  return visibleGroups.map((group) => {
+  const stages = visibleGroups.map((group) => {
     const latest = group.events[group.events.length - 1]
     const detailSource = [...group.events].reverse().find((event) => event.toolDetail || event.target)
-    const tone = latest.errorCode === 'file_exists'
+    const tone: AgentProgressStage['tone'] = latest.errorCode === 'file_exists'
       ? 'conflict'
       : latest.type === 'tool.failed' || latest.verificationStatus === 'failed' || latest.repairWorkflowStatus === 'failed'
         ? 'failed'
@@ -508,8 +484,29 @@ function historicalProgressStages(
       label: activeLabel(latest, t),
       detail: detailSource?.toolDetail ?? (detailSource?.target ? { kind: 'text', text: detailSource.target } : undefined),
       events: group.events.filter((event) => Boolean(event.label)),
+      count: 1,
     }
   })
+
+  // Consecutive successful calls with the same visible action and target are
+  // one user-facing activity. Their original events remain available in the
+  // nested disclosure for audit and debugging.
+  return stages.reduce<AgentProgressStage[]>((summary, stage) => {
+    const previous = summary.at(-1)
+    if (
+      stage.tone === 'done' &&
+      previous?.tone === 'done' &&
+      previous.label === stage.label &&
+      previous.detail?.kind === stage.detail?.kind &&
+      previous.detail?.text === stage.detail?.text
+    ) {
+      previous.count += stage.count
+      previous.events.push(...stage.events)
+      return summary
+    }
+    summary.push(stage)
+    return summary
+  }, [])
 }
 
 /** Strip whichever of the known "前缀X" markers prefix the event label so
@@ -661,9 +658,9 @@ function operationLabel(event: AgentTimelineItem, t: Translator): string {
 }
 
 const COUNT_BUCKETS: Array<{ key: Parameters<Translator>[0]; tools: Set<string> }> = [
-  { key: 'agent.count.filesRead', tools: new Set(['fs.read', 'file.read']) },
-  { key: 'agent.count.filesWritten', tools: new Set(['fs.write', 'file.write']) },
-  { key: 'agent.count.commands', tools: new Set(['shell.run']) },
+  { key: 'agent.count.filesRead', tools: new Set(['fs.read', 'file.read', 'read_file']) },
+  { key: 'agent.count.filesWritten', tools: new Set(['fs.write', 'file.write', 'write_file', 'edit_file']) },
+  { key: 'agent.count.commands', tools: new Set(['shell.run', 'execute']) },
   { key: 'agent.count.pages', tools: new Set(['browser.open', 'web.fetch']) },
   { key: 'agent.count.searches', tools: new Set(['web.search', 'browser.search']) },
 ]
