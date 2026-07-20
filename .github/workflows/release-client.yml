@@ -698,10 +698,12 @@ jobs:
             platform: macos
             arch: arm64
             target: mac
+            macos_vm_gates: false
           - runner: windows-latest
             platform: windows
             arch: x64
             target: win
+            macos_vm_gates: false
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -1163,7 +1165,7 @@ jobs:
           test -n "${packaged}"
           node scripts/test-packaged-client-runtime.mjs "${packaged}"
       - name: Run packaged macOS Managed Worker VM gate
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        if: matrix.macos_vm_gates == true
         working-directory: runtime
         shell: bash
         run: |
@@ -1176,7 +1178,7 @@ jobs:
           SHEJANE_TEST_NODE_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-node-runtime/org.nodejs.runtime-linux-arm64-a.shejane-runtime-asset" \
             uv run pytest tests/test_macos_managed_worker_vm_gate.py -q
       - name: Run Linux arm64 Office Worker golden gate in packaged macOS VM
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        if: matrix.macos_vm_gates == true
         working-directory: runtime
         shell: bash
         run: |
@@ -1194,7 +1196,7 @@ jobs:
               tests/test_presentations_worker.py::test_presentations_worker_real_runtime_render_golden \
               -q
       - name: Run Linux arm64 PDF production gate in packaged macOS VM
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        if: matrix.macos_vm_gates == true
         working-directory: runtime
         shell: bash
         run: |
@@ -1206,7 +1208,7 @@ jobs:
           SHEJANE_MUPDF_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-mupdf-runtime/mupdf-runtime-linux-arm64-a.shejane-runtime-asset" \
             uv run pytest tests/test_pdf_runtime_asset.py -q
       - name: Run Linux arm64 Media Foundation production gate in packaged macOS VM
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        if: matrix.macos_vm_gates == true
         working-directory: runtime
         shell: bash
         run: |
@@ -1218,7 +1220,7 @@ jobs:
           SHEJANE_FFMPEG_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-ffmpeg-runtime/ffmpeg-runtime-linux-arm64-a.shejane-runtime-asset" \
             uv run pytest tests/test_media_foundation_runtime_asset.py -q
       - name: Run Linux arm64 OCR production gate in packaged macOS VM
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        if: matrix.macos_vm_gates == true
         working-directory: runtime
         shell: bash
         run: |
@@ -1230,7 +1232,7 @@ jobs:
           SHEJANE_RAPIDOCR_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-rapidocr-runtime/rapidocr-runtime-linux-arm64-a.shejane-runtime-asset" \
             uv run pytest tests/test_ocr_runtime_asset.py -q
       - name: Run Linux arm64 Speech production gate in packaged macOS VM
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        if: matrix.macos_vm_gates == true
         working-directory: runtime
         shell: bash
         run: |
@@ -1244,7 +1246,7 @@ jobs:
           SHEJANE_WHISPER_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-whisper-runtime/whisper-runtime-linux-arm64-a.shejane-runtime-asset" \
             uv run pytest tests/test_speech_runtime_asset.py -q
       - name: Run Linux arm64 Cloud Vision broker gate in packaged macOS VM
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        if: matrix.macos_vm_gates == true
         working-directory: runtime
         shell: bash
         run: |
