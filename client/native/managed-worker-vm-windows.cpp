@@ -322,7 +322,21 @@ int probe(const std::filesystem::path& denied_path, const std::wstring& pipe_nam
   return 0;
 }
 
-Handle connect_pipe(const std::wstring& pipe_name, DWORD timeout_milliseconds) {
+std::wstring app_container_pipe_name(PSID sid, const std::wstring& name) {
+  ULONG required = 0;
+  GetAppContainerNamedObjectPath(nullptr, sid, 0, nullptr, &required);
+  if (required == 0) throw_last_error("GetAppContainerNamedObjectPath size");
+  std::vector<wchar_t> buffer(required);
+  if (!GetAppContainerNamedObjectPath(nullptr, sid, required, buffer.data(), &required)) {
+    throw_last_error("GetAppContainerNamedObjectPath");
+  }
+  std::wstring path(buffer.data());
+  if (path.empty() || path.front() != L'\\') path.insert(path.begin(), L'\\');
+  return L"\\\\.\\pipe" + path + L"\\" + name;
+}
+
+Handle connect_pipe(
+    const std::wstring& pipe_name, HANDLE child, DWORD timeout_milliseconds) {
   const ULONGLONG deadline = GetTickCount64() + timeout_milliseconds;
   while (GetTickCount64() < deadline) {
     HANDLE pipe = CreateFileW(
@@ -333,6 +347,13 @@ Handle connect_pipe(const std::wstring& pipe_name, DWORD timeout_milliseconds) {
     if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY && error != ERROR_ACCESS_DENIED) {
       throw Win32Error("connect LPAC named pipe", error);
     }
+    const DWORD child_state = WaitForSingleObject(child, 0);
+    if (child_state == WAIT_OBJECT_0) {
+      DWORD exit_code = ERROR_INVALID_DATA;
+      if (!GetExitCodeProcess(child, &exit_code)) throw_last_error("GetExitCodeProcess");
+      throw Win32Error("LPAC probe exited before named pipe", exit_code);
+    }
+    if (child_state == WAIT_FAILED) throw_last_error("WaitForSingleObject LPAC probe");
     if (error == ERROR_PIPE_BUSY) WaitNamedPipeW(pipe_name.c_str(), 100);
     Sleep(10);
   }
@@ -365,9 +386,11 @@ void self_test() {
         SUB_CONTAINERS_AND_OBJECTS_INHERIT);
     grant_path(profile.sid(), probe_path, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, NO_INHERITANCE);
     Handle job = create_job();
-    const std::wstring pipe_name =
-        L"\\\\.\\pipe\\LOCAL\\SheJane.ManagedWorker." +
-        std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(GetTickCount64());
+    const std::wstring pipe_stem =
+        L"SheJane.ManagedWorker." + std::to_wstring(GetCurrentProcessId()) + L"." +
+        std::to_wstring(GetTickCount64());
+    const std::wstring child_pipe_name = L"\\\\.\\pipe\\LOCAL\\" + pipe_stem;
+    const std::wstring host_pipe_name = app_container_pipe_name(profile.sid(), pipe_stem);
 
     SIZE_T attribute_bytes = 0;
     InitializeProcThreadAttributeList(nullptr, 2, 0, &attribute_bytes);
@@ -398,7 +421,7 @@ void self_test() {
     PROCESS_INFORMATION process{};
     std::wstring command =
         quote(probe_path) + L" --probe " + quote(denied_file) + L" " +
-        quote(std::filesystem::path(pipe_name));
+        quote(std::filesystem::path(child_pipe_name));
     std::vector<wchar_t> mutable_command(command.begin(), command.end());
     mutable_command.push_back(L'\0');
     BOOL created = CreateProcessW(
@@ -418,7 +441,7 @@ void self_test() {
       TerminateJobObject(job.get(), ERROR_INVALID_STATE);
       throw_last_error("ResumeThread");
     }
-    Handle pipe = connect_pipe(pipe_name, 10'000);
+    Handle pipe = connect_pipe(host_pipe_name, process_handle.get(), 10'000);
     constexpr char challenge[] = "host";
     constexpr char response[] = "guest";
     char received[sizeof(response)]{};

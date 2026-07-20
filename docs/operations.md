@@ -105,7 +105,7 @@ Runtime 接受单个 `.shejane-plugin` ZIP，通过 `plugin.install` Command 安
 
 macOS arm64 VM 资产集由 `client/vm-assets/build_darwin.py` 构建。生成器只接受 lock 中精确大小与 SHA-256 的 Fedora 44 已签名 kernel RPM/SRPM、Fedora keyring、e2fsprogs 1.47.2 源码/签名和固定 kernel.org OpenPGP key；它验证 RPM 身份与签名、源码签名、Xcode/Clang/SDK/Go 工具链，确定性生成 Linux Image、guestd initramfs、host-native `mke2fs`、带 `com.apple.security.virtualization` entitlement 的 launcher、许可证、SPDX SBOM 和 canonical manifest。两次完整构建已经逐字节一致。
 
-Electron Builder 用 `build/vm-assets-${arch}` 只把匹配架构的完整资产集放入 `Contents/Resources/sandbox/vm-assets`。资产集中的 Mach-O 在生成 manifest 前完成签名，打包时跳过整套只读资产，最终由最外层 App 签名封存；最终 `.app` 内的资产与构建输出逐字节一致。Intel 包没有 manifest，Runtime 也只在 `darwin/arm64` 传入资产参数。发布 workflow 已配置 Developer ID、Hardened Runtime、secure timestamp、App Store Connect API key 公证、staple、Gatekeeper 与 nested-code 验证；任何 secret 缺失都会停止 macOS 发布。只有这条 workflow 在原生 runner 上真实通过后，才能移除最后的 `release_ci_gate`。
+Electron Builder 用 `build/vm-assets-arm64` 把完整资产集放入 `Contents/Resources/sandbox/vm-assets`。资产集中的 Mach-O 在生成 manifest 前完成签名，打包时跳过整套只读资产，最终由最外层 App 签名封存；最终 `.app` 内的资产与构建输出逐字节一致。发布 workflow 已配置 Developer ID、Hardened Runtime、secure timestamp、App Store Connect API key 公证、staple、Gatekeeper 与 nested-code 验证；任何 secret 缺失都会停止 macOS 发布。只有这条 workflow 在原生 runner 上真实通过后，才能移除最后的 `release_ci_gate`。
 
 Client 在 Darwin 上把包内 `sandbox/vm-assets/manifest.json` 作为显式 CLI 参数交给 Runtime；不存在系统路径或 `$PATH` fallback。P6 只有在冻结 lease 含 Managed Worker 时加载一次该资产集，并按 [`managed-worker-vm-assets-v1.schema.json`](../runtime/plugins/schemas/managed-worker-vm-assets-v1.schema.json) 对 host/guest 架构、协议、canonical asset-set ID、HTTPS 来源、普通文件、无 symlink、size、SHA-256 和 executable bit 做 fail-closed 预检。打包门禁还会调用包内 Runtime 的 `--validate-managed-worker-vm-assets`，在启动 Client 前执行同一生产 preflight，防止 schema 过期或资产被替换的包通过 lifecycle smoke。预检通过只代表资产身份成立，不会绕过平台 release Gate。
 
@@ -162,11 +162,10 @@ client-vX.Y.Z
 runtime-sdk-vX.Y.Z
 ```
 
-Client CI 在三个原生 runner 上分别构建 Runtime 和安装包：
+Client CI 在两个原生 runner 上分别构建 Runtime 和安装包：
 
 ```text
 client-macos-arm64
-client-macos-x64
 client-windows-x64
 ```
 

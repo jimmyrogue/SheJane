@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "id": "dev.shejane.fixture.archive",
+  "version": "0.1.0",
+  "name": "Archive fixture",
+  "description": "Reference WASI plugin that extracts an archive into staged artifacts.",
+  "license": "AGPL-3.0-only",
+  "publisher": {
+    "id": "dev.shejane",
+    "name": "SheJane"
+  },
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "wasi",
+      "entrypoint": "payload/archive.wasm",
+      "platforms": [
+        "any"
+      ]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {
+        "id": "archive.extract",
+        "title": "Extract archive",
+        "description": "Extract an authorized ZIP input into the staged output directory.",
+        "input_schema": "actions/archive.extract.input.json",
+        "output_schema": "actions/archive.extract.output.json",
+        "consumes": [
+          "application/zip"
+        ],
+        "produces": [
+          "application/octet-stream"
+        ],
+        "effects": [
+          "read",
+          "artifact"
+        ],
+        "determinism": "input_stable",
+        "capabilities": [
+          "input.read",
+          "artifact.write"
+        ],
+        "limits": {
+          "timeout_ms": 10000,
+          "memory_mb": 128,
+          "output_mb": 8
+        }
+      }
+    ]
+  }
+}

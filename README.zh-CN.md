@@ -97,11 +97,10 @@ make package-runtime
 
 ## Client 安装包
 
-Client 发布工作流会从同一次提交构建 Runtime，并将它放进安装包。GitHub Actions 生成三个产物：
+Client 发布工作流会从同一次提交构建 Runtime，并将它放进安装包。GitHub Actions 生成两个产物：
 
 ```text
 client-macos-arm64
-client-macos-x64
 client-windows-x64
 ```
 

@@ -97,11 +97,10 @@ The bundle is written to `runtime/dist/shejane-runtime/`. On Windows, the execut
 
 ## Client packages
 
-The Client release workflow builds Runtime from the same commit and includes it in each installer. GitHub Actions produces three artifacts:
+The Client release workflow builds Runtime from the same commit and includes it in each installer. GitHub Actions produces two artifacts:
 
 ```text
 client-macos-arm64
-client-macos-x64
 client-windows-x64
 ```
 

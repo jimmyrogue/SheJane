@@ -688,10 +688,6 @@ jobs:
             platform: macos
             arch: arm64
             target: mac
-          - runner: macos-15-intel
-            platform: macos
-            arch: x64
-            target: mac
           - runner: windows-latest
             platform: windows
             arch: x64
@@ -1031,7 +1027,7 @@ jobs:
           set -euo pipefail
           brew install gnupg rpm zstd
           inputs="${RUNNER_TEMP}/shejane-managed-worker-vm-inputs"
-          uv run python ../../client/vm-assets/build_darwin.py \
+          uv run python ../client/vm-assets/build_darwin.py \
             --kernel-core "${inputs}/kernel-core.rpm" \
             --kernel-modules-core "${inputs}/kernel-modules-core.rpm" \
             --kernel-srpm "${inputs}/kernel.src.rpm" \
@@ -1041,7 +1037,7 @@ jobs:
             --e2fs-signing-key "${inputs}/e2fsprogs-signing-key.asc" \
             --guest-rootfs "${inputs}/guest-rootfs.ext4" \
             --codesign-identity "${SHEJANE_CODESIGN_IDENTITY}" \
-            --output ../../client/build/vm-assets-arm64
+            --output ../client/build/vm-assets-arm64
       - name: Package Client
         working-directory: client
         shell: bash
@@ -1113,7 +1109,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          app="$(find ../client/release -type d -name '*.app' -print -quit)"
           assets="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)"
           manifest="${assets}/manifest.json"
           SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
@@ -1126,7 +1122,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          app="$(find ../client/release -type d -name '*.app' -print -quit)"
           manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
           SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
           SHEJANE_TEST_DOCUMENTS_WORKER="${RUNNER_TEMP}/shejane-documents-worker/documents-worker/documents-worker" \
@@ -1144,7 +1140,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          app="$(find ../client/release -type d -name '*.app' -print -quit)"
           manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
           SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
           SHEJANE_TEST_PDF_WORKER="${RUNNER_TEMP}/shejane-pdf-worker/pdf-worker/pdf-worker" \
@@ -1156,7 +1152,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          app="$(find ../client/release -type d -name '*.app' -print -quit)"
           manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
           SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
           SHEJANE_TEST_MEDIA_WORKER="${RUNNER_TEMP}/shejane-media-worker/media-foundation-worker/media-foundation-worker" \
@@ -1168,7 +1164,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          app="$(find ../client/release -type d -name '*.app' -print -quit)"
           manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
           SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
           SHEJANE_TEST_OCR_WORKER="${RUNNER_TEMP}/shejane-ocr-worker/ocr-worker/ocr-worker" \
@@ -1180,7 +1176,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          app="$(find ../client/release -type d -name '*.app' -print -quit)"
           manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
           SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
           SHEJANE_TEST_SPEECH_WORKER="${RUNNER_TEMP}/shejane-speech-worker/speech-worker/speech-worker" \
@@ -1194,7 +1190,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          app="$(find ../client/release -type d -name '*.app' -print -quit)"
           manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
           SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
           SHEJANE_TEST_VISION_WORKER="${RUNNER_TEMP}/shejane-vision-worker/vision-worker/vision-worker" \
