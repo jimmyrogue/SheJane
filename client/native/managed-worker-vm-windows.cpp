@@ -217,14 +217,15 @@ void verify_job(HANDLE job) {
   }
 }
 
-bool network_is_denied() {
+int network_denial_error() {
   WSADATA data{};
-  if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return false;
+  const int startup_error = WSAStartup(MAKEWORD(2, 2), &data);
+  if (startup_error != 0) return startup_error;
   SOCKET socket_handle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (socket_handle == INVALID_SOCKET) {
     const int error = WSAGetLastError();
     WSACleanup();
-    return error == WSAEACCES;
+    return error == WSAEACCES ? 0 : error;
   }
   sockaddr_in address{};
   address.sin_family = AF_INET;
@@ -235,7 +236,8 @@ bool network_is_denied() {
   const int error = connected == SOCKET_ERROR ? WSAGetLastError() : 0;
   closesocket(socket_handle);
   WSACleanup();
-  return connected == SOCKET_ERROR && error == WSAEACCES;
+  if (connected != SOCKET_ERROR) return WSAEISCONN;
+  return error == WSAEACCES ? 0 : error;
 }
 
 bool read_exact(HANDLE handle, void* buffer, DWORD size) {
@@ -305,7 +307,8 @@ int probe(const std::filesystem::path& denied_path, const std::wstring& pipe_nam
       FILE_ATTRIBUTE_NORMAL, nullptr));
   if (denied.get() != INVALID_HANDLE_VALUE) return 12;
   if (GetLastError() != ERROR_ACCESS_DENIED && GetLastError() != ERROR_FILE_NOT_FOUND) return 13;
-  if (!network_is_denied()) return 14;
+  const int network_error = network_denial_error();
+  if (network_error != 0) return 4'000 + network_error;
 
   const std::filesystem::path executable = executable_path();
   std::wstring command = quote(executable) + L" --grandchild";
