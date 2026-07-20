@@ -694,7 +694,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
+          - runner: macos-26
             platform: macos
             arch: arm64
             target: mac
@@ -705,6 +705,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - name: Select locked macOS toolchain
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        shell: bash
+        run: sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
       - uses: pnpm/action-setup@v4
         with:
           version: 11.7.0
