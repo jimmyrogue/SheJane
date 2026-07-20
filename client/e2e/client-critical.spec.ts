@@ -63,6 +63,8 @@ async function launchClient(existingRoot?: string, runtimeURL?: string): Promise
       USER: process.env.USER ?? 'shejane-e2e',
       TMPDIR: path.join(root, 'tmp'),
       LANG: process.env.LANG ?? 'en_US.UTF-8',
+      ...(process.env.DISPLAY ? { DISPLAY: process.env.DISPLAY } : {}),
+      ...(process.env.XAUTHORITY ? { XAUTHORITY: process.env.XAUTHORITY } : {}),
       ELECTRON_DEV: 'true',
       ELECTRON_DEV_URL: requiredEnv('SHEJANE_E2E_CLIENT_URL'),
       SHEJANE_RUNTIME_URL: runtimeURL ?? requiredEnv('SHEJANE_E2E_RUNTIME_URL'),
