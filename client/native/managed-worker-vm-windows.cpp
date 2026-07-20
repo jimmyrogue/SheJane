@@ -368,13 +368,16 @@ std::vector<std::wstring> app_container_pipe_names(PSID sid, const std::wstring&
 Handle connect_pipe(
     const std::vector<std::wstring>& pipe_names, HANDLE child, DWORD timeout_milliseconds) {
   const ULONGLONG deadline = GetTickCount64() + timeout_milliseconds;
+  std::vector<DWORD> last_errors(pipe_names.size(), ERROR_SUCCESS);
   while (GetTickCount64() < deadline) {
-    for (const std::wstring& pipe_name : pipe_names) {
+    for (size_t index = 0; index < pipe_names.size(); ++index) {
+      const std::wstring& pipe_name = pipe_names[index];
       HANDLE pipe = CreateFileW(
           pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
           FILE_ATTRIBUTE_NORMAL, nullptr);
       if (pipe != INVALID_HANDLE_VALUE) return Handle(pipe);
       const DWORD error = GetLastError();
+      last_errors[index] = error;
       if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY &&
           error != ERROR_ACCESS_DENIED) {
         throw Win32Error("connect LPAC named pipe", error);
@@ -389,6 +392,10 @@ Handle connect_pipe(
     }
     if (child_state == WAIT_FAILED) throw_last_error("WaitForSingleObject LPAC probe");
     Sleep(10);
+  }
+  for (size_t index = 0; index < pipe_names.size(); ++index) {
+    std::wcerr << L"pipe candidate " << pipe_names[index] << L" failed (" << last_errors[index]
+               << L")\n";
   }
   throw Win32Error("connect LPAC named pipe", ERROR_TIMEOUT);
 }
