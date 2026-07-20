@@ -281,7 +281,23 @@ int probe(const std::filesystem::path& denied_path, const std::wstring& pipe_nam
   if (!GetTokenInformation(
           token.get(), TokenIsLessPrivilegedAppContainer, &is_lpac, sizeof(is_lpac),
           &returned)) {
-    return 2'300 + static_cast<int>(GetLastError());
+    const DWORD error = GetLastError();
+    if (error != ERROR_INVALID_PARAMETER) return 2'300 + static_cast<int>(error);
+
+    // Older Windows kernels do not expose TokenIsLessPrivilegedAppContainer.
+    // LPACs without registryRead must still be denied the registry keys that a
+    // regular AppContainer can read through ALL_APPLICATION_PACKAGES.
+    HKEY registry_key = nullptr;
+    const LSTATUS registry_status =
+        RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE", 0, KEY_READ, &registry_key);
+    if (registry_status == ERROR_SUCCESS) {
+      RegCloseKey(registry_key);
+      return 24;
+    }
+    if (registry_status != ERROR_ACCESS_DENIED) {
+      return 2'500 + static_cast<int>(registry_status);
+    }
+    is_lpac = 1;
   }
   if (is_lpac != 1) return 24;
   Handle denied(CreateFileW(
