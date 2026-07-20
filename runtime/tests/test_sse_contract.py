@@ -139,6 +139,12 @@ def test_p9_repairs_a_tool_backed_final_answer_before_run_completion(tmp_path) -
     names = [event["event_type"] for event in envelopes]
     assert "tool.completed" in names
     assert "run.failed" not in names
-    assert names.count("llm.round.started") >= 3
+    assert names.count("llm.round.started") == 3
+    streamed_text = "".join(
+        str(event["payload"].get("content", ""))
+        for event in envelopes
+        if event["event_type"] == "llm.delta"
+    )
+    assert streamed_text == "Done.E2E_COMPLETION_REPAIRED"
     completed = next(event for event in envelopes if event["event_type"] == "run.completed")
     assert "E2E_COMPLETION_REPAIRED" in completed["payload"]["final_text"]

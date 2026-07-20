@@ -105,6 +105,27 @@ describe('MessageBubble meta', () => {
     expect(container.querySelector('.message-content')?.textContent).toBe(fullReply)
   })
 
+  it('keeps a rejected draft visible until its replacement arrives', () => {
+    vi.useFakeTimers()
+    const renderBubble = (content: string) => (
+      <I18nProvider>
+        <MessageBubble message={message({ status: 'streaming', content })} />
+      </I18nProvider>
+    )
+    const { container, rerender } = render(renderBubble('Done.'))
+    act(() => {
+      vi.advanceTimersByTime(22)
+    })
+    expect(container.querySelector('.message-content')?.textContent).toBe('Done.')
+
+    rerender(renderBubble(''))
+    expect(container.querySelector('.message-content')?.textContent).toBe('Done.')
+
+    rerender(renderBubble('E2E_COMPLETION_REPAIRED'))
+
+    expect(container.querySelector('.message-content')?.textContent).toBe('E2E_COMPLETION_REPAIRED')
+  })
+
   it('keeps reasoning collapsed and renders it as plain text', () => {
     const { container } = render(
       <I18nProvider>

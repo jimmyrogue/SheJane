@@ -2377,7 +2377,13 @@ class RunCoordinator:
                             continue
                         if kind == "messages" and isinstance(payload, tuple) and len(payload) == 2:
                             chunk, metadata = payload
-                            if isinstance(chunk, AIMessageChunk) and isinstance(metadata, dict):
+                            if isinstance(chunk, AIMessageChunk):
+                                if (
+                                    not isinstance(metadata, dict)
+                                    or metadata.get("langgraph_node") != "model"
+                                    or part.get("ns")
+                                ):
+                                    continue
                                 model_round = (
                                     metadata.get("langgraph_checkpoint_ns"),
                                     metadata.get("langgraph_step"),

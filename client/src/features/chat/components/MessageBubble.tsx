@@ -101,9 +101,8 @@ export function MessageBubble({
         stream.pushChunk(delta)
         previousContentRef.current = message.content
       }
-    } else {
-      stream.start()
-      stream.pushChunk(message.content)
+    } else if (message.content) {
+      stream.start(message.content)
       previousContentRef.current = message.content
     }
   }, [initialStreamText, isAssistant, message.content, message.id, message.status, stream])
