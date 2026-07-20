@@ -150,7 +150,15 @@ jobs:
 
       - name: Run the native confinement self-test
         shell: pwsh
-        run: '& "$env:RUNNER_TEMP\shejane-managed-worker-vm.exe" --self-test'
+        run: |
+          $output = & "$env:RUNNER_TEMP\shejane-managed-worker-vm.exe" --self-test 2>&1
+          $exitCode = $LASTEXITCODE
+          $output
+          if ($exitCode -ne 0) {
+            $annotation = (($output -join " ").Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A"))
+            "::error title=Windows confinement self-test::$annotation"
+            exit $exitCode
+          }
 
   # Full black-box Runtime E2E. The repository script owns isolation, startup,
   # readiness, cleanup and failure logs so local and CI runs cannot drift.
