@@ -358,7 +358,7 @@ function runtimeArgs() {
   ]
 }
 
-async function startBundledRuntime() {
+async function spawnBundledRuntime() {
   const port = await pickFreePort()
   runtimeToken = crypto.randomBytes(32).toString('hex')
   runtimeURL = `http://127.0.0.1:${port}`
@@ -491,7 +491,7 @@ async function waitForRuntimeConnection(connection, ownedProcess, timeoutMs = 30
 
 async function startBundledRuntime() {
   return startRuntimeWithPortRetry({
-    start: startBundledRuntime,
+    start: spawnBundledRuntime,
     ready: (child, timeoutMs) => waitForRuntimeConnection(localRuntimeConnection(), child, timeoutMs),
     retryable: (child) => child.runtimePortConflict === true,
     stop: stopBundledRuntime,
