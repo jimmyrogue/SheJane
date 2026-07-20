@@ -358,10 +358,18 @@ std::vector<std::wstring> app_container_pipe_names(PSID sid, const std::wstring&
   }
   std::wstring path(buffer.data());
   if (path.empty() || path.front() != L'\\') path.insert(path.begin(), L'\\');
+  DWORD session_id = 0;
+  if (!ProcessIdToSessionId(GetCurrentProcessId(), &session_id)) {
+    throw_last_error("ProcessIdToSessionId");
+  }
+  const std::wstring session_path =
+      L"\\\\.\\pipe\\Sessions\\" + std::to_wstring(session_id) + path;
   return {
       L"\\\\.\\pipe\\LOCAL\\" + name,
       L"\\\\.\\pipe" + path + L"\\" + name,
       L"\\\\.\\pipe" + path + L"\\LOCAL\\" + name,
+      session_path + L"\\" + name,
+      session_path + L"\\LOCAL\\" + name,
   };
 }
 
