@@ -348,7 +348,7 @@ int probe(const std::filesystem::path& denied_path, const std::wstring& pipe_nam
   return 0;
 }
 
-std::wstring app_container_pipe_name(PSID sid, const std::wstring& name) {
+std::vector<std::wstring> app_container_pipe_names(PSID sid, const std::wstring& name) {
   ULONG required = 0;
   GetAppContainerNamedObjectPath(nullptr, sid, 0, nullptr, &required);
   if (required == 0) throw_last_error("GetAppContainerNamedObjectPath size");
@@ -358,20 +358,28 @@ std::wstring app_container_pipe_name(PSID sid, const std::wstring& name) {
   }
   std::wstring path(buffer.data());
   if (path.empty() || path.front() != L'\\') path.insert(path.begin(), L'\\');
-  return L"\\\\.\\pipe" + path + L"\\LOCAL\\" + name;
+  return {
+      L"\\\\.\\pipe\\LOCAL\\" + name,
+      L"\\\\.\\pipe" + path + L"\\" + name,
+      L"\\\\.\\pipe" + path + L"\\LOCAL\\" + name,
+  };
 }
 
 Handle connect_pipe(
-    const std::wstring& pipe_name, HANDLE child, DWORD timeout_milliseconds) {
+    const std::vector<std::wstring>& pipe_names, HANDLE child, DWORD timeout_milliseconds) {
   const ULONGLONG deadline = GetTickCount64() + timeout_milliseconds;
   while (GetTickCount64() < deadline) {
-    HANDLE pipe = CreateFileW(
-        pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (pipe != INVALID_HANDLE_VALUE) return Handle(pipe);
-    const DWORD error = GetLastError();
-    if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY && error != ERROR_ACCESS_DENIED) {
-      throw Win32Error("connect LPAC named pipe", error);
+    for (const std::wstring& pipe_name : pipe_names) {
+      HANDLE pipe = CreateFileW(
+          pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+          FILE_ATTRIBUTE_NORMAL, nullptr);
+      if (pipe != INVALID_HANDLE_VALUE) return Handle(pipe);
+      const DWORD error = GetLastError();
+      if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY &&
+          error != ERROR_ACCESS_DENIED) {
+        throw Win32Error("connect LPAC named pipe", error);
+      }
+      if (error == ERROR_PIPE_BUSY) WaitNamedPipeW(pipe_name.c_str(), 100);
     }
     const DWORD child_state = WaitForSingleObject(child, 0);
     if (child_state == WAIT_OBJECT_0) {
@@ -380,7 +388,6 @@ Handle connect_pipe(
       throw Win32Error("LPAC probe exited before named pipe", exit_code);
     }
     if (child_state == WAIT_FAILED) throw_last_error("WaitForSingleObject LPAC probe");
-    if (error == ERROR_PIPE_BUSY) WaitNamedPipeW(pipe_name.c_str(), 100);
     Sleep(10);
   }
   throw Win32Error("connect LPAC named pipe", ERROR_TIMEOUT);
@@ -416,7 +423,8 @@ void self_test() {
         L"SheJane.ManagedWorker." + std::to_wstring(GetCurrentProcessId()) + L"." +
         std::to_wstring(GetTickCount64());
     const std::wstring child_pipe_name = L"\\\\.\\pipe\\LOCAL\\" + pipe_stem;
-    const std::wstring host_pipe_name = app_container_pipe_name(profile.sid(), pipe_stem);
+    const std::vector<std::wstring> host_pipe_names =
+        app_container_pipe_names(profile.sid(), pipe_stem);
 
     SIZE_T attribute_bytes = 0;
     InitializeProcThreadAttributeList(nullptr, 2, 0, &attribute_bytes);
@@ -467,7 +475,7 @@ void self_test() {
       TerminateJobObject(job.get(), ERROR_INVALID_STATE);
       throw_last_error("ResumeThread");
     }
-    Handle pipe = connect_pipe(host_pipe_name, process_handle.get(), 10'000);
+    Handle pipe = connect_pipe(host_pipe_names, process_handle.get(), 10'000);
     constexpr char challenge[] = "host";
     constexpr char response[] = "guest";
     char received[sizeof(response)]{};
