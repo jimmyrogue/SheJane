@@ -192,6 +192,7 @@ cmake -S /src -B /work/build -G 'Unix Makefiles' \
 cmake --build /work/build --target speech-engine --parallel {jobs} >/dev/null
 install -m 0500 /work/build/speech-engine /output/speech-engine
 touch -d '@{epoch}' /output/speech-engine
+chown -R {os.getuid()}:{os.getgid()} /output
 """
     _run(
         [

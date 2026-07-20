@@ -712,7 +712,7 @@ jobs:
         working-directory: runtime
         run: |
           uv sync --frozen
-          uv run pyinstaller shejane-runtime.spec --noconfirm --clean
+          uv run python -m PyInstaller shejane-runtime.spec --noconfirm --clean
       - name: Set Client version
         if: github.ref_type == 'tag'
         working-directory: client

@@ -163,6 +163,7 @@ make {policy} \
   build/release/mutool -j{jobs} >/dev/null
 test "$(build/release/mutool -v 2>&1)" = 'mutool version 1.27.2'
 install -m 0500 build/release/mutool /output/mutool
+chown -R {os.getuid()}:{os.getgid()} /output
 """
     for build in (1, 2):
         output = work / f"build-{build}"

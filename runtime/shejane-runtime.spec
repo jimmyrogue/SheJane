@@ -49,14 +49,20 @@ for pkg in (
     "langchain_core",
     "deepagents",
     "markitdown",
-    # wasmtime resolves its platform library with ctypes at import time, so
-    # PyInstaller cannot discover the wheel's nested dylib/DLL from imports.
-    "wasmtime",
 ):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
     hiddenimports += h
+
+# wasmtime resolves its platform library with ctypes from an exact package-relative
+# path. collect_all classifies that file as both data and a binary; keeping the
+# binary entry lets PyInstaller relocate it and leaves the ctypes path missing.
+# Preserve only the data copy at wasmtime/<platform>/_libwasmtime.*.
+d, b, h = collect_all("wasmtime")
+datas += d
+binaries += [entry for entry in b if not Path(entry[0]).name.startswith("_libwasmtime.")]
+hiddenimports += h
 
 # The runtime boots via uvicorn.run("shejane_runtime.server:app", ...) — a STRING
 # import — so the whole shejane_runtime package is invisible to static analysis.

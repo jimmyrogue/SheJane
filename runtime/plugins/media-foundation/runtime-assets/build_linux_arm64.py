@@ -163,6 +163,7 @@ rm -rf /output/stage/include /output/stage/lib/pkgconfig /output/stage/share
 cp -L /usr/lib/aarch64-linux-gnu/libz.so.1 /output/stage/lib/libz.so.1
 cp /usr/share/doc/zlib1g-dev/copyright /output/zlib-copyright
 find /output/stage -type f -exec touch -d '@{epoch}' {{}} +
+chown -R {os.getuid()}:{os.getgid()} /output
 """
     _run(
         [

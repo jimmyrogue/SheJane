@@ -229,6 +229,7 @@ for package do dpkg-deb -x "$package" /extract; done
 test -x /extract/opt/libreoffice25.8/program/soffice
 test -x /extract/opt/libreoffice25.8/program/soffice.bin
 cp -a /extract/opt/libreoffice25.8 /output/libreoffice
+chown -R {os.getuid()}:{os.getgid()} /output
 """,
         ],
         timeout=600,
@@ -270,6 +271,7 @@ make build=release HAVE_LIBCRYPTO=no HAVE_X11=no HAVE_GLUT=no HAVE_GLFW=no \
   tools -j{jobs} >/dev/null
 test "$(build/release/mutool -v 2>&1)" = 'mutool version 1.27.2'
 install -m 0500 build/release/mutool /output/mutool
+chown -R {os.getuid()}:{os.getgid()} /output
 """
     for build in (1, 2):
         output = work / f"mupdf-output-{build}"
