@@ -220,6 +220,10 @@ void verify_job(HANDLE job) {
 int network_denial_error() {
   WSADATA data{};
   const int startup_error = WSAStartup(MAKEWORD(2, 2), &data);
+  // An LPAC without registryRead can be blocked while Winsock loads its
+  // protocol catalog, before a socket exists. Windows reports that denial as
+  // WSASYSCALLFAILURE rather than WSAEACCES.
+  if (startup_error == WSASYSCALLFAILURE) return 0;
   if (startup_error != 0) return startup_error;
   SOCKET socket_handle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (socket_handle == INVALID_SOCKET) {
