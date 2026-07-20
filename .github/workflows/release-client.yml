@@ -718,7 +718,7 @@ jobs:
         working-directory: client
         shell: bash
         run: pnpm version "${GITHUB_REF_NAME#client-v}" --no-git-tag-version --allow-same-version
-      - name: Import macOS Developer ID certificate
+      - name: Configure macOS release signing
         if: matrix.platform == 'macos'
         shell: bash
         env:
@@ -730,6 +730,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          configured=0
+          total=0
           for name in \
             MACOS_DEVELOPER_ID_P12_BASE64 \
             MACOS_DEVELOPER_ID_P12_PASSWORD \
@@ -738,8 +740,28 @@ jobs:
             APPLE_API_ISSUER \
             APPLE_TEAM_ID
           do
-            test -n "${!name}" || { echo "required macOS release secret is missing: ${name}" >&2; exit 1; }
+            total=$((total + 1))
+            [[ -n "${!name}" ]] && configured=$((configured + 1))
           done
+          if (( configured == total )); then
+            echo "SHEJANE_MACOS_SIGNING_ENABLED=true" >> "${GITHUB_ENV}"
+          elif (( configured == 0 )); then
+            echo "SHEJANE_MACOS_SIGNING_ENABLED=false" >> "${GITHUB_ENV}"
+            echo "SHEJANE_CODESIGN_IDENTITY=-" >> "${GITHUB_ENV}"
+            echo "::warning::Apple release secrets are absent; producing an ad-hoc signed, unnotarized macOS artifact."
+          else
+            echo "macOS release secrets are only partially configured" >&2
+            exit 1
+          fi
+      - name: Import macOS Developer ID certificate
+        if: matrix.platform == 'macos' && env.SHEJANE_MACOS_SIGNING_ENABLED == 'true'
+        shell: bash
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
           certificate="${RUNNER_TEMP}/shejane-developer-id.p12"
           keychain="${RUNNER_TEMP}/shejane-signing.keychain-db"
           keychain_password="$(openssl rand -hex 32)"
@@ -1046,12 +1068,22 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_IDENTITY_AUTO_DISCOVERY: "true"
         run: |
+          set -euo pipefail
           pnpm build:client
           if [[ "${{ matrix.platform }}" == "macos" ]]; then
-            pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} \
-              --config.mac.identity="${SHEJANE_CODESIGN_IDENTITY}" --publish never
+            if [[ "${SHEJANE_MACOS_SIGNING_ENABLED}" == "true" ]]; then
+              export CSC_IDENTITY_AUTO_DISCOVERY=true
+              pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} \
+                --config.mac.identity="${SHEJANE_CODESIGN_IDENTITY}" --publish never
+            else
+              export CSC_IDENTITY_AUTO_DISCOVERY=false
+              pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} \
+                --config.mac.identity=- \
+                --config.mac.hardenedRuntime=false \
+                --config.mac.notarize=false \
+                --publish never
+            fi
           else
             pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
           fi
@@ -1060,19 +1092,24 @@ jobs:
         working-directory: client
         shell: bash
         run: |
+          set -euo pipefail
           app="$(find release -type d -name '*.app' -print -quit)"
           codesign --verify --deep --strict --verbose=2 "${app}"
-          codesign -d --verbose=4 "${app}" 2>&1 \
-            | grep -Fq "TeamIdentifier=${APPLE_TEAM_ID}"
-          codesign -d --verbose=4 "${app}" 2>&1 | grep -Eq 'flags=.*runtime'
-          codesign -d --verbose=4 "${app}" 2>&1 | grep -Fq 'Authority=Developer ID Application:'
-          codesign -d --verbose=4 "${app}" 2>&1 | grep -Fq 'Timestamp='
-          spctl --assess --type execute --verbose=4 "${app}"
-          xcrun stapler validate "${app}"
           dmg="$(find release -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           test -n "${dmg}"
-          xcrun stapler validate "${dmg}"
-          spctl --assess --type open --context context:primary-signature --verbose=4 "${dmg}"
+          if [[ "${SHEJANE_MACOS_SIGNING_ENABLED}" == "true" ]]; then
+            codesign -d --verbose=4 "${app}" 2>&1 \
+              | grep -Fq "TeamIdentifier=${APPLE_TEAM_ID}"
+            codesign -d --verbose=4 "${app}" 2>&1 | grep -Eq 'flags=.*runtime'
+            codesign -d --verbose=4 "${app}" 2>&1 | grep -Fq 'Authority=Developer ID Application:'
+            codesign -d --verbose=4 "${app}" 2>&1 | grep -Fq 'Timestamp='
+            spctl --assess --type execute --verbose=4 "${app}"
+            xcrun stapler validate "${app}"
+            xcrun stapler validate "${dmg}"
+            spctl --assess --type open --context context:primary-signature --verbose=4 "${dmg}"
+          else
+            codesign -d --verbose=4 "${app}" 2>&1 | grep -Fq 'Signature=adhoc'
+          fi
           if [[ "${{ matrix.arch }}" != "arm64" ]]; then
             test ! -e "${app}/Contents/Resources/sandbox/vm-assets/manifest.json"
             exit 0
@@ -1082,10 +1119,14 @@ jobs:
           diff -rq build/vm-assets-arm64 "${assets}"
           for executable in "${helper}" "${assets}/mke2fs"; do
             codesign --verify --strict --verbose=2 "${executable}"
-            codesign -d --verbose=4 "${executable}" 2>&1 | grep -Eq 'flags=.*runtime'
-            codesign -d --verbose=4 "${executable}" 2>&1 \
-              | grep -Fq 'Authority=Developer ID Application:'
-            codesign -d --verbose=4 "${executable}" 2>&1 | grep -Fq 'Timestamp='
+            if [[ "${SHEJANE_MACOS_SIGNING_ENABLED}" == "true" ]]; then
+              codesign -d --verbose=4 "${executable}" 2>&1 | grep -Eq 'flags=.*runtime'
+              codesign -d --verbose=4 "${executable}" 2>&1 \
+                | grep -Fq 'Authority=Developer ID Application:'
+              codesign -d --verbose=4 "${executable}" 2>&1 | grep -Fq 'Timestamp='
+            else
+              codesign -d --verbose=4 "${executable}" 2>&1 | grep -Fq 'Signature=adhoc'
+            fi
           done
           codesign -d --entitlements - "${helper}" 2>&1 \
             | grep -Fq 'com.apple.security.virtualization'

@@ -105,7 +105,7 @@ Runtime 接受单个 `.shejane-plugin` ZIP，通过 `plugin.install` Command 安
 
 macOS arm64 VM 资产集由 `client/vm-assets/build_darwin.py` 构建。生成器只接受 lock 中精确大小与 SHA-256 的 Fedora 44 已签名 kernel RPM/SRPM、Fedora keyring、e2fsprogs 1.47.2 源码/签名和固定 kernel.org OpenPGP key；它验证 RPM 身份与签名、源码签名、Xcode/Clang/SDK/Go 工具链，确定性生成 Linux Image、guestd initramfs、host-native `mke2fs`、带 `com.apple.security.virtualization` entitlement 的 launcher、许可证、SPDX SBOM 和 canonical manifest。两次完整构建已经逐字节一致。
 
-Electron Builder 用 `build/vm-assets-arm64` 把完整资产集放入 `Contents/Resources/sandbox/vm-assets`。资产集中的 Mach-O 在生成 manifest 前完成签名，打包时跳过整套只读资产，最终由最外层 App 签名封存；最终 `.app` 内的资产与构建输出逐字节一致。发布 workflow 已配置 Developer ID、Hardened Runtime、secure timestamp、App Store Connect API key 公证、staple、Gatekeeper 与 nested-code 验证；任何 secret 缺失都会停止 macOS 发布。只有这条 workflow 在原生 runner 上真实通过后，才能移除最后的 `release_ci_gate`。
+Electron Builder 用 `build/vm-assets-arm64` 把完整资产集放入 `Contents/Resources/sandbox/vm-assets`。资产集中的 Mach-O 在生成 manifest 前完成签名，打包时跳过整套只读资产，最终由最外层 App 签名封存；最终 `.app` 内的资产与构建输出逐字节一致。发布 workflow 在凭据完整时执行 Developer ID、Hardened Runtime、secure timestamp、App Store Connect API key 公证、staple、Gatekeeper 与 nested-code 验证；凭据全部缺失时只生成明确标记的 ad-hoc 签名预览包，凭据只配置一部分则 fail closed。只有 Developer ID/公证路径在原生 runner 上真实通过后，才能移除最后的 `release_ci_gate`。
 
 Client 在 Darwin 上把包内 `sandbox/vm-assets/manifest.json` 作为显式 CLI 参数交给 Runtime；不存在系统路径或 `$PATH` fallback。P6 只有在冻结 lease 含 Managed Worker 时加载一次该资产集，并按 [`managed-worker-vm-assets-v1.schema.json`](../runtime/plugins/schemas/managed-worker-vm-assets-v1.schema.json) 对 host/guest 架构、协议、canonical asset-set ID、HTTPS 来源、普通文件、无 symlink、size、SHA-256 和 executable bit 做 fail-closed 预检。打包门禁还会调用包内 Runtime 的 `--validate-managed-worker-vm-assets`，在启动 Client 前执行同一生产 preflight，防止 schema 过期或资产被替换的包通过 lifecycle smoke。预检通过只代表资产身份成立，不会绕过平台 release Gate。
 
@@ -169,14 +169,14 @@ client-macos-arm64
 client-windows-x64
 ```
 
-macOS job 必须配置以下 GitHub Actions secrets；缺少任何一项都会 fail closed：
+macOS 正式分发必须配置以下全部 GitHub Actions secrets：
 
 - `MACOS_DEVELOPER_ID_P12_BASE64`：Developer ID Application `.p12` 的 base64；
 - `MACOS_DEVELOPER_ID_P12_PASSWORD`：该 `.p12` 的密码；
 - `APPLE_API_KEY`：App Store Connect API `.p8` 的 base64；
 - `APPLE_API_KEY_ID`、`APPLE_API_ISSUER`、`APPLE_TEAM_ID`。
 
-发布 job 会验证 `.app` 与 DMG 的 staple ticket、Gatekeeper、Hardened Runtime、secure timestamp、Developer ID、VM launcher entitlement、包内 manifest 身份和完整 VM Gate。配置依据见 [electron-builder macOS signing](https://www.electron.build/mac/)、[electron-builder notarization](https://www.electron.build/docs/notarization/) 与 [Apple notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
+全部凭据存在时，发布 job 会验证 `.app` 与 DMG 的 staple ticket、Gatekeeper、Hardened Runtime、secure timestamp、Developer ID、VM launcher entitlement、包内 manifest 身份和完整 VM Gate。全部凭据缺失时仍会生成 ad-hoc 签名、未公证的预览 DMG/ZIP，并继续验证包内 Runtime、VM 资产和功能 Gate；这种产物会触发 Gatekeeper 警告，且不构成 `release_ci_gate` 的发布证据。凭据只配置一部分会 fail closed。配置依据见 [electron-builder macOS signing](https://www.electron.build/mac/)、[electron-builder notarization](https://www.electron.build/docs/notarization/) 与 [Apple notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
 
 手动运行 Client 发布工作流只生成 GitHub Actions 产物。推送 `client-vX.Y.Z` 标签才会创建 GitHub Release。
 
