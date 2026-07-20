@@ -57,18 +57,26 @@ for pkg in (
     binaries += b
     hiddenimports += h
 
+def is_wasmtime_library(path):
+    name = Path(path).name
+    return name.startswith("_libwasmtime.") or name == "_wasmtime.dll"
+
+
 # wasmtime resolves its platform library with ctypes from an exact package-relative
 # path. PyInstaller reclassifies the file differently across platforms, so exclude
 # it from automatic collection and restore it after COLLECT at the required path.
 d, b, h = collect_all("wasmtime")
-datas += [entry for entry in d if not Path(entry[0]).name.startswith("_libwasmtime.")]
-binaries += [entry for entry in b if not Path(entry[0]).name.startswith("_libwasmtime.")]
+datas += [entry for entry in d if not is_wasmtime_library(entry[0])]
+binaries += [entry for entry in b if not is_wasmtime_library(entry[0])]
 hiddenimports += h
 wasmtime_spec = find_spec("wasmtime")
 if wasmtime_spec is None or wasmtime_spec.origin is None:
     raise SystemExit("wasmtime package must be installed before PyInstaller")
 wasmtime_root = Path(wasmtime_spec.origin).parent
-wasmtime_library = next(wasmtime_root.glob("*/_libwasmtime.*"), None)
+wasmtime_library = next(
+    (path for path in wasmtime_root.glob("*/*") if is_wasmtime_library(path)),
+    None,
+)
 if wasmtime_library is None:
     raise SystemExit("wasmtime platform library is missing from the installed wheel")
 
