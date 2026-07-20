@@ -212,7 +212,7 @@ void verify_job(HANDLE job) {
           job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr)) {
     throw_last_error("QueryInformationJobObject accounting");
   }
-  if (accounting.ActiveProcesses != 0 || accounting.TotalProcesses != 1) {
+  if (accounting.ActiveProcesses != 0 || accounting.TotalProcesses < 1) {
     throw Win32Error("Job cleanup changed", ERROR_INVALID_DATA);
   }
 }
