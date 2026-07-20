@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "id": "dev.shejane.fixture.documents",
+  "version": "0.1.0",
+  "name": "Documents fixture",
+  "description": "Reference Managed Worker plugin that renders a document into staged artifacts.",
+  "license": "AGPL-3.0-only",
+  "publisher": {
+    "id": "dev.shejane",
+    "name": "SheJane"
+  },
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "managed_worker",
+      "entrypoint": "payload/worker.py",
+      "platforms": [
+        "darwin/arm64"
+      ]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {
+        "id": "document.render",
+        "title": "Render document",
+        "description": "Render an authorized DOCX input into a staged PDF artifact.",
+        "input_schema": "actions/document.render.input.json",
+        "output_schema": "actions/document.render.output.json",
+        "consumes": [
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ],
+        "produces": [
+          "application/pdf"
+        ],
+        "effects": [
+          "read",
+          "artifact"
+        ],
+        "determinism": "input_stable",
+        "capabilities": [
+          "input.read",
+          "artifact.write"
+        ],
+        "limits": {
+          "timeout_ms": 60000,
+          "memory_mb": 512,
+          "output_mb": 128
+        }
+      }
+    ]
+  }
+}

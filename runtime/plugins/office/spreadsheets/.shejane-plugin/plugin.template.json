@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "id": "org.shejane.spreadsheets",
+  "version": "__PLUGIN_VERSION__",
+  "name": "Spreadsheets",
+  "description": "Read, create, edit, recalculate, and render XLSX workbooks with bounded deterministic outputs.",
+  "license": "AGPL-3.0-only",
+  "publisher": {"id": "org.shejane", "name": "SheJane"},
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "managed_worker",
+      "entrypoint": "__ENTRYPOINT__",
+      "platforms": ["__PLATFORM__"],
+      "runtime_assets": [
+        {
+          "id": "org.libreoffice.runtime",
+          "version": "25.8.7",
+          "digest": "__RUNTIME_ASSET_DIGEST__"
+        }
+      ]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {
+        "id": "spreadsheet.read",
+        "title": "Read spreadsheet",
+        "description": "Read worksheet metadata and a bounded range with values, formulas, types, formats, and Markdown.",
+        "input_schema": "actions/spreadsheet.read.input.json",
+        "output_schema": "actions/spreadsheet.read.output.json",
+        "consumes": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        "produces": [],
+        "effects": ["read"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read"],
+        "limits": {"timeout_ms": 30000, "memory_mb": 1024, "output_mb": 8}
+      },
+      {
+        "id": "spreadsheet.create",
+        "title": "Create spreadsheet",
+        "description": "Create an XLSX workbook with typed cells, styles, merged ranges, formulas, and charts.",
+        "input_schema": "actions/spreadsheet.create.input.json",
+        "output_schema": "actions/spreadsheet.create.output.json",
+        "consumes": [],
+        "produces": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        "effects": ["artifact"],
+        "determinism": "pure",
+        "capabilities": ["artifact.write"],
+        "limits": {"timeout_ms": 60000, "memory_mb": 1024, "output_mb": 256}
+      },
+      {
+        "id": "spreadsheet.edit",
+        "title": "Edit spreadsheet",
+        "description": "Apply bounded structured edits to a copy of an authorized XLSX input.",
+        "input_schema": "actions/spreadsheet.edit.input.json",
+        "output_schema": "actions/spreadsheet.edit.output.json",
+        "consumes": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        "produces": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        "effects": ["read", "artifact"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read", "artifact.write"],
+        "limits": {"timeout_ms": 60000, "memory_mb": 1024, "output_mb": 256}
+      },
+      {
+        "id": "spreadsheet.render",
+        "title": "Recalculate and render spreadsheet",
+        "description": "Recalculate an XLSX with the exact Office Runtime and produce XLSX, PDF, and bounded PNG previews.",
+        "input_schema": "actions/spreadsheet.render.input.json",
+        "output_schema": "actions/spreadsheet.render.output.json",
+        "consumes": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        "produces": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/pdf", "image/png"],
+        "effects": ["read", "artifact"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read", "artifact.write"],
+        "limits": {"timeout_ms": 300000, "memory_mb": 2048, "output_mb": 512}
+      }
+    ],
+    "commands": [
+      {"id": "read", "title": "Read spreadsheet", "description": "Read a bounded XLSX range.", "instructions": "commands/read.md", "required_actions": ["spreadsheet.read"]},
+      {"id": "create", "title": "Create spreadsheet", "description": "Create an XLSX artifact.", "instructions": "commands/create.md", "required_actions": ["spreadsheet.create"]},
+      {"id": "edit", "title": "Edit spreadsheet", "description": "Edit an XLSX without changing the original.", "instructions": "commands/edit.md", "required_actions": ["spreadsheet.edit"]},
+      {"id": "render", "title": "Render spreadsheet", "description": "Recalculate and render an XLSX.", "instructions": "commands/render.md", "required_actions": ["spreadsheet.render"]}
+    ]
+  }
+}

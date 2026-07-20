@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "id": "org.shejane.vision.local",
+  "version": "__PLUGIN_VERSION__",
+  "name": "Vision Local",
+  "description": "Analyze bounded image batches with an exact local Vision Runtime Asset.",
+  "license": "Apache-2.0",
+  "publisher": {"id": "org.shejane", "name": "SheJane"},
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "managed_worker",
+      "entrypoint": "__ENTRYPOINT__",
+      "platforms": ["__PLATFORM__"],
+      "runtime_assets": [
+        {
+          "id": "org.llama-mtmd.runtime",
+          "version": "__RUNTIME_ASSET_VERSION__",
+          "digest": "__RUNTIME_ASSET_DIGEST__"
+        }
+      ]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {
+        "id": "vision.analyze_images",
+        "title": "Analyze images locally",
+        "description": "Analyze at most sixteen selected images with the package's exact local model asset.",
+        "input_schema": "actions/vision.analyze_images.local.input.json",
+        "output_schema": "actions/vision.analyze_images.output.json",
+        "consumes": ["image/png", "image/jpeg", "image/webp", "image/gif"],
+        "produces": ["text/plain", "application/json"],
+        "effects": ["read", "artifact"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read", "artifact.write"],
+        "limits": {"timeout_ms": 300000, "memory_mb": 4096, "output_mb": 64}
+      }
+    ],
+    "commands": [
+      {
+        "id": "analyze",
+        "title": "Analyze images locally",
+        "description": "Use the exact local Vision model without network fallback.",
+        "instructions": "commands/analyze.md",
+        "required_actions": ["vision.analyze_images"]
+      }
+    ]
+  }
+}

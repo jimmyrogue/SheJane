@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "org.shejane.vision.cloud",
+  "version": "__PLUGIN_VERSION__",
+  "name": "Vision Cloud",
+  "description": "Analyze bounded image batches through one explicitly configured Runtime Vision model.",
+  "license": "Apache-2.0",
+  "publisher": {"id": "org.shejane", "name": "SheJane"},
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "managed_worker",
+      "entrypoint": "__ENTRYPOINT__",
+      "platforms": ["__PLATFORM__"],
+      "runtime_assets": []
+    }
+  },
+  "contributions": {
+    "actions": [
+      {
+        "id": "vision.analyze_images",
+        "title": "Analyze images with configured cloud model",
+        "description": "Analyze at most sixteen selected images through the frozen Runtime model binding.",
+        "input_schema": "actions/vision.analyze_images.cloud.input.json",
+        "output_schema": "actions/vision.analyze_images.output.json",
+        "consumes": ["image/png", "image/jpeg", "image/webp", "image/gif"],
+        "produces": ["text/plain", "application/json"],
+        "effects": ["read", "artifact"],
+        "determinism": "nondeterministic",
+        "capabilities": ["input.read", "artifact.write", "model.vision.invoke"],
+        "limits": {"timeout_ms": 300000, "memory_mb": 512, "output_mb": 64}
+      }
+    ],
+    "commands": [
+      {
+        "id": "analyze",
+        "title": "Analyze images with configured cloud model",
+        "description": "Use the plugin's explicit cloud model binding without fallback.",
+        "instructions": "commands/analyze.md",
+        "required_actions": ["vision.analyze_images"]
+      }
+    ]
+  }
+}

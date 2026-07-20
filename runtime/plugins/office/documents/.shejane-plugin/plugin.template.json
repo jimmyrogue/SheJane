@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "id": "org.shejane.documents",
+  "version": "__PLUGIN_VERSION__",
+  "name": "Documents",
+  "description": "Read, create, edit, and render DOCX documents with deterministic staged outputs.",
+  "license": "AGPL-3.0-only",
+  "publisher": {
+    "id": "org.shejane",
+    "name": "SheJane"
+  },
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "managed_worker",
+      "entrypoint": "__ENTRYPOINT__",
+      "platforms": ["__PLATFORM__"],
+      "runtime_assets": [
+        {
+          "id": "org.libreoffice.runtime",
+          "version": "25.8.7",
+          "digest": "__RUNTIME_ASSET_DIGEST__"
+        }
+      ]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {
+        "id": "document.read",
+        "title": "Read document",
+        "description": "Read DOCX structure, metadata, comments, headers, footers, and bounded Markdown.",
+        "input_schema": "actions/document.read.input.json",
+        "output_schema": "actions/document.read.output.json",
+        "consumes": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        "produces": [],
+        "effects": ["read"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read"],
+        "limits": {"timeout_ms": 30000, "memory_mb": 512, "output_mb": 4}
+      },
+      {
+        "id": "document.create",
+        "title": "Create document",
+        "description": "Create a DOCX document from explicit structured blocks and metadata.",
+        "input_schema": "actions/document.create.input.json",
+        "output_schema": "actions/document.create.output.json",
+        "consumes": [],
+        "produces": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        "effects": ["artifact"],
+        "determinism": "pure",
+        "capabilities": ["artifact.write"],
+        "limits": {"timeout_ms": 30000, "memory_mb": 512, "output_mb": 128}
+      },
+      {
+        "id": "document.edit",
+        "title": "Edit document",
+        "description": "Apply bounded structured edits to a copy of an authorized DOCX input.",
+        "input_schema": "actions/document.edit.input.json",
+        "output_schema": "actions/document.edit.output.json",
+        "consumes": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        "produces": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        "effects": ["read", "artifact"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read", "artifact.write"],
+        "limits": {"timeout_ms": 60000, "memory_mb": 512, "output_mb": 128}
+      },
+      {
+        "id": "document.render",
+        "title": "Render document",
+        "description": "Render an authorized DOCX input to PDF and bounded PNG page previews.",
+        "input_schema": "actions/document.render.input.json",
+        "output_schema": "actions/document.render.output.json",
+        "consumes": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        "produces": ["application/pdf", "image/png"],
+        "effects": ["read", "artifact"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read", "artifact.write"],
+        "limits": {"timeout_ms": 300000, "memory_mb": 2048, "output_mb": 512}
+      }
+    ],
+    "commands": [
+      {
+        "id": "read",
+        "title": "Read document",
+        "description": "Read a DOCX attachment as structured content.",
+        "instructions": "commands/read.md",
+        "required_actions": ["document.read"]
+      },
+      {
+        "id": "create",
+        "title": "Create document",
+        "description": "Create a DOCX artifact from the user's requested structure.",
+        "instructions": "commands/create.md",
+        "required_actions": ["document.create"]
+      },
+      {
+        "id": "edit",
+        "title": "Edit document",
+        "description": "Edit a DOCX attachment without changing the original.",
+        "instructions": "commands/edit.md",
+        "required_actions": ["document.edit"]
+      },
+      {
+        "id": "render",
+        "title": "Render document",
+        "description": "Render a DOCX attachment to PDF and page previews.",
+        "instructions": "commands/render.md",
+        "required_actions": ["document.render"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "id": "org.shejane.speech",
+  "version": "__PLUGIN_VERSION__",
+  "name": "Speech",
+  "description": "Transcribe authorized audio with pinned FFmpeg and whisper.cpp Runtime Assets.",
+  "license": "MIT",
+  "publisher": {"id": "org.shejane", "name": "SheJane"},
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "managed_worker",
+      "entrypoint": "__ENTRYPOINT__",
+      "platforms": ["__PLATFORM__"],
+      "runtime_assets": [
+        {
+          "id": "org.ffmpeg.runtime",
+          "version": "8.1.2+shejane.1",
+          "digest": "__FFMPEG_RUNTIME_ASSET_DIGEST__"
+        },
+        {
+          "id": "org.whisper.runtime",
+          "version": "1.8.6+large-v3-turbo-q5-0.shejane.1",
+          "digest": "__WHISPER_RUNTIME_ASSET_DIGEST__"
+        }
+      ]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {
+        "id": "speech.transcribe",
+        "title": "Transcribe audio",
+        "description": "Normalize and transcribe one explicitly selected audio input with segment timestamps.",
+        "input_schema": "actions/speech.transcribe.input.json",
+        "output_schema": "actions/speech.transcribe.output.json",
+        "consumes": ["audio/mpeg", "audio/mp4", "audio/wav", "audio/flac", "audio/ogg", "audio/webm", "audio/aac", "audio/x-m4a"],
+        "produces": ["text/plain", "application/x-subrip", "application/json"],
+        "effects": ["read", "artifact"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read", "artifact.write"],
+        "limits": {"timeout_ms": 900000, "memory_mb": 4096, "output_mb": 64}
+      }
+    ],
+    "commands": [
+      {
+        "id": "transcribe",
+        "title": "Transcribe audio",
+        "description": "Create a deterministic transcript from one selected audio input.",
+        "instructions": "commands/transcribe.md",
+        "required_actions": ["speech.transcribe"]
+      }
+    ]
+  }
+}

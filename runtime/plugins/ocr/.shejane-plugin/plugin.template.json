@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "id": "org.shejane.ocr",
+  "version": "__PLUGIN_VERSION__",
+  "name": "OCR",
+  "description": "Recognize bounded image batches with a pinned RapidOCR and PP-OCRv6 Runtime Asset.",
+  "license": "Apache-2.0",
+  "publisher": {"id": "org.shejane", "name": "SheJane"},
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "managed_worker",
+      "entrypoint": "__ENTRYPOINT__",
+      "platforms": ["__PLATFORM__"],
+      "runtime_assets": [
+        {
+          "id": "org.rapidocr.runtime",
+          "version": "3.9.1+ppocrv6-medium.1",
+          "digest": "__RUNTIME_ASSET_DIGEST__"
+        }
+      ]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {
+        "id": "ocr.recognize_images",
+        "title": "Recognize image text",
+        "description": "Recognize text in at most sixteen explicitly selected images, preserving input order.",
+        "input_schema": "actions/ocr.recognize_images.input.json",
+        "output_schema": "actions/ocr.recognize_images.output.json",
+        "consumes": ["image/png", "image/jpeg", "image/webp", "image/tiff", "image/bmp"],
+        "produces": ["text/plain", "application/json"],
+        "effects": ["read", "artifact"],
+        "determinism": "input_stable",
+        "capabilities": ["input.read", "artifact.write"],
+        "limits": {"timeout_ms": 300000, "memory_mb": 2048, "output_mb": 64}
+      }
+    ],
+    "commands": [
+      {
+        "id": "recognize",
+        "title": "Recognize image text",
+        "description": "Run deterministic OCR on explicitly selected image inputs.",
+        "instructions": "commands/recognize.md",
+        "required_actions": ["ocr.recognize_images"]
+      }
+    ]
+  }
+}

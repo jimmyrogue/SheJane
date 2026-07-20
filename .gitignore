@@ -75,8 +75,8 @@ out/
 # Generated plugin packages
 *.shejane-plugin
 *.shejane-plugin.tmp
-!runtime/plugins/fixtures/wasi-archive/.shejane-plugin/
-!runtime/plugins/fixtures/wasi-archive/.shejane-plugin/plugin.json
+!**/.shejane-plugin/
+!**/.shejane-plugin/**
 
 # Python / uv
 .venv/

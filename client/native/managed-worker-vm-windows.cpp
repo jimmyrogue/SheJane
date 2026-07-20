@@ -274,13 +274,16 @@ int probe(const std::filesystem::path& denied_path, const std::wstring& pipe_nam
   DWORD returned = 0;
   if (!GetTokenInformation(
           token.get(), TokenIsAppContainer, &is_app_container, sizeof(is_app_container),
-          &returned) ||
-      !GetTokenInformation(
-          token.get(), TokenIsLessPrivilegedAppContainer, &is_lpac, sizeof(is_lpac),
-          &returned) ||
-      is_app_container != 1 || is_lpac != 1) {
-    return 11;
+          &returned)) {
+    return 21;
   }
+  if (is_app_container != 1) return 22;
+  if (!GetTokenInformation(
+          token.get(), TokenIsLessPrivilegedAppContainer, &is_lpac, sizeof(is_lpac),
+          &returned)) {
+    return 23;
+  }
+  if (is_lpac != 1) return 24;
   Handle denied(CreateFileW(
       denied_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
       FILE_ATTRIBUTE_NORMAL, nullptr));
