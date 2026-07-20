@@ -9090,6 +9090,11 @@ button.settings-row-button:focus-visible,
   color: var(--sj-ink, #2B2A28);
 }
 
+.settings-row-button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
 .settings-row-button-danger {
   color: var(--accent-danger-text, #8F3E27);
 }

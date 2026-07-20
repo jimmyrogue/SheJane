@@ -176,7 +176,7 @@ macOS 正式分发必须配置以下全部 GitHub Actions secrets：
 - `APPLE_API_KEY`：App Store Connect API `.p8` 的 base64；
 - `APPLE_API_KEY_ID`、`APPLE_API_ISSUER`、`APPLE_TEAM_ID`。
 
-全部凭据存在时，发布 job 会验证 `.app` 与 DMG 的 staple ticket、Gatekeeper、Hardened Runtime、secure timestamp、Developer ID、VM launcher entitlement 和包内 manifest 身份。全部凭据缺失时仍会生成 ad-hoc 签名、未公证的预览 DMG/ZIP，并验证包内 Runtime、VM 资产静态完整性、launcher 自检和 Runtime 生命周期 smoke；这种产物会触发 Gatekeeper 警告，且不构成 `release_ci_gate` 的发布证据。必须启动 VM 的功能 Gate 需要另在支持虚拟化的 physical/self-hosted Mac 上运行，凭据只配置一部分会 fail closed。配置依据见 [electron-builder macOS signing](https://www.electron.build/mac/)、[electron-builder notarization](https://www.electron.build/docs/notarization/) 与 [Apple notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
+全部凭据存在时，发布 job 会验证 `.app` 与 DMG 的 staple ticket、Gatekeeper、Hardened Runtime、secure timestamp、Developer ID、VM launcher entitlement 和包内 manifest 身份。全部凭据缺失时仍会生成 ad-hoc 签名、未公证的预览 DMG/ZIP，并验证包内 Runtime、VM 资产静态完整性、launcher 自检和 Runtime 生命周期 smoke；这种产物会触发 Gatekeeper 警告，且不构成 `release_ci_gate` 的发布证据。macOS 原地自动更新同样要求 Developer ID 签名；预览包只能在设置页检查失败后转到 GitHub Releases 手动安装。必须启动 VM 的功能 Gate 需要另在支持虚拟化的 physical/self-hosted Mac 上运行，凭据只配置一部分会 fail closed。配置依据见 [electron-builder macOS signing](https://www.electron.build/mac/)、[electron-builder auto update](https://www.electron.build/docs/features/auto-update/)、[electron-builder notarization](https://www.electron.build/docs/notarization/) 与 [Apple notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
 
 手动运行 Client 发布工作流只生成 GitHub Actions 产物。推送 `client-vX.Y.Z` 标签才会创建 GitHub Release。
 

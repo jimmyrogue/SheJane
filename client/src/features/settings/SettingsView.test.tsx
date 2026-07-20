@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import type { AgentSettings } from '@/runtime/client'
@@ -13,7 +13,10 @@ const settings: Required<AgentSettings> = {
 }
 
 describe('SettingsView', () => {
-  afterEach(cleanup)
+  afterEach(() => {
+    cleanup()
+    delete window.shejaneClient
+  })
 
   it('keeps settings focused on models, agent, general, and local data', () => {
     render(
@@ -55,5 +58,54 @@ describe('SettingsView', () => {
     )
 
     expect(screen.getAllByText('数据与安全')).not.toHaveLength(0)
+  })
+
+  it('lets desktop users see their version and check for Client updates', async () => {
+    const check = vi.fn().mockResolvedValue({ currentVersion: '0.1.11', status: 'current' })
+    const install = vi.fn().mockResolvedValue(true)
+    const openExternal = vi.fn().mockResolvedValue('https://github.com/jimmyrogue/SheJane/releases')
+    let publishState: ((state: ClientUpdateState) => void) | undefined
+    Object.defineProperty(window, 'shejaneClient', {
+      configurable: true,
+      value: {
+        openExternal,
+        updates: {
+          getState: vi.fn().mockResolvedValue({ currentVersion: '0.1.11', status: 'idle' }),
+          check,
+          install,
+          onStateChange: vi.fn((handler) => {
+            publishState = handler
+            return () => undefined
+          }),
+        },
+      },
+    })
+    render(
+      <I18nProvider>
+        <SettingsView
+          isDesktop
+          agentSettings={settings}
+          onAgentSettingsChange={vi.fn()}
+          onImportLocalData={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(await screen.findByText('当前版本 v0.1.11')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '检查更新' }))
+    expect(check).toHaveBeenCalledOnce()
+
+    act(() => publishState?.({
+      currentVersion: '0.1.11',
+      status: 'ready',
+      availableVersion: '0.1.12',
+      progress: 100,
+    }))
+    fireEvent.click(screen.getByRole('button', { name: '重启并更新' }))
+    expect(install).toHaveBeenCalledOnce()
+
+    act(() => publishState?.({ currentVersion: '0.1.11', status: 'error' }))
+    fireEvent.click(screen.getByRole('button', { name: '前往下载' }))
+    expect(openExternal).toHaveBeenCalledWith('https://github.com/jimmyrogue/SheJane/releases')
   })
 })

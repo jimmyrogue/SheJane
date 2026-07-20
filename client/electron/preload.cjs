@@ -32,6 +32,16 @@ contextBridge.exposeInMainWorld('shejaneClient', {
   setLocale: (locale) => ipcRenderer.invoke('shejane:set-locale', locale),
   setWindowButtonPosition: (position) => ipcRenderer.invoke('shejane:set-window-button-position', position),
   notify: (payload) => ipcRenderer.invoke('shejane:notify', payload),
+  updates: {
+    getState: () => ipcRenderer.invoke('shejane:update-state'),
+    check: () => ipcRenderer.invoke('shejane:update-check'),
+    install: () => ipcRenderer.invoke('shejane:update-install'),
+    onStateChange: (handler) => {
+      const wrapped = (_event, state) => handler(state)
+      ipcRenderer.on('shejane:update-state-changed', wrapped)
+      return () => ipcRenderer.removeListener('shejane:update-state-changed', wrapped)
+    },
+  },
   /** Open a file with the OS's default application — used by the
    *  right-side PptxPreview's "Open in PowerPoint" button. */
   openFileWithDefaultApp: (filePath) =>

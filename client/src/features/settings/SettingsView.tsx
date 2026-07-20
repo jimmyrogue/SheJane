@@ -52,16 +52,19 @@ function SettingRow({
 function SettingsRowButton({
   children,
   danger,
+  disabled,
   onClick,
 }: {
   children: ReactNode
   danger?: boolean
+  disabled?: boolean
   onClick: () => void
 }) {
   return (
     <button
       type="button"
       className={`settings-row-button${danger ? ' settings-row-button-danger' : ''}`}
+      disabled={disabled}
       onClick={onClick}
     >
       {children}
@@ -120,6 +123,7 @@ export function SettingsView({
   )
   const [clearMemoryConfirmOpen, setClearMemoryConfirmOpen] = useState(false)
   const [clearingMemory, setClearingMemory] = useState(false)
+  const [clientUpdate, setClientUpdate] = useState<ClientUpdateState | null>(null)
 
   const memoryEnabled = (agentSettings.memory ?? 'on') === 'on'
   const adv: AdvancedAgentSettings = agentSettings.advanced ?? {}
@@ -178,6 +182,43 @@ export function SettingsView({
   useEffect(() => {
     updateActiveSectionFromScroll()
   }, [updateActiveSectionFromScroll])
+
+  useEffect(() => {
+    if (!isDesktop) return
+    const updates = window.shejaneClient?.updates
+    if (!updates) return
+    const unsubscribe = updates.onStateChange(setClientUpdate)
+    void updates.getState().then(setClientUpdate).catch(() => undefined)
+    return unsubscribe
+  }, [isDesktop])
+
+  const updateStatus = clientUpdate?.status ?? 'unavailable'
+  const updateVersion = clientUpdate?.availableVersion ?? clientUpdate?.currentVersion ?? '—'
+  const updateProgress = typeof clientUpdate?.progress === 'number'
+    ? ` · ${Math.round(clientUpdate.progress)}%`
+    : ''
+  const updateHint = updateStatus === 'checking'
+    ? t('settings.updateChecking')
+    : updateStatus === 'downloading'
+      ? t('settings.updateDownloading', { version: updateVersion, progress: updateProgress })
+      : updateStatus === 'ready'
+        ? t('settings.updateReady', { version: updateVersion })
+        : updateStatus === 'current'
+          ? t('settings.updateLatest', { version: updateVersion })
+          : updateStatus === 'error'
+            ? t('settings.updateError')
+            : updateStatus === 'unavailable'
+              ? t('settings.updateUnavailable')
+              : t('settings.updateCurrent', { version: updateVersion })
+  const updateAction = updateStatus === 'ready'
+    ? t('settings.updateRestartAction')
+    : updateStatus === 'error'
+      ? t('settings.updateDownloadAction')
+      : updateStatus === 'checking'
+        ? t('settings.updateChecking')
+        : updateStatus === 'downloading'
+          ? `${Math.round(clientUpdate?.progress ?? 0)}%`
+          : t('settings.updateCheckAction')
 
   const selectSection = (id: SettingsSectionID) => {
     setActiveSection(id)
@@ -293,6 +334,28 @@ export function SettingsView({
               </SettingsSection>
 
               <SettingsSection id="general" title={t('settings.group.general')}>
+                {isDesktop ? (
+                  <SettingRow label={t('settings.update')} hint={updateHint}>
+                    <SettingsRowButton
+                      disabled={!window.shejaneClient?.updates || ['checking', 'downloading', 'unavailable'].includes(updateStatus)}
+                      onClick={() => {
+                        const updates = window.shejaneClient?.updates
+                        if (!updates) return
+                        const action = updateStatus === 'ready'
+                          ? updates.install()
+                          : updateStatus === 'error'
+                            ? window.shejaneClient?.openExternal?.('https://github.com/jimmyrogue/SheJane/releases')
+                            : updates.check()
+                        if (!action) return
+                        void action.catch(() => setClientUpdate((current) => current
+                          ? { ...current, status: 'error' }
+                          : null))
+                      }}
+                    >
+                      {updateAction}
+                    </SettingsRowButton>
+                  </SettingRow>
+                ) : null}
                 <SettingRow label={t('settings.language')}>
                   <Select value={locale} onValueChange={(value) => setLocale(value as Locale)}>
                     <SelectTrigger className="settings-language-select" aria-label={t('settings.language')}>

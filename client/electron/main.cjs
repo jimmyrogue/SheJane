@@ -108,6 +108,12 @@ let desktopInitializationComplete = false
 let runtimeSessionReady = false
 let runtimeTarget = { mode: 'bundled', source: 'default' }
 let runtimeConnectionError = null
+let clientAutoUpdater = null
+let promptedUpdateVersion = null
+let clientUpdateState = {
+  currentVersion: app.getVersion(),
+  status: app.isPackaged ? 'idle' : 'unavailable',
+}
 const runtimeConnectionUpdateGate = createRuntimeConnectionUpdateGate()
 const appWindowButtonPosition = { x: 29, y: 27 }
 const authWindowButtonPosition = { x: 29, y: 20 }
@@ -567,6 +573,108 @@ function setMainWindowButtonPosition(position) {
   return true
 }
 
+function publishClientUpdateState(patch) {
+  clientUpdateState = { ...clientUpdateState, ...patch }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('shejane:update-state-changed', clientUpdateState)
+  }
+  return clientUpdateState
+}
+
+async function checkClientUpdate() {
+  if (!clientAutoUpdater) {
+    return clientUpdateState
+  }
+  publishClientUpdateState({ status: 'checking', availableVersion: undefined, progress: undefined })
+  try {
+    await clientAutoUpdater.checkForUpdates()
+  } catch (error) {
+    console.warn('[updater] check failed:', error && error.message)
+    publishClientUpdateState({ status: 'error', progress: undefined })
+  }
+  return clientUpdateState
+}
+
+function installClientUpdate() {
+  if (!clientAutoUpdater || clientUpdateState.status !== 'ready') {
+    return false
+  }
+  // quitAndInstall closes windows before Electron emits before-quit. Mark this
+  // as a real quit first so the close-to-tray handler cannot swallow it.
+  app.isQuitting = true
+  clientAutoUpdater.quitAndInstall(false, true)
+  return true
+}
+
+async function promptForClientUpdate(version) {
+  if (promptedUpdateVersion === version) return
+  promptedUpdateVersion = version
+  const options = {
+    type: 'info',
+    title: currentAppName(),
+    message: desktopText(currentLocale, 'update.readyMessage', { version }),
+    detail: desktopText(currentLocale, 'update.readyDetail'),
+    buttons: [
+      desktopText(currentLocale, 'update.restartNow'),
+      desktopText(currentLocale, 'update.later'),
+    ],
+    defaultId: 0,
+    cancelId: 1,
+  }
+  const result = mainWindow
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options)
+  if (result.response === 0) {
+    installClientUpdate()
+  }
+}
+
+function startClientUpdater() {
+  if (!app.isPackaged) return
+  try {
+    const { autoUpdater } = require('electron-updater')
+    clientAutoUpdater = autoUpdater
+    autoUpdater.on('checking-for-update', () => {
+      publishClientUpdateState({ status: 'checking', progress: undefined })
+    })
+    autoUpdater.on('update-available', (info) => {
+      publishClientUpdateState({
+        status: 'downloading',
+        availableVersion: info.version,
+        progress: 0,
+      })
+    })
+    autoUpdater.on('download-progress', (progress) => {
+      publishClientUpdateState({ status: 'downloading', progress: progress.percent })
+    })
+    autoUpdater.on('update-not-available', () => {
+      publishClientUpdateState({ status: 'current', availableVersion: undefined, progress: undefined })
+    })
+    autoUpdater.on('update-downloaded', (info) => {
+      publishClientUpdateState({
+        status: 'ready',
+        availableVersion: info.version,
+        progress: 100,
+      })
+      void promptForClientUpdate(info.version).catch((error) => {
+        console.warn('[updater] prompt failed:', error && error.message)
+      })
+    })
+    autoUpdater.on('error', (error) => {
+      console.warn('[updater] failed:', error && error.message)
+      publishClientUpdateState({ status: 'error', progress: undefined })
+    })
+    void checkClientUpdate()
+  } catch (error) {
+    console.warn('[updater] unavailable:', error && error.message)
+    publishClientUpdateState({ status: 'error' })
+  }
+}
+
+ipcMain.handle('shejane:update-state', () => clientUpdateState)
+ipcMain.handle('shejane:update-check', () => checkClientUpdate())
+ipcMain.handle('shejane:update-install', () => installClientUpdate())
+
 app.whenReady().then(async () => {
   app.setName(currentAppName())
   configureApplicationMenu()
@@ -648,20 +756,7 @@ app.whenReady().then(async () => {
       desktopText(currentLocale, 'runtime.startFailed', { message: runtimeConnectionError }),
     )
   }
-  // Auto-update (packaged only). Downloads in the background and installs on
-  // quit. Works on Windows unsigned; on macOS it no-ops until the app is signed
-  // + notarized (Phase 4) — Gatekeeper rejects unsigned updates. Lazy-required
-  // and fully guarded so a missing/erroring updater never blocks startup.
-  if (app.isPackaged) {
-    try {
-      const { autoUpdater } = require('electron-updater')
-      autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-        console.warn('[updater] check failed:', err && err.message)
-      })
-    } catch (err) {
-      console.warn('[updater] unavailable:', err && err.message)
-    }
-  }
+  startClientUpdater()
 })
 
 // Marker that "real quit" was requested (vs. window-close). The close

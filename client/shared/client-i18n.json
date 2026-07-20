@@ -32,6 +32,12 @@
       "exited": "本地引擎已退出（code={code}, signal={signal}），请重启应用。",
       "startTimeout": "本地引擎启动超时，请重启应用。"
     },
+    "update": {
+      "readyMessage": "石间 v{version} 已准备好",
+      "readyDetail": "重启应用即可完成更新。",
+      "restartNow": "立即重启更新",
+      "later": "稍后"
+    },
     "dialogs": {
       "selectWorkspaceTitle": "选择本地工作区",
       "selectAttachmentsTitle": "选择附件",
@@ -73,6 +79,12 @@
       "startFailed": "Could not start the local engine: {message}",
       "exited": "The local engine exited (code={code}, signal={signal}). Restart the app.",
       "startTimeout": "The local engine timed out while starting. Restart the app."
+    },
+    "update": {
+      "readyMessage": "SheJane v{version} is ready",
+      "readyDetail": "Restart the app to finish installing the update.",
+      "restartNow": "Restart and update",
+      "later": "Later"
     },
     "dialogs": {
       "selectWorkspaceTitle": "Choose local workspace",
