@@ -207,14 +207,20 @@ void verify_job(HANDLE job) {
   if ((cpu.ControlFlags & expected_cpu_flags) != expected_cpu_flags || cpu.CpuRate != 2'000) {
     throw Win32Error("Job CPU limits changed", ERROR_INVALID_DATA);
   }
+  const ULONGLONG deadline = GetTickCount64() + 5'000;
   JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
-  if (!QueryInformationJobObject(
-          job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr)) {
-    throw_last_error("QueryInformationJobObject accounting");
+  while (true) {
+    if (!QueryInformationJobObject(
+            job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), nullptr)) {
+      throw_last_error("QueryInformationJobObject accounting");
+    }
+    if (accounting.ActiveProcesses == 0 && accounting.TotalProcesses >= 1) return;
+    if (GetTickCount64() >= deadline) break;
+    Sleep(10);
   }
-  if (accounting.ActiveProcesses != 0 || accounting.TotalProcesses < 1) {
-    throw Win32Error("Job cleanup changed", ERROR_INVALID_DATA);
-  }
+  std::cerr << "job accounting active=" << accounting.ActiveProcesses
+            << " total=" << accounting.TotalProcesses << "\n";
+  throw Win32Error("Job cleanup changed", ERROR_INVALID_DATA);
 }
 
 int network_denial_error() {
