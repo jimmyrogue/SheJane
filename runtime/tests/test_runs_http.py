@@ -176,6 +176,18 @@ def test_cancel_command_is_idempotent_and_rejects_retargeting(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class BlockingProviderStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'event: llm.delta\ndata: {"content_delta": "still running"}\n\n'
+            await asyncio.Event().wait()
+
+    def blocking_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=BlockingProviderStream(), request=request)
+
+    monkeypatch.setattr(
+        "tests.streaming_model.httpx.AsyncClient",
+        _patched_async_client(blocking_handler),
+    )
     coordinator = client.app.state.coordinator
     original_cancel_run = coordinator.cancel_run
     cancel_run_calls = 0
