@@ -358,7 +358,7 @@ std::wstring app_container_pipe_name(PSID sid, const std::wstring& name) {
   }
   std::wstring path(buffer.data());
   if (path.empty() || path.front() != L'\\') path.insert(path.begin(), L'\\');
-  return L"\\\\.\\pipe" + path + L"\\" + name;
+  return L"\\\\.\\pipe" + path + L"\\LOCAL\\" + name;
 }
 
 Handle connect_pipe(
