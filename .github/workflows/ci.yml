@@ -201,4 +201,4 @@ jobs:
         working-directory: runtime
 
       - name: Run Runtime E2E
-        run: make test-e2e
+        run: xvfb-run --auto-servernum make test-e2e
