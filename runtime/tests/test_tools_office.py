@@ -17,6 +17,7 @@ import pytest
 from docx import Document
 from openpyxl import Workbook
 
+from shejane_runtime.agent.context_builder import RuntimeContext
 from shejane_runtime.tools.office import (
     OFFICE_READ_TOOLS,
     OFFICE_WRITE_TOOLS,
@@ -45,6 +46,7 @@ from shejane_runtime.tools.office import (
     office_update_paragraph,
     office_update_slide,
 )
+from shejane_runtime.tools.runtime import RuntimeToolExecution, bind_runtime_tool_execution
 
 
 def _make_docx(tmp_path: Path) -> Path:
@@ -81,6 +83,33 @@ def _make_xlsx(tmp_path: Path) -> Path:
     return p
 
 
+def _runtime_attachment_execution(
+    tmp_path: Path,
+    original: Path,
+    virtual_path: str,
+) -> RuntimeToolExecution:
+    from shejane_runtime.agent.builder import _build_agent_backend
+
+    snapshot = tmp_path / "runtime-input-snapshot"
+    snapshot.write_bytes(original.read_bytes())
+    original.unlink()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    backend = _build_agent_backend(
+        effective_workspace=str(scratch),
+        skills_dirs=[],
+        memory_sources=[],
+        attachment_bindings=[
+            {"source_path": str(snapshot), "virtual_path": virtual_path},
+        ],
+    )
+    return RuntimeToolExecution(
+        context=RuntimeContext(backend=backend),
+        operation_id="op-office-attachment",
+        tool_call_id="call-office-attachment",
+    )
+
+
 def test_office_read_docx_returns_markdown(tmp_path: Path) -> None:
     """office.read on a .docx → markdown with the headings preserved."""
     path = _make_docx(tmp_path)
@@ -110,6 +139,104 @@ def test_office_read_xlsx_returns_markdown(tmp_path: Path) -> None:
     assert "Costs" in md
     # Cell contents should surface.
     assert "Q1" in md and "100" in md
+
+
+def test_office_read_uses_runtime_owned_attachment_without_a_workspace(tmp_path: Path) -> None:
+    original = _make_docx(tmp_path)
+    virtual_path = "/attachments/contract.docx"
+    execution = _runtime_attachment_execution(tmp_path, original, virtual_path)
+    with bind_runtime_tool_execution(execution):
+        result = office_read.invoke(
+            {"path": virtual_path},
+            config={"configurable": {"workspace_root": ""}},
+        )
+
+    assert result["ok"] == "true"
+    assert result["path"] == virtual_path
+    assert "Executive Summary" in result["markdown"]
+
+
+def test_office_outline_uses_runtime_owned_attachment_without_a_workspace(tmp_path: Path) -> None:
+    original = _make_docx(tmp_path)
+    virtual_path = "/attachments/contract.docx"
+    execution = _runtime_attachment_execution(tmp_path, original, virtual_path)
+    with bind_runtime_tool_execution(execution):
+        result = office_outline.invoke(
+            {"path": virtual_path},
+            config={"configurable": {"workspace_root": ""}},
+        )
+
+    assert result["ok"] == "true"
+    assert result["path"] == virtual_path
+    assert result["headings"][0]["text"] == "Executive Summary"
+
+
+def test_office_read_range_uses_runtime_owned_attachment_without_a_workspace(
+    tmp_path: Path,
+) -> None:
+    original = _make_xlsx(tmp_path)
+    virtual_path = "/attachments/report.xlsx"
+    execution = _runtime_attachment_execution(tmp_path, original, virtual_path)
+    with bind_runtime_tool_execution(execution):
+        result = office_read_range.invoke(
+            {"path": virtual_path, "sheet": "Sales", "range": "A1:B2"},
+            config={"configurable": {"workspace_root": ""}},
+        )
+
+    assert result["ok"] == "true"
+    assert result["path"] == virtual_path
+    assert result["values"] == [["Quarter", "Revenue"], ["Q1", 100]]
+
+
+def test_office_read_slides_uses_runtime_owned_attachment_without_a_workspace(
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "deck.pptx"
+    assert office_create_pptx.func(path=str(original), title="Attachment deck")["ok"] == "true"
+    virtual_path = "/attachments/deck.pptx"
+    execution = _runtime_attachment_execution(tmp_path, original, virtual_path)
+    with bind_runtime_tool_execution(execution):
+        result = office_read_slides.invoke(
+            {"path": virtual_path},
+            config={"configurable": {"workspace_root": ""}},
+        )
+
+    assert result["ok"] == "true"
+    assert result["path"] == virtual_path
+    assert result["slides"][0]["title"] == "Attachment deck"
+
+
+def test_office_read_cannot_access_an_unbound_attachment_route(tmp_path: Path) -> None:
+    attachment = _make_docx(tmp_path)
+    execution = _runtime_attachment_execution(
+        tmp_path,
+        attachment,
+        "/attachments/allowed.docx",
+    )
+
+    with bind_runtime_tool_execution(execution):
+        result = office_read.invoke(
+            {"path": "/attachments/not-allowed.docx"},
+            config={"configurable": {"workspace_root": ""}},
+        )
+
+    assert result["ok"] == "false"
+    assert "unavailable" in result["error"]
+
+
+def test_office_write_cannot_mutate_a_runtime_attachment(tmp_path: Path) -> None:
+    attachment = _make_docx(tmp_path)
+    virtual_path = "/attachments/contract.docx"
+    execution = _runtime_attachment_execution(tmp_path, attachment, virtual_path)
+
+    with bind_runtime_tool_execution(execution):
+        result = office_find_replace.invoke(
+            {"path": virtual_path, "find": "Executive", "replace": "Changed"},
+            config={"configurable": {"workspace_root": ""}},
+        )
+
+    assert result["ok"] == "false"
+    assert result["error"] == "no workspace open"
 
 
 def test_office_read_missing_file_returns_error(tmp_path: Path) -> None:

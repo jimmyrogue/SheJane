@@ -90,7 +90,7 @@ task(subagent_type="researcher",
 ## 处理 office 文档（.docx / .xlsx）
 
 ### 读
-遇到 .docx 或 .xlsx 文件**不要用 `read_file`**——会拿到一堆 ZIP/XML 噪声没法分析。改用：
+遇到 .docx 或 .xlsx 文件优先使用 Office 读取工具，以获得结构化结果；`read_file` 也能从 Runtime 附件提取通用文本，但不提供工作表范围、幻灯片或文档结构：
 - `office.outline(path)`：先看结构（heading 列表 / sheet 名称和行列数），决定要不要读全文。文件大时尤其有用。
 - `office.read(path)`：拿 LLM 友好的 markdown 全文，已自动展平表格、标题、公式结果。
 - `office.read_range(path, sheet, range)`：xlsx 专用，只读一个 A1:C10 这样的小范围，返回带类型 + 公式原文的 JSON。比 `office.read` 精确，适合数据分析。

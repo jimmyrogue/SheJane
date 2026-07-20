@@ -27,6 +27,7 @@ from typing import Any
 
 import httpx
 import pytest
+from docx import Document
 from fastapi.testclient import TestClient
 
 from shejane_runtime.config import reset_settings_for_tests
@@ -185,6 +186,76 @@ def _post_run_and_stream(
     ) as resp:
         body_text = resp.read().decode("utf-8")
     return _parse_sse(body_text)
+
+
+def test_run_reads_a_docx_snapshot_after_the_original_is_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    attachment = tmp_path / "contract.docx"
+    document = Document()
+    document.add_heading("Runtime-owned agreement", level=1)
+    document.add_paragraph("Snapshot survives removal of the original file.")
+    document.save(attachment)
+    handler = RecordingHandler(
+        scripts=[
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_read_docx_snapshot",
+                        "name": "read_file",
+                        "arguments": {"file_path": "/attachments/contract.docx"},
+                    },
+                ),
+                ("llm.done", {"request_id": "read-docx", "finish_reason": "tool_calls"}),
+            ],
+            [
+                (
+                    "llm.tool_call",
+                    {
+                        "id": "call_office_read_docx_snapshot",
+                        "name": "office.read",
+                        "arguments": {"path": "/attachments/contract.docx"},
+                    },
+                ),
+                ("llm.done", {"request_id": "office-docx", "finish_reason": "tool_calls"}),
+            ],
+            [
+                ("llm.delta", {"content_delta": "Runtime-owned agreement"}),
+                ("llm.done", {"request_id": "finish-docx", "finish_reason": "stop"}),
+            ],
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        body = run_command(
+            "summarize the attachment",
+            attachment_paths=[str(attachment)],
+            required_capabilities=["agent.run", "agent.stream", "attachments"],
+        )
+        created = client.post(
+            "/v1/runs",
+            headers={"Authorization": "Bearer tok"},
+            json=body,
+        )
+        assert created.status_code == 200, created.text
+        attachment.unlink()
+
+        with client.stream(
+            "GET",
+            f"/v1/runs/{created.json()['id']}/stream",
+            headers={"Authorization": "Bearer tok"},
+        ) as response:
+            events = _parse_sse(response.read().decode("utf-8"))
+
+    completed_tools = [payload for name, payload in events if name == "tool.completed"]
+    assert {payload["name"] for payload in completed_tools} == {"read_file", "office.read"}
+    assert "Snapshot survives removal" in json.dumps(handler.requests)
+    office_result = next(payload for payload in completed_tools if payload["name"] == "office.read")
+    assert '"ok": "true"' in office_result["content"]
+    assert '"markdown"' in office_result["content"]
+    completed = next(payload for name, payload in events if name == "run.completed")
+    assert "Runtime-owned agreement" in completed["final_text"]
 
 
 # ---- capability 1: HumanInTheLoop on destructive tool ----

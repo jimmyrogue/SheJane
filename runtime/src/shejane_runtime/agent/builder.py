@@ -264,6 +264,7 @@ def _agent_backend_routes(
                 max_file_size_mb=10,
             ),
             source.name,
+            display_name=Path(item["virtual_path"]).name,
         )
         routes[item["virtual_path"]] = backend
     for root in (path.expanduser() for path in skills_dirs):

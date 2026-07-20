@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from docx import Document
 from langgraph.store.memory import InMemoryStore
 
 from shejane_runtime.auth import LOCAL_OWNER_PRINCIPAL_ID
@@ -146,6 +147,64 @@ def test_pdf_attachment_is_exposed_as_model_readable_text(tmp_path: Path) -> Non
     assert selected.file_data is not None
     assert selected.file_data["encoding"] == "utf-8"
     assert "Rental receipt" in selected.file_data["content"]
+
+
+def test_docx_attachment_snapshot_is_exposed_as_model_readable_text(tmp_path: Path) -> None:
+    from shejane_runtime.agent.builder import _build_agent_backend
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    original = tmp_path / "contract.docx"
+    document = Document()
+    document.add_heading("Runtime-owned contract", level=1)
+    document.add_paragraph("The immutable attachment snapshot is readable.")
+    document.save(original)
+    snapshot = tmp_path / "2170c9b2f13c22ccce526b85594ec9d4"
+    snapshot.write_bytes(original.read_bytes())
+    original.unlink()
+
+    backend = _build_agent_backend(
+        effective_workspace=str(workspace),
+        skills_dirs=[],
+        memory_sources=[],
+        attachment_bindings=[
+            {
+                "source_path": str(snapshot),
+                "virtual_path": "/attachments/contract.docx",
+            }
+        ],
+    )
+
+    selected = backend.read("/attachments/contract.docx")
+    assert selected.error is None
+    assert selected.file_data is not None
+    assert "Runtime-owned contract" in selected.file_data["content"]
+    assert "immutable attachment snapshot" in selected.file_data["content"]
+
+
+def test_document_attachment_read_keeps_the_model_file_size_limit(tmp_path: Path) -> None:
+    from shejane_runtime.agent.builder import _build_agent_backend
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    snapshot = tmp_path / "large-snapshot"
+    snapshot.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+    backend = _build_agent_backend(
+        effective_workspace=str(workspace),
+        skills_dirs=[],
+        memory_sources=[],
+        attachment_bindings=[
+            {
+                "source_path": str(snapshot),
+                "virtual_path": "/attachments/large.docx",
+            }
+        ],
+    )
+
+    selected = backend.read("/attachments/large.docx")
+    assert selected.file_data is None
+    assert selected.error is not None
+    assert "too large to read" in selected.error
 
 
 def _minimal_pdf(text: str) -> bytes:

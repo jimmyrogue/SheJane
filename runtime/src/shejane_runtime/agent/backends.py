@@ -8,6 +8,7 @@ import os
 import re
 import signal
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -35,22 +36,26 @@ from markitdown import MarkItDown
 class _BoundedReadMixin:
     """Apply the advertised backend file-size limit to direct reads."""
 
-    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+    def _size_error(self, file_path: str) -> str | None:
         try:
             resolved_path = self._resolve_path(file_path)  # type: ignore[attr-defined]
             max_bytes = int(self.max_file_size_bytes)  # type: ignore[attr-defined]
             if resolved_path.exists() and resolved_path.is_file():
                 size = resolved_path.stat().st_size
                 if size > max_bytes:
-                    return ReadResult(
-                        error=(
-                            f"File '{file_path}' is too large to read "
-                            f"({size} bytes; limit {max_bytes} bytes / {max_bytes // (1024 * 1024)} MB)"
-                        )
+                    return (
+                        f"File '{file_path}' is too large to read "
+                        f"({size} bytes; limit {max_bytes} bytes / "
+                        f"{max_bytes // (1024 * 1024)} MB)"
                     )
         except (OSError, RuntimeError):
             # Preserve the backend's canonical path/not-found error shape.
             pass
+        return None
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        if error := self._size_error(file_path):
+            return ReadResult(error=error)
         return super().read(file_path, offset, limit)  # type: ignore[misc]
 
     async def aread(
@@ -60,6 +65,18 @@ class _BoundedReadMixin:
         limit: int = 2000,
     ) -> ReadResult:
         return await asyncio.to_thread(self.read, file_path, offset, limit)
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        responses: list[FileDownloadResponse] = []
+        for path in paths:
+            if error := self._size_error(path):
+                responses.append(FileDownloadResponse(path=path, error=error))
+            else:
+                responses.extend(super().download_files([path]))  # type: ignore[misc]
+        return responses
+
+    async def adownload_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return await asyncio.to_thread(self.download_files, paths)
 
 
 class RuntimeFilesystemBackend(_BoundedReadMixin, FilesystemBackend):
@@ -386,47 +403,67 @@ class ReadOnlyBackend:
 class ReadOnlyFileBackend(ReadOnlyBackend):
     """Expose one source file at a CompositeBackend route."""
 
-    def __init__(self, delegate: Any, file_name: str) -> None:
+    def __init__(
+        self,
+        delegate: Any,
+        file_name: str,
+        *,
+        display_name: str | None = None,
+    ) -> None:
         super().__init__(delegate)
         self._file_name = file_name
-        self._pdf_text: str | None = None
+        self._display_name = display_name or file_name
+        self._converted_text: str | None = None
 
     def _source_key(self, requested: str) -> str:
         return f"/{self._file_name}" if requested == "/" else "/__not_available__"
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        if file_path == "/" and self._file_name.lower().endswith(".pdf"):
-            return self._read_pdf(offset=offset, limit=limit)
+        if file_path == "/" and Path(self._display_name).suffix.lower() in {
+            ".docx",
+            ".pdf",
+            ".pptx",
+            ".xlsx",
+        }:
+            return self._read_document(offset=offset, limit=limit)
         return self._delegate.read(self._source_key(file_path), offset=offset, limit=limit)
 
     async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        if file_path == "/" and self._file_name.lower().endswith(".pdf"):
-            return await asyncio.to_thread(self._read_pdf, offset=offset, limit=limit)
+        if file_path == "/" and Path(self._display_name).suffix.lower() in {
+            ".docx",
+            ".pdf",
+            ".pptx",
+            ".xlsx",
+        }:
+            return await asyncio.to_thread(self._read_document, offset=offset, limit=limit)
         return await self._delegate.aread(
             self._source_key(file_path),
             offset=offset,
             limit=limit,
         )
 
-    def _read_pdf(self, *, offset: int, limit: int) -> ReadResult:
-        if self._pdf_text is None:
+    def _read_document(self, *, offset: int, limit: int) -> ReadResult:
+        if self._converted_text is None:
             response = self._delegate.download_files([f"/{self._file_name}"])[0]
             if response.error:
                 return ReadResult(error=response.error)
             if response.content is None:
-                return ReadResult(error="PDF attachment has no readable content")
+                return ReadResult(error="Attachment has no readable content")
+            extension = Path(self._display_name).suffix.lower()
             try:
                 converted = MarkItDown().convert_stream(
                     io.BytesIO(response.content),
-                    file_extension=".pdf",
+                    file_extension=extension,
                 )
             except Exception as exc:  # MarkItDown wraps parser failures by format.
-                return ReadResult(error=f"Error reading PDF attachment: {type(exc).__name__}")
-            self._pdf_text = converted.text_content
+                return ReadResult(
+                    error=f"Error reading {extension} attachment: {type(exc).__name__}"
+                )
+            self._converted_text = converted.text_content
 
-        if not self._pdf_text.strip():
-            return ReadResult(error="PDF attachment contains no extractable text")
-        lines = self._pdf_text.splitlines(keepends=True)
+        if not self._converted_text.strip():
+            return ReadResult(error="Attachment contains no extractable text")
+        lines = self._converted_text.splitlines(keepends=True)
         if offset >= len(lines):
             return ReadResult(
                 error=f"Line offset {offset} exceeds file length ({len(lines)} lines)"

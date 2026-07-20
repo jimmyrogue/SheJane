@@ -24,12 +24,14 @@ All write tools also use an atomic write pattern: write to
 valid OOXML file, then `os.replace(tmp, target)`. A mid-write failure
 leaves `target` exactly as it was (the last known-good edit).
 
-Path safety: when tools run inside an agent run, paths must resolve under
-the run's authorized workspace root from the LangGraph config.
+Path safety: read tools accept either a path under the authorized workspace
+or an exact `/attachments/...` route owned by the current Run. Write tools
+remain restricted to the authorized workspace and never mutate attachments.
 """
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import shutil
@@ -50,6 +52,8 @@ from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.utils.cell import range_boundaries
 from pptx import Presentation as PptxPresentation
 from pptx.util import Inches
+
+from .runtime import current_runtime_tool_execution
 
 # Module-level converter — MarkItDown is cheap to construct but creating it
 # once is even cheaper, and it's thread-safe for the read API we use.
@@ -123,11 +127,33 @@ def _validate_path(path: str) -> tuple[str | None, str | None, str | None]:
             None,
             None,
             (
-                f"unsupported extension {ext!r}; office.* only handles .docx and .xlsx "
+                f"unsupported extension {ext!r}; office.* only handles .docx, .xlsx, and .pptx "
                 "(use read_file for plain text, image.* for images)"
             ),
         )
     return resolved, kind, None
+
+
+def _resolve_read_source(path: str) -> tuple[str | bytes | None, str | None, str | None]:
+    """Resolve a physical workspace file or an exact Runtime attachment route."""
+    if not path.startswith("/attachments/"):
+        return _validate_path(path)
+    kind = _EXTENSION_KIND.get(Path(path).suffix.lower())
+    if kind is None:
+        return None, None, f"unsupported attachment extension: {Path(path).suffix.lower()!r}"
+    try:
+        context = current_runtime_tool_execution().context
+    except RuntimeError:
+        return None, None, "attachment is not bound to a Runtime tool execution"
+    backend = getattr(context, "backend", None)
+    if backend is None or not hasattr(backend, "download_files"):
+        return None, None, "attachment backend is unavailable"
+    response = backend.download_files([path])[0]
+    if response.error:
+        return None, None, f"attachment is unavailable: {response.error}"
+    if response.content is None:
+        return None, None, "attachment has no readable content"
+    return response.content, kind, None
 
 
 def _resolve_write_target(original_path: str) -> str:
@@ -260,10 +286,8 @@ def _write_error(
 def office_read(path: str) -> dict[str, Any]:
     """Read a Word (.docx) or Excel (.xlsx) file as LLM-ready markdown.
 
-    Prefer this over `read_file` for these extensions — `read_file` would
-    return the raw ZIP/XML which is useless for analysis. This tool runs
-    `markitdown` which converts headings, paragraphs, tables, and cells
-    into clean markdown the LLM can reason about directly.
+    This tool runs `markitdown` which converts headings, paragraphs, tables,
+    and cells into clean markdown the LLM can reason about directly.
 
     Does NOT open the right-side document preview panel. If you want the
     user to see the file rendered, mention the filename in your reply
@@ -271,9 +295,8 @@ def office_read(path: str) -> dict[str, Any]:
     clicks, or after a successful office.* WRITE tool completes.
 
     Args:
-        path: Absolute filesystem path to a .docx or .xlsx file. Must
-              already exist. Select the workspace in the client first if the file
-              lives in a directory the agent hasn't been authorized for.
+        path: Exact Runtime `/attachments/...` route, or an existing absolute
+              path under the authorized workspace.
 
     Returns:
         dict with keys:
@@ -284,16 +307,24 @@ def office_read(path: str) -> dict[str, Any]:
           truncated ("true" / "false") — set when content exceeded the cap
           error (only present when ok="false")
     """
-    resolved, kind, err = _validate_path(path)
+    source, kind, err = _resolve_read_source(path)
     if err is not None:
         return {"ok": "false", "error": err}
-    assert resolved is not None and kind is not None  # for type checker
+    assert source is not None and kind is not None  # for type checker
+    reported_path = path if isinstance(source, bytes) else source
     try:
-        result = _md.convert(resolved)
+        result = (
+            _md.convert_stream(
+                io.BytesIO(source),
+                file_extension=Path(path).suffix.lower(),
+            )
+            if isinstance(source, bytes)
+            else _md.convert(source)
+        )
     except Exception as exc:
         return {
             "ok": "false",
-            "path": resolved,
+            "path": reported_path,
             "kind": kind,
             "error": f"failed to convert {kind}: {exc.__class__.__name__}: {exc}",
         }
@@ -308,14 +339,14 @@ def office_read(path: str) -> dict[str, Any]:
         )
     return {
         "ok": "true",
-        "path": resolved,
+        "path": reported_path,
         "kind": kind,
         "markdown": text,
         "truncated": "true" if truncated else "false",
     }
 
 
-def _outline_docx(path: str) -> dict[str, Any]:
+def _outline_docx(path: Any) -> dict[str, Any]:
     """Cheap structural summary of a .docx — heading text and paragraph count."""
     doc = DocxDocument(path)
     headings: list[dict[str, Any]] = []
@@ -340,7 +371,7 @@ def _outline_docx(path: str) -> dict[str, Any]:
     }
 
 
-def _outline_xlsx(path: str) -> dict[str, Any]:
+def _outline_xlsx(path: Any) -> dict[str, Any]:
     """Cheap structural summary of a .xlsx — sheet names + dimensions."""
     wb = load_workbook(path, read_only=True, data_only=True)
     sheets: list[dict[str, Any]] = []
@@ -409,7 +440,7 @@ def _slide_notes(slide) -> str:
     return slide.notes_slide.notes_text_frame.text.strip()
 
 
-def _outline_pptx(path: str) -> dict[str, Any]:
+def _outline_pptx(path: Any) -> dict[str, Any]:
     """Structural summary of a .pptx — per-slide title, bullets, notes,
     shape counts. Both `office.outline` and `office.read_slides` consume
     this; the panel preview also fetches it through a small HTTP
@@ -442,7 +473,8 @@ def office_outline(path: str) -> dict[str, Any]:
     O(metadata); reading the full markdown is O(file).
 
     Args:
-        path: Absolute filesystem path to a .docx, .xlsx, or .pptx file.
+        path: Exact Runtime `/attachments/...` route, or an existing absolute
+              path under the authorized workspace.
 
     Returns:
         dict with keys:
@@ -455,27 +487,29 @@ def office_outline(path: str) -> dict[str, Any]:
                      notes, shape_count, image_count}), slide_count.
           error (only present when ok="false")
     """
-    resolved, kind, err = _validate_path(path)
+    source, kind, err = _resolve_read_source(path)
     if err is not None:
         return {"ok": "false", "error": err}
-    assert resolved is not None and kind is not None
+    assert source is not None and kind is not None
+    reported_path = path if isinstance(source, bytes) else source
+    parser_input = io.BytesIO(source) if isinstance(source, bytes) else source
     try:
         if kind == "word":
-            details = _outline_docx(resolved)
+            details = _outline_docx(parser_input)
         elif kind == "excel":
-            details = _outline_xlsx(resolved)
+            details = _outline_xlsx(parser_input)
         else:  # powerpoint
-            details = _outline_pptx(resolved)
+            details = _outline_pptx(parser_input)
     except Exception as exc:
         return {
             "ok": "false",
-            "path": resolved,
+            "path": reported_path,
             "kind": kind,
             "error": f"failed to read {kind} outline: {exc.__class__.__name__}: {exc}",
         }
     return {
         "ok": "true",
-        "path": resolved,
+        "path": reported_path,
         "kind": kind,
         **details,
     }
@@ -1282,7 +1316,7 @@ def office_read_range(
     cells.
 
     Args:
-        path: .xlsx to read (may be original or `.edited` copy).
+        path: Runtime `/attachments/...` route or workspace .xlsx path.
         sheet: sheet name (None = active).
         range: A1-style range like "A1:C10" or single cell "B5".
 
@@ -1295,21 +1329,34 @@ def office_read_range(
           values   — 2D list, computed values (formulas → cached result)
           formulas — 2D list, formula text where present, else None
     """
-    resolved, kind, err = _validate_path(path)
+    source, kind, err = _resolve_read_source(path)
     if err is not None:
         return {"ok": "false", "error": err}
-    assert resolved is not None and kind is not None
+    assert source is not None and kind is not None
+    reported_path = path if isinstance(source, bytes) else source
     if kind != "excel":
-        return {"ok": "false", "error": "office.read_range requires a .xlsx file", "path": resolved}
+        return {
+            "ok": "false",
+            "error": "office.read_range requires a .xlsx file",
+            "path": reported_path,
+        }
     try:
         # Two passes: data_only=True for cached values, data_only=False
         # for formula text. openpyxl can't give both in one open.
-        wb_values = load_workbook(resolved, read_only=True, data_only=True)
-        wb_formulas = load_workbook(resolved, read_only=True, data_only=False)
+        wb_values = load_workbook(
+            io.BytesIO(source) if isinstance(source, bytes) else source,
+            read_only=True,
+            data_only=True,
+        )
+        wb_formulas = load_workbook(
+            io.BytesIO(source) if isinstance(source, bytes) else source,
+            read_only=True,
+            data_only=False,
+        )
     except Exception as exc:
         return {
             "ok": "false",
-            "path": resolved,
+            "path": reported_path,
             "kind": kind,
             "error": f"failed to open .xlsx: {exc.__class__.__name__}: {exc}",
         }
@@ -1333,7 +1380,7 @@ def office_read_range(
         wb_formulas.close()
         return {
             "ok": "false",
-            "path": resolved,
+            "path": reported_path,
             "kind": kind,
             "error": f"failed to read range {range!r}: {exc.__class__.__name__}: {exc}",
         }
@@ -1342,7 +1389,7 @@ def office_read_range(
     wb_formulas.close()
     return {
         "ok": "true",
-        "path": resolved,
+        "path": reported_path,
         "kind": kind,
         "sheet": sheet_name,
         "range": range,
@@ -1796,7 +1843,7 @@ def office_read_slides(path: str) -> dict[str, Any]:
     outline view.
 
     Args:
-        path: .pptx to read (may be original or `.edited` copy).
+        path: Runtime `/attachments/...` route or workspace .pptx path.
 
     Returns:
         dict with:
@@ -1805,26 +1852,27 @@ def office_read_slides(path: str) -> dict[str, Any]:
                   shape_count, image_count})
           slide_count
     """
-    resolved, kind, err = _validate_path(path)
+    source, kind, err = _resolve_read_source(path)
     if err is not None:
         return {"ok": "false", "error": err}
-    assert resolved is not None and kind is not None
+    assert source is not None and kind is not None
+    reported_path = path if isinstance(source, bytes) else source
     if kind != "powerpoint":
         return {
             "ok": "false",
-            "path": resolved,
+            "path": reported_path,
             "error": "office.read_slides requires a .pptx file",
         }
     try:
-        details = _outline_pptx(resolved)
+        details = _outline_pptx(io.BytesIO(source) if isinstance(source, bytes) else source)
     except Exception as exc:
         return {
             "ok": "false",
-            "path": resolved,
+            "path": reported_path,
             "kind": kind,
             "error": f"failed to read .pptx: {exc.__class__.__name__}: {exc}",
         }
-    return {"ok": "true", "path": resolved, "kind": kind, **details}
+    return {"ok": "true", "path": reported_path, "kind": kind, **details}
 
 
 # Phase 1 surface (read-only).
