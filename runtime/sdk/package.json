@@ -1,0 +1,45 @@
+{
+  "name": "@shejane/runtime-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the SheJane Harness Runtime HTTP and SSE protocols.",
+  "license": "AGPL-3.0-only",
+  "author": "TAO LIANG <tliang92@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jimmyrogue/SheJane",
+    "directory": "runtime/sdk"
+  },
+  "type": "module",
+  "files": [
+    "dist",
+    "openapi.json"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./generated": {
+      "types": "./dist/generated.d.ts",
+      "import": "./dist/generated.js"
+    },
+    "./openapi.json": "./openapi.json"
+  },
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
+    "generate": "openapi-typescript openapi.json -o src/generated.ts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

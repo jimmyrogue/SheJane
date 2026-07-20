@@ -139,7 +139,7 @@ plugin digest     sha256:035f925bb43fc47bf655a55377eb929085700b8e63ff5a15a967600
 
 The real VM suite passes probe, exact thumbnail/frame/audio hashes, hostile/truncated
 inputs, cancellation with no partial Artifact, and deterministic replay. These gates
-are wired into `release-desktop.yml` against the final packaged VM assets. Until that
+are wired into `release-client.yml` against the final packaged VM assets. Until that
 workflow succeeds with real Developer ID signing and notarization, `release_ci_gate`
 and Plugin Registry remain closed. Linux/amd64 and Windows require independent assets
 and equivalent native evidence.

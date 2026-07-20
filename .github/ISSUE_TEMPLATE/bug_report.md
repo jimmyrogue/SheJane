@@ -23,12 +23,12 @@ What you expected to happen instead.
 
 ### Environment
 
-- Component: <!-- Runtime / Desktop / Runtime SDK -->
+- Module / layer: <!-- Client / Runtime core / Runtime SDK / Runtime plugins -->
 - OS:
 - Commit / version:
 - Provider kind and model ID:
 
 ### Logs / screenshots
 
-Relevant output from `make logs-dev`, `make doctor`, or the console.
+Relevant output from `make logs`, `make doctor`, or the console.
 Redact any secrets.

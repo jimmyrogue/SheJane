@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PostToolUse hook — when Claude edits api_schemas.py (the daemon's
+# PostToolUse hook — when Claude edits api_schemas.py (the runtime's
 # pydantic source-of-truth), automatically regenerate openapi.json +
 # generated.ts so subsequent edits see the up-to-date TS types.
 #
@@ -44,8 +44,8 @@ fi
 # Tell Claude WHAT changed in the generated artifacts so it knows
 # whether to update consumers.
 diff_summary=$(git diff --stat -- \
-  packages/runtime-sdk/openapi.json \
-  packages/runtime-sdk/src/generated.ts 2>/dev/null | tail -5)
+  runtime/sdk/openapi.json \
+  runtime/sdk/src/generated.ts 2>/dev/null | tail -5)
 if [[ -n "$diff_summary" ]]; then
   echo "→ make schemas regenerated openapi.json + generated.ts:" >&2
   echo "$diff_summary" >&2

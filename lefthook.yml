@@ -17,7 +17,7 @@ pre-commit:
   parallel: true
   commands:
 
-    # --- Python (local-host daemon) ---
+    # --- Python (Runtime) ---
     # `ruff check` catches lint errors (F841 unused var, B-series bugs,
     # …). `ruff format --check` rejects unformatted code without
     # writing — write happens in the editor.
@@ -25,24 +25,24 @@ pre-commit:
     # `root:` makes lefthook (a) cd to that subdir before running and
     # (b) strip the prefix from {staged_files} so ruff sees the local
     # path. Without this, `{staged_files}` returns repo-root paths
-    # which become broken after `cd services/runtime`.
+    # which become broken after `cd runtime`.
     ruff-check:
-      root: services/runtime
-      glob: "*.py"
+      root: runtime
+      glob: "{src,tests}/**/*.py"
       run: uv run ruff check {staged_files}
     ruff-format:
-      root: services/runtime
-      glob: "*.py"
+      root: runtime
+      glob: "{src,tests}/**/*.py"
       run: uv run ruff format --check {staged_files}
 
     # --- Custom project guard ---
-    # Defense in depth: no platform-paid keys read from daemon env.
-    # The architecture is gateway-only; this script catches the
+    # Defense in depth: no platform-paid keys read from runtime env.
+    # The architecture uses the Runtime credential store; this script catches the
     # pattern slipping back via copy-paste or careless refactor.
     no-platform-keys:
-      # Run unconditionally on every commit touching daemon code —
+      # Run unconditionally on every commit touching runtime code —
       # cheap (sub-50ms grep) and protects the Runtime credential boundary.
-      glob: "services/runtime/**/*.py"
+      glob: "runtime/**/*.py"
       run: ./scripts/check.sh platform-keys
 
     # --- Forbidden files ---

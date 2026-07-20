@@ -1,6 +1,6 @@
 # Office behavior baseline
 
-> Captured: 2026-07-15 from `services/runtime/local_host/tools/office.py`
+> Captured: 2026-07-15 from `runtime/src/shejane_runtime/tools/office.py`
 >
 > Evidence: `uv run python -m pytest tests/test_tools_office.py -q` → `51 passed`
 

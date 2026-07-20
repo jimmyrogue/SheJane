@@ -6,7 +6,7 @@
 
 ## Overview
 
-SheJane is a local-first agentic chat application. The Electron Desktop submits commands to a loopback Python Runtime; the Runtime owns conversations, Runs, model/provider configuration, tool policy, receipts, workspaces, credentials, and Artifacts. The plugin platform adds installable code and data to that Runtime boundary.
+SheJane is a local-first agentic chat application. The Electron Client submits commands to a loopback Python Runtime; the Runtime owns conversations, Runs, model/provider configuration, tool policy, receipts, workspaces, credentials, and Artifacts. The plugin platform adds installable code and data to that Runtime boundary.
 
 The security goal is not “plugins are trusted after installation.” The goal is that a malicious, compromised, buggy, or prompt-influenced plugin cannot exceed the exact capability and resource lease issued for one Action invocation, and cannot forge a durable result.
 
@@ -23,12 +23,12 @@ This model covers package ingestion, registry state, Run binding, Action dispatc
 
 Current repository evidence shaping the design:
 
-- `services/runtime/local_host/agent/builder.py` uses a local Deep Agents backend; its shell execution is host-capable and must not be exposed as a plugin executor.
-- `services/runtime/local_host/middleware/tool_review.py` and `tool_execution.py` provide approval, operation identity, receipts, recovery, and Artifact conversion that plugin Actions must reuse.
-- `services/runtime/local_host/runs.py` and `store/sqlite.py` own Run acceptance, leases, checkpoints, and durable state.
-- `services/runtime/local_host/tools/mcp_stdio.py` provides useful bounded subprocess lifecycle patterns, but MCP transport is not the plugin security boundary.
-- `services/runtime/local_host/tools/office.py` is the behavior baseline for future Office plugins.
-- `apps/desktop/electron.vite.config.ts` currently sets Electron renderer sandboxing independently of Runtime plugin isolation. Renderer sandbox state does not sandbox Runtime workers.
+- `runtime/src/shejane_runtime/agent/builder.py` uses a local Deep Agents backend; its shell execution is host-capable and must not be exposed as a plugin executor.
+- `runtime/src/shejane_runtime/middleware/tool_review.py` and `tool_execution.py` provide approval, operation identity, receipts, recovery, and Artifact conversion that plugin Actions must reuse.
+- `runtime/src/shejane_runtime/runs.py` and `store/sqlite.py` own Run acceptance, leases, checkpoints, and durable state.
+- `runtime/src/shejane_runtime/tools/mcp_stdio.py` provides useful bounded subprocess lifecycle patterns, but MCP transport is not the plugin security boundary.
+- `runtime/src/shejane_runtime/tools/office.py` is the behavior baseline for future Office plugins.
+- `client/electron/main.cjs` currently sets Electron renderer sandboxing independently of Runtime plugin isolation. Renderer sandbox state does not sandbox Runtime workers.
 - `SECURITY.md` treats credentials, workspaces, tool permissions, loopback pairing, and outbound requests as explicit trust boundaries.
 
 The canonical stage is P6 for frozen resource binding, with P5/P7 adjacent. P2/P3 carry and freeze explicit plugin selections, P10 executes through tool review and receipts, P11 proves cleanup, and P12 commits authoritative results.
@@ -42,7 +42,7 @@ Critical assets include:
 - authorized workspace files, attachments, imported conversations, and user home data;
 - Runtime SQLite databases, checkpoints, receipts, plugin registry, and Run bindings;
 - Artifact bytes and metadata;
-- the integrity and availability of the Runtime and Desktop;
+- the integrity and availability of the Runtime and Client;
 - package identity, version, digest, signature record, and Action schemas;
 - user intent represented by explicit grants, approvals, `@plugin`, and `/plugin:command` selections.
 
@@ -63,9 +63,9 @@ Root/administrator compromise, a compromised SheJane release signing key, malici
 
 ## Trust boundaries
 
-### TB1: Desktop to Runtime control plane
+### TB1: Client to Runtime control plane
 
-Desktop is a client projection. Runtime authenticates the loopback peer, validates structured Commands, resolves chat references, and owns installation truth. Desktop must not scan packages, launch workers, or infer enabled versions.
+Client is a client projection. Runtime authenticates the loopback peer, validates structured Commands, resolves chat references, and owns installation truth. Client must not scan packages, launch workers, or infer enabled versions.
 
 ### TB2: Package source to immutable package store
 
@@ -165,7 +165,7 @@ Candidate platform mechanisms require independent escape tests: macOS App Sandbo
 - Recompute size and cryptographic digest from bytes actually promoted.
 - Validate format structure where available; reject partial or corrupt Office/media files.
 - Move/copy into Runtime-owned storage and write Artifact plus receipt state atomically or with a recoverable transaction protocol.
-- Escape untrusted names/messages in Desktop, strip control characters, cap display, and never render plugin HTML/JS in v1.
+- Escape untrusted names/messages in Client, strip control characters, cap display, and never render plugin HTML/JS in v1.
 
 ## Attack surfaces and prioritized attacker stories
 

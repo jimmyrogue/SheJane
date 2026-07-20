@@ -43,7 +43,7 @@ WASI v1 constraints:
 - time, memory, CPU/fuel, and output are bounded by the Runtime;
 - the package entrypoint is a platform-independent `.wasm` Component using the SheJane v1 WIT ABI.
 
-Use the [Archive fixture](../../plugins/fixtures/wasi-archive) as the package-shape reference.
+Use the [Archive fixture](../../runtime/plugins/fixtures/wasi-archive) as the package-shape reference.
 
 ### Managed Worker
 
@@ -58,12 +58,12 @@ Managed Worker v1 constraints:
 - Runtime timeout/cancellation terminates the full process tree;
 - one package targets exactly one OS/architecture pair;
 - large shared engines may be referenced only as exact, host-managed [Runtime Assets](runtime-assets.md);
-- no daemon, background task, plugin UI, lifecycle hook, or cross-call memory;
+- no runtime, background task, plugin UI, lifecycle hook, or cross-call memory;
 - an untrusted worker is disabled unless that platform's OS isolation adapter is available and enforcing policy.
 
 Changing cwd, clearing environment variables, or running in a child process is not a sandbox. Do not ask users to treat it as one.
 
-Use the [Documents fixture](../../plugins/fixtures/worker-documents) as the package-shape reference.
+Use the [Documents fixture](../../runtime/plugins/fixtures/worker-documents) as the package-shape reference.
 
 ## Build the package
 
@@ -138,9 +138,9 @@ Use stable, short command IDs. The UI may localize titles, but the manifest ID i
 Install the Runtime development environment, then use the bundled CLI:
 
 ```bash
-cd services/runtime
-uv run shejane-plugin validate ../../plugins/fixtures/wasi-archive
-uv run shejane-plugin pack ../../plugins/fixtures/wasi-archive \
+cd runtime
+uv run shejane-plugin validate ../../runtime/plugins/fixtures/wasi-archive
+uv run shejane-plugin pack ../../runtime/plugins/fixtures/wasi-archive \
   --output /tmp/archive.shejane-plugin
 uv run shejane-plugin inspect /tmp/archive.shejane-plugin
 ```

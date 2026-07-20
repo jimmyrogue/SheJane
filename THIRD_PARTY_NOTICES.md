@@ -6,7 +6,7 @@ Exact dependency versions are recorded in `pnpm-lock.yaml`, `pyproject.toml`, an
 
 ## JavaScript and Electron
 
-The Desktop client and Runtime SDK use packages under the MIT, ISC, BSD, Apache-2.0, and other permissive licenses.
+The Client client and Runtime SDK use packages under the MIT, ISC, BSD, Apache-2.0, and other permissive licenses.
 
 Direct runtime dependencies include React, Lexical, Radix UI, Tailwind CSS, Tabler Icons, ExcelJS, docx-preview, highlight.js, react-markdown, Electron Updater, and related utilities. Their package metadata and installed license files contain the applicable copyright notices and terms.
 

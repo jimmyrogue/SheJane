@@ -7,9 +7,9 @@ set -euo pipefail
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUTPUT="${1:-${ROOT}/apps/desktop/build/native/shejane-managed-worker-vm}"
-SOURCE="${ROOT}/apps/desktop/native/managed-worker-vm.swift"
-ENTITLEMENTS="${ROOT}/apps/desktop/build/managed-worker-vm.entitlements.plist"
+OUTPUT="${1:-${ROOT}/client/build/native/shejane-managed-worker-vm}"
+SOURCE="${ROOT}/client/native/managed-worker-vm.swift"
+ENTITLEMENTS="${ROOT}/client/build/managed-worker-vm.entitlements.plist"
 TEMPORARY="${OUTPUT}.tmp"
 trap 'rm -f "${TEMPORARY}"' EXIT
 

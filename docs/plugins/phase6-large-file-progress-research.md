@@ -57,7 +57,7 @@ The target stage numbering comes only from [`harness-runtime-stages.md`](../harn
 
 ### 3.1 Inputs are already references, but admission is still small-file oriented
 
-[`runs.py`](../../services/runtime/local_host/runs.py) creates plugin input descriptors with:
+[`runs.py`](../../runtime/src/shejane_runtime/runs.py) creates plugin input descriptors with:
 
 ```text
 id, /input/<id>/<name>, media_type, size_bytes, sha256
@@ -67,30 +67,30 @@ Hashing is incremental, which is correct. However:
 
 - the common attachment admission cap is currently 10 MiB;
 - the descriptor retains the original host `source_path` until Action execution;
-- [`plugins/tools.py`](../../services/runtime/local_host/plugins/tools.py) copies every selected input into a new execution directory;
-- [`plugins/executor.py`](../../services/runtime/local_host/plugins/executor.py) reads every authorized WASI input with `read_bytes()`.
+- [`plugins/tools.py`](../../runtime/src/shejane_runtime/plugins/tools.py) copies every selected input into a new execution directory;
+- [`plugins/executor.py`](../../runtime/src/shejane_runtime/plugins/executor.py) reads every authorized WASI input with `read_bytes()`.
 
 Managed Worker already has the right external shape: it receives reference metadata and an authorized input root rather than file bytes in JSON. The missing part is a Runtime-owned immutable lifetime and a no-whole-file-buffer guarantee.
 
 ### 3.2 Artifact staging is sound, but persistence is not suitable for binary files
 
-Both adapters produce candidates under `/output`, and Runtime rechecks path confinement and limits. The final promotion in [`plugins/tools.py`](../../services/runtime/local_host/plugins/tools.py), however, currently:
+Both adapters produce candidates under `/output`, and Runtime rechecks path confinement and limits. The final promotion in [`plugins/tools.py`](../../runtime/src/shejane_runtime/plugins/tools.py), however, currently:
 
 1. calls `read_bytes()`;
 2. base64-encodes the whole body;
 3. writes that text to `local_artifacts.content` in SQLite.
 
-The `bytes` quota in [`store/sqlite.py`](../../services/runtime/local_host/store/sqlite.py) consequently measures the encoded UTF-8 string, so a binary payload also pays base64 expansion. `GET /local/v1/artifacts/{id}` returns the body inside JSON.
+The `bytes` quota in [`store/sqlite.py`](../../runtime/src/shejane_runtime/store/sqlite.py) consequently measures the encoded UTF-8 string, so a binary payload also pays base64 expansion. `GET /v1/artifacts/{id}` returns the body inside JSON.
 
-The Runtime already has a better local delivery primitive: [`server.py`](../../services/runtime/local_host/server.py) uses `FileResponse` for authorized workspace documents. Artifact delivery can reuse that streaming HTTP shape while retaining Artifact-owned authorization.
+The Runtime already has a better local delivery primitive: [`server.py`](../../runtime/src/shejane_runtime/server.py) uses `FileResponse` for authorized workspace documents. Artifact delivery can reuse that streaming HTTP shape while retaining Artifact-owned authorization.
 
 ### 3.3 The live stream is bounded at the SSE edge, but not at the LangGraph producer
 
-[`runs.py`](../../services/runtime/local_host/runs.py) invokes LangGraph with `stream_mode=["updates", "messages", "custom", "checkpoints"]`. Each SSE subscriber has a queue of 256 entries; a full queue drops notifications, while durable events are recovered by polling SQLite.
+[`runs.py`](../../runtime/src/shejane_runtime/runs.py) invokes LangGraph with `stream_mode=["updates", "messages", "custom", "checkpoints"]`. Each SSE subscriber has a queue of 256 entries; a full queue drops notifications, while durable events are recovered by polling SQLite.
 
 There are two important details:
 
-- [`event_translator.py`](../../services/runtime/local_host/event_translator.py) maps every custom part to the generic `agent.custom` event.
+- [`event_translator.py`](../../runtime/src/shejane_runtime/event_translator.py) maps every custom part to the generic `agent.custom` event.
 - `agent.custom` is not in `TRANSIENT_RUN_EVENT_TYPES`, so using it directly for high-frequency progress would append every tick to `local_events`.
 
 The Managed Worker reader is bounded by line size and stderr size, but `exchange()` accepts only a direct response. It cannot currently consume interleaved `notifications/progress` frames or send a cancel request with an acknowledgement.
@@ -247,7 +247,7 @@ Plugin binary output must always use `blob` storage. The current `art_<operation
 Add a body route such as:
 
 ```text
-GET /local/v1/artifacts/{artifact_id}/content
+GET /v1/artifacts/{artifact_id}/content
 ```
 
 It must:
@@ -427,7 +427,7 @@ This removes the largest current memory/SQLite amplification before increasing p
 - Add latest-only coalescing, rate limits, terminal gate, cancel acknowledgement, and process-tree escalation.
 - Keep current one-Action-per-process v1 lifecycle; pooling remains out of scope.
 
-### 6E. Project progress to receipt, SSE, and Desktop
+### 6E. Project progress to receipt, SSE, and Client
 
 - Capture the LangGraph writer at the plugin tool boundary.
 - Translate typed custom payloads to transient `tool.progress`.

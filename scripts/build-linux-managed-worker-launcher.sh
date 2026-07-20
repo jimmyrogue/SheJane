@@ -10,7 +10,7 @@ case "${SHEJANE_LINUX_ARCH:-$(uname -m)}" in
 esac
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-output="${root}/services/runtime/build/managed-worker-linux/shejane-managed-worker-linux"
+output="${root}/runtime/build/managed-worker-linux/shejane-managed-worker-linux"
 mkdir -p "$(dirname "${output}")"
 if [[ -n "${SHEJANE_BWRAP_SOURCE:-}" ]]; then
   "${root}/scripts/build-linux-bubblewrap.sh" \
@@ -22,5 +22,5 @@ fi
 }
 CGO_ENABLED=0 GOOS=linux GOARCH="${goarch}" \
   go build -trimpath -buildvcs=false -ldflags='-s -w -buildid=' \
-  -o "${output}" "${root}/services/runtime/native/managed-worker-linux/main.go"
+  -o "${output}" "${root}/runtime/native/managed-worker-linux/main.go"
 "${output}" --help >/dev/null

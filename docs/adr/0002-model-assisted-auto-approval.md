@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-07-16
-- 决策范围：Runtime P9-P12、Runtime SDK/SSE、Desktop
+- 决策范围：Runtime P9-P12、Runtime SDK/SSE、Client
 - 主要阶段：P10 工具执行与人工审批
 - 相邻阶段：P9 工具批次与风险分类；P11/P12 结算、快照与审计
 - 状态所有者：Runtime
@@ -16,7 +16,7 @@
 
 ## 决策
 
-保留 `ask`、`auto`、`full_access` 三种 Run 级模式。Desktop 新对话默认选择 `auto`；Runtime 在接纳 Run 时冻结具体模式，并继续对省略字段的非 Desktop 调用采用保守默认值。
+保留 `ask`、`auto`、`full_access` 三种 Run 级模式。Client 新对话默认选择 `auto`；Runtime 在接纳 Run 时冻结具体模式，并继续对省略字段的非 Client 调用采用保守默认值。
 
 `auto` 使用两层裁决：
 
@@ -93,7 +93,7 @@ Tool Receipt 保存：
 }
 ```
 
-Desktop 将 `source=rule` 显示为“规则自动允许”，将 `source=llm` 显示为“智能自动允许”。模型失败后的 `ask` 继续走现有 `permission.required` 卡片，并明确提示已切换为人工确认；完整原因同时保存在 Tool Receipt 中。
+Client 将 `source=rule` 显示为“规则自动允许”，将 `source=llm` 显示为“智能自动允许”。模型失败后的 `ask` 继续走现有 `permission.required` 卡片，并明确提示已切换为人工确认；完整原因同时保存在 Tool Receipt 中。
 
 ## 安全不变量
 

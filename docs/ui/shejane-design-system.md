@@ -1,6 +1,6 @@
 # SheJane UI Design System
 
-This is the source of truth for the SheJane (石间) Desktop visual system.
+This is the source of truth for the SheJane (石间) Client visual system.
 
 ## Visual Thesis
 
@@ -47,8 +47,8 @@ Radius and depth:
 
 Use the "圆相" mark: an unclosed ink circle with one seal-red stone at the gap.
 
-- Renderer assets: `apps/desktop/src/shared/assets/logo.png` and `logo-lockup.png`. Both are PNG assets; there is no SVG source in the repository.
-- Electron assets: `apps/desktop/electron/assets/app-icon.png`/`.icns` (dark squircle, off-white ring), `apps/desktop/electron/assets/app-tray*.png`.
+- Renderer assets: `client/src/shared/assets/logo.png` and `logo-lockup.png`. Both are PNG assets; there is no SVG source in the repository.
+- Electron assets: `client/electron/assets/app-icon.png`/`.icns` (dark squircle, off-white ring), `client/electron/assets/app-tray*.png`.
 - The tray icon is a black transparent mask because Electron sets it as a macOS template image.
 
 ## App Shell

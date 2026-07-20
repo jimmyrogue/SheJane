@@ -3,9 +3,9 @@
 ## 当前优先级
 
 1. 增加真实 BYOK“模型 → 工具 → 模型”离线验证。
-2. 继续收敛 Runtime 状态所有权，减少 Desktop 的本地投影兼容代码。
+2. 继续收敛 Runtime 状态所有权，减少 Client 的本地投影兼容代码。
 3. 完成插件平台的真实签名/公证以及 Windows、Linux 原生隔离发布 Gate。
-4. 完善 Runtime 安装包、Desktop Runtime 锁定和跨平台发布验证。
+4. 完善 Runtime 安装包、Client Runtime 锁定和跨平台发布验证。
 5. 审计第三方依赖、许可证、签名、SBOM 和供应链安全。
 
 ## 产品方向

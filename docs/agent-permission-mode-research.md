@@ -2,13 +2,13 @@
 
 ## 结论
 
-SheJane 已提供 `ask`、`auto`、`full_access` 三种任务级权限模式。Desktop 只负责选择、展示和提交，Runtime 在 Run 接纳时冻结模式并执行策略，客户端不能直接跳过审批。
+SheJane 已提供 `ask`、`auto`、`full_access` 三种任务级权限模式。Client 只负责选择、展示和提交，Runtime 在 Run 接纳时冻结模式并执行策略，客户端不能直接跳过审批。
 
 `auto` 已升级为“确定性规则优先、当前模型只审查灰区、失败回退人工确认”。详细决策见 [ADR-0002](./adr/0002-model-assisted-auto-approval.md)。
 
 ## 当前实现
 
-- Desktop 新对话默认选择 `auto`，输入框盾牌菜单可以切换三种模式。
+- Client 新对话默认选择 `auto`，输入框盾牌菜单可以切换三种模式。
 - Runtime 支持 `once` 和 `run` 两种人工批准范围；`run` 只复用同一工具、风险、参数和工具版本的有界授权。
 - 自动决定按 operation 写入 Tool Receipt，恢复和重放不会重复调用审查模型。
 - `permission.auto_approved` 会携带 `rule` 或 `llm` 来源；人工确认继续使用 `permission.required`。
@@ -43,7 +43,7 @@ Claude Code 目前提供 Manual、Accept Edits、Plan、Auto、Don't Ask 和 Byp
 - 主要阶段：P10 工具执行与人工审批。
 - 相邻阶段：P9 风险判断；P11 退出、快照和审计。
 - 状态所有者：Runtime。
-- Desktop：在输入框附近显示当前模式，并将选择随任务请求提交。
+- Client：在输入框附近显示当前模式，并将选择随任务请求提交。
 - Runtime SDK：传递并暴露模式，不自行解释策略。
 - Runtime：冻结本次运行的模式，通过“硬性拒绝 → 必须询问 → 模式策略 → 允许”顺序裁决。
 
@@ -51,8 +51,8 @@ Claude Code 目前提供 Manual、Accept Edits、Plan、Auto、Don't Ask 和 Byp
 
 ## 生命周期建议
 
-- Desktop 新对话默认“自动审批”；Runtime API 在调用方省略模式时仍采用保守默认值。
-- 当前模式随 Run 冻结，不因 Desktop 后续选择改变。
+- Client 新对话默认“自动审批”；Runtime API 在调用方省略模式时仍采用保守默认值。
+- 当前模式随 Run 冻结，不因 Client 后续选择改变。
 - “完全访问”只对当前运行或本次应用会话有效，不默认永久保存；首次选择时明确确认。
 - 运行开始后先禁止修改模式，避免同一运行的安全语义变化。以后如有必要，再增加显式的 Runtime 命令切换。
 
@@ -70,6 +70,6 @@ Claude Code 目前提供 Manual、Accept Edits、Plan、Auto、Don't Ask 和 Byp
 1. Runtime 已增加权限模式、策略矩阵和真实工具链路测试。
 2. 模式已冻结进 Run 设置快照；分支继承源 Run，定时任务在创建时冻结。
 3. OpenAPI 和 Runtime SDK 类型已经更新。
-4. Desktop 输入框已增加盾牌按钮和三档菜单，运行期间禁止切换。
+4. Client 输入框已增加盾牌按钮和三档菜单，运行期间禁止切换。
 5. 现有单次审批条继续处理“请求批准”和自动模式中的敏感操作。
-6. 已覆盖三种模式的工具执行与 Desktop/SDK 交互；恢复、重试继续复用 Run 的冻结快照。
+6. 已覆盖三种模式的工具执行与 Client/SDK 交互；恢复、重试继续复用 Run 的冻结快照。

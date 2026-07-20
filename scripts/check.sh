@@ -7,7 +7,7 @@ check_platform_keys() {
   key_alt="$(IFS='|'; echo "${forbidden[*]}")"
   read_pattern="(environ\.(get|setdefault)\(|environ\[|getenv\()[\"']($key_alt)[\"']"
   hits="$(
-    grep -rIn -E "$read_pattern" services/runtime/local_host 2>/dev/null \
+    grep -rIn -E "$read_pattern" runtime/src/shejane_runtime 2>/dev/null \
       | grep -v -E '(/tests/)' \
       || true
   )"
@@ -19,7 +19,7 @@ check_platform_keys() {
 }
 
 check_release_tags() {
-  local components=(desktop runtime-sdk)
+  local components=(client runtime-sdk)
   local component other file expected
 
   if [[ -e ".github/workflows/release-runtime.yml" ]] || grep -rFq 'tags: ["runtime-v*"]' .github/workflows; then

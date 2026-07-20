@@ -12,7 +12,7 @@ Please include:
 
 - A description of the issue and its impact.
 - Steps to reproduce (a proof-of-concept if you have one).
-- Affected component (Runtime, Desktop, or Runtime SDK) and version/commit.
+- Affected component (Runtime, Client, or Runtime SDK) and version/commit.
 
 We aim to acknowledge reports within a few business days and will keep
 you updated on remediation. Coordinated disclosure is appreciated — we
@@ -24,7 +24,7 @@ This project handles credentials and local tool execution. Findings in these are
 especially valued:
 
 - **Secret boundaries**: Runtime BYOK keys must stay in the operating-system
-  credential store and must not reach task records or Desktop storage.
+  credential store and must not reach task records or Client storage.
 - **Tool permissions**: risky local operations must pause for an explicit,
   correctly scoped user decision.
 - **Workspace boundaries**: file and Office tools must stay within the

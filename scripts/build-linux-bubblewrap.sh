@@ -7,7 +7,7 @@ set -euo pipefail
 source_tar="$1"
 output="$2"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-lock="${root}/services/runtime/native/managed-worker-linux/bubblewrap-0.11.2.lock.json"
+lock="${root}/runtime/native/managed-worker-linux/bubblewrap-0.11.2.lock.json"
 build="$(mktemp -d)"
 trap 'rm -rf "${build}"' EXIT
 

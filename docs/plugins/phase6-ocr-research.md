@@ -109,7 +109,7 @@ canonical digest  sha256:5a11d7117d6de267cd51b0201386c2434a771439de2d588932743eb
 plugin digest     sha256:b5643b9c20862b5933a59360a3084771283e638f5df54849a52960c6b6cd010e
 ```
 
-The final packaged-app Gate is wired into `release-desktop.yml`, but no real signed
+The final packaged-app Gate is wired into `release-client.yml`, but no real signed
 and notarized release run has supplied release evidence yet. Registry therefore stays
 closed. Japanese and broader real handwriting corpora, Linux/amd64, Windows, and each
 platform's native parity Gate remain open.

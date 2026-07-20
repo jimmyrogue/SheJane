@@ -7,7 +7,7 @@
 > 当前状态所有者：每次执行临时创建的 MCP 工具对象
 > 建议状态所有者：Runtime 级 MCP 管理器拥有服务与目录；每次执行只拥有不可变工具快照和资源租约
 
-> 实施进度：已建立 Runtime 级工具目录和 Server Supervisor，按 Server 配置指纹并发刷新并复用长会话；每次执行持有固定目录快照租约，配置更新不会中断进行中的 Run。失败连接使用退避重试，Runtime API 和 Desktop 可显示连接状态。无密钥目录元数据已经写入 SQLite；Runtime 重启后会校验配置指纹并恢复惰性工具代理。首次发现和刷新已移到 Runtime 后台，P6 只读取当前有效快照，不连接 Server 或执行 `tools/list`。`build_agent()` 已停止每 Run 发现，也不再隐式扫描其他客户端的全局配置。Server 发出 `notifications/tools/list_changed` 后，Runtime 在后台替换后续 Run 的目录快照；已有 Run 继续使用旧会话直到释放租约。MCP 工具达到 12 个时，主 Agent 和通用子 Agent 只常驻一个 `mcp.search_tools` 目录工具，搜索命中的结构才在后续模型回合中暴露。该方案不依赖模型供应商，因此适用于 DeepSeek 等 OpenAI 兼容服务。
+> 实施进度：已建立 Runtime 级工具目录和 Server Supervisor，按 Server 配置指纹并发刷新并复用长会话；每次执行持有固定目录快照租约，配置更新不会中断进行中的 Run。失败连接使用退避重试，Runtime API 和 Client 可显示连接状态。无密钥目录元数据已经写入 SQLite；Runtime 重启后会校验配置指纹并恢复惰性工具代理。首次发现和刷新已移到 Runtime 后台，P6 只读取当前有效快照，不连接 Server 或执行 `tools/list`。`build_agent()` 已停止每 Run 发现，也不再隐式扫描其他客户端的全局配置。Server 发出 `notifications/tools/list_changed` 后，Runtime 在后台替换后续 Run 的目录快照；已有 Run 继续使用旧会话直到释放租约。MCP 工具达到 12 个时，主 Agent 和通用子 Agent 只常驻一个 `mcp.search_tools` 目录工具，搜索命中的结构才在后续模型回合中暴露。该方案不依赖模型供应商，因此适用于 DeepSeek 等 OpenAI 兼容服务。
 
 ## 结论
 

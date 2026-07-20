@@ -47,10 +47,10 @@ build/
 **/build/
 # Exception: electron-builder's build-resources dir holds the NSIS installer
 # customization (committed source, not a build artifact). Re-include just that file.
-!apps/desktop/build/
-apps/desktop/build/*
-!apps/desktop/build/installer.nsh
-!apps/desktop/build/managed-worker-vm.entitlements.plist
+!client/build/
+client/build/*
+!client/build/installer.nsh
+!client/build/managed-worker-vm.entitlements.plist
 .vite/
 **/.vite/
 .turbo/
@@ -86,16 +86,16 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .ruff_cache/
-# Daemon spill cache — when a tool result exceeds the in-memory cap
+# Runtime spill cache — when a tool result exceeds the in-memory cap
 # (e.g. web.fetch returning a large HTML body), LangGraph writes it
 # to disk under this dir keyed by tool_call_id. Pure local cache,
 # safe to delete, regenerated on demand.
-services/runtime/large_tool_results/
+runtime/large_tool_results/
 
 # Local databases and generated data
 *.db
 *.sqlite
 *.sqlite3
 
-# PyInstaller intermediate build dir for the frozen daemon (dist/ already ignored)
-services/runtime/build/
+# PyInstaller intermediate build dir for the frozen runtime (dist/ already ignored)
+runtime/build/

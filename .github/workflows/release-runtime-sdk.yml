@@ -31,11 +31,11 @@ jobs:
         shell: bash
         run: |
           expected="${GITHUB_REF_NAME#runtime-sdk-v}"
-          actual="$(node -p "require('./packages/runtime-sdk/package.json').version")"
+          actual="$(node -p "require('./runtime/sdk/package.json').version")"
           test "$actual" = "$expected"
       - name: Publish npm package
         if: github.ref_type == 'tag'
-        working-directory: packages/runtime-sdk
+        working-directory: runtime/sdk
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm publish --access public --provenance --no-git-checks

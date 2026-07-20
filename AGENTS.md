@@ -6,7 +6,7 @@ For the full architecture, the critical invariants, and "where things live", rea
 
 ## Runtime Stage Discipline
 
-For any work touching Desktop ↔ Runtime startup, Commands, Runs, Events, Workers, Agent execution, Tools, Checkpoints, or terminal state:
+For any work touching Client ↔ Runtime startup, Commands, Runs, Events, Workers, Agent execution, Tools, Checkpoints, or terminal state:
 
 1. Read **[docs/harness-runtime-stages.md](./docs/harness-runtime-stages.md)** and identify one canonical `primary_stage` before changing code.
 2. Read the stage's immediate upstream and downstream contracts in order.
@@ -19,10 +19,10 @@ Do not invent a second P1-P12 numbering scheme. `run-loop.md` describes current 
 
 SheJane (石间) is an agentic chat product. Code-level identifiers (package names, the `SHEJANE_*` env prefix, on-disk paths) use the lowercase form `shejane`.
 
-- `services/runtime/` — Python LangGraph daemon (the local agent harness): runs the agent loop, tools, and middleware over loopback HTTP.
-- `apps/desktop/` — Electron/React client; local projection of Runtime-owned conversations.
-- `packages/runtime-sdk/` — public TypeScript SDK for Runtime commands, SSE, snapshots, and generated protocol types.
-- `plugins/` — public WASI and Managed Worker packages, fixtures, workers, and locked Runtime Asset recipes.
+- `client/` — the Client product module: Electron/React UI and a local projection of Runtime-owned conversations.
+- `runtime/` — the Runtime product module: Python/LangGraph execution core over loopback HTTP. It also owns:
+  - `runtime/sdk/` — the public TypeScript SDK for commands, SSE, snapshots, and generated protocol types.
+  - `runtime/plugins/` — public WASI and Managed Worker packages, fixtures, workers, schemas, and locked Runtime Asset recipes.
 - `docs/plugins/` — public plugin contracts, security model, isolation decisions, and developer guide.
 - `docs/operations.md` — operator runbook.
 - `docs/roadmap.md` — current priorities and intentionally deferred work.
@@ -42,9 +42,10 @@ git diff --check
 Useful focused checks:
 
 ```bash
-cd services/runtime && uv run python -m pytest
-pnpm --filter @shejane/desktop test --run
-pnpm --filter @shejane/runtime-sdk test
+make test-client
+make test-runtime
+make test-runtime-sdk
+make test-contract
 ```
 
 ## Environment And Secrets
@@ -52,22 +53,22 @@ pnpm --filter @shejane/runtime-sdk test
 - There is no root `.env`. Never print or commit real secrets from module env files.
 - Runtime BYOK keys enter through Runtime settings and live in the operating-system credential store.
 - Local default ports:
-  - Desktop Vite: `http://localhost:55173`
+  - Client Vite: `http://localhost:55173`
   - Runtime: managed dynamically by Electron; source default `http://127.0.0.1:17371`
 
 ## Runtime Model Rules
 
-- Desktop reads enabled models from Runtime and submits concrete `local:<provider>:<model>` selections.
-- Do not add automatic model selection or silent provider fallback in Desktop or Runtime.
+- Client reads enabled models from Runtime and submits concrete `local:<provider>:<model>` selections.
+- Do not add automatic model selection or silent provider fallback in Client or Runtime.
 - Runtime provider configuration lives in SQLite; provider secrets live in the operating-system credential store.
 
 ## Frontend Rules
 
-Desktop UI expectations:
+Client UI expectations:
 
-- Runtime owns authoritative conversations and task state; Desktop stores a disposable local projection and pending commands.
+- Runtime owns authoritative conversations and task state; Client stores a disposable local projection and pending commands.
 - Keep import/export behavior intact.
-- Local documents stay inside authorized Runtime workspaces; Desktop must not upload them to an external private path.
+- Local documents stay inside authorized Runtime workspaces; Client must not upload them to an external private path.
 - New attachment support must use a Runtime-owned persistence and permission protocol, not S3 IDs or product-specific download URLs.
 - Follow the SheJane visual system in `docs/ui/shejane-design-system.md`: warm paper + ink, seal red only for brand/running/critical states, moss only for online/success, and single-color typographic attachment glyphs instead of colorful file icons.
 
@@ -96,6 +97,6 @@ Add or update tests when touching:
 
 - Do not revert user changes.
 - Do not commit or reset unless the user asks.
-- Do not check in build output from `apps/desktop/dist`.
+- Do not check in build output from `client/dist`.
 - Prefer `rg` and `rg --files` for repository searches.
 - Use `apply_patch` for manual edits.

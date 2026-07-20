@@ -12,9 +12,9 @@ ActionExecutor.invoke(invocation) -> result
 
 The canonical envelopes are:
 
-- [`plugin-action-input.v1.schema.json`](../../schemas/plugin-action-input.v1.schema.json)
-- [`plugin-action-result.v1.schema.json`](../../schemas/plugin-action-result.v1.schema.json)
-- [`plugin-action-progress.v1.schema.json`](../../schemas/plugin-action-progress.v1.schema.json)
+- [`plugin-action-input.v1.schema.json`](../../runtime/plugins/schemas/plugin-action-input.v1.schema.json)
+- [`plugin-action-result.v1.schema.json`](../../runtime/plugins/schemas/plugin-action-result.v1.schema.json)
+- [`plugin-action-progress.v1.schema.json`](../../runtime/plugins/schemas/plugin-action-progress.v1.schema.json)
 
 ## Runtime ownership
 

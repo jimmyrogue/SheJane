@@ -1,0 +1,1228 @@
+name: Release Client
+
+on:
+  push:
+    tags: ["client-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-arm64-runtime:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+      - name: Install Linux Runtime build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes binutils
+      - name: Fetch and build verified bubblewrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="runtime/native/managed-worker-linux/bubblewrap-0.11.2.lock.json"
+          source="${RUNNER_TEMP}/bubblewrap-0.11.2.tar.xz"
+          curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "$(jq -r '.source.url' "${lock}")" --output "${source}"
+          python - "${source}" "${lock}" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          raw = Path(sys.argv[1]).read_bytes()
+          expected = json.loads(Path(sys.argv[2]).read_text())["source"]
+          assert len(raw) == expected["size_bytes"]
+          assert hashlib.sha256(raw).hexdigest() == expected["sha256"]
+          PY
+          output="${PWD}/runtime/build/managed-worker-linux/bubblewrap"
+          mkdir -p "${output}"
+          docker run --rm \
+            -v "${PWD}:/workspace:ro" \
+            -v "${source}:/inputs/bubblewrap.tar.xz:ro" \
+            -v "${output}:/output" \
+            debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 \
+            sh -euc '
+              apt-get update -qq
+              apt-get install -y -qq gcc libcap-dev meson ninja-build pkg-config python3 xz-utils
+              /workspace/scripts/build-linux-bubblewrap.sh \
+                /inputs/bubblewrap.tar.xz /output
+            '
+      - name: Build packaged Linux arm64 Runtime
+        run: make package-runtime
+      - name: Verify packaged Runtime and cgroup launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="runtime/dist/shejane-runtime/shejane-runtime"
+          launcher="$(find runtime/dist/shejane-runtime -type f \
+            -name shejane-managed-worker-linux -print -quit)"
+          bubblewrap="$(find runtime/dist/shejane-runtime -type f \
+            -name shejane-bwrap -print -quit)"
+          test -x "${runtime}"
+          test -x "${launcher}"
+          test -x "${bubblewrap}"
+          test -f "$(dirname "${bubblewrap}")/libcap.so.2"
+          "${runtime}" --help >/dev/null
+          "${launcher}" --help >/dev/null
+          "${bubblewrap}" --version | grep -Fx 'bubblewrap 0.11.2'
+          printf '%s' "${launcher}" > "${RUNNER_TEMP}/shejane-linux-launcher-path"
+          printf '%s' "${bubblewrap}" > "${RUNNER_TEMP}/shejane-linux-bubblewrap-path"
+      - name: Build Linux native sandbox fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+            -trimpath -buildvcs=false -ldflags='-s -w -buildid=' \
+            -o "${RUNNER_TEMP}/shejane-linux-sandbox-worker" \
+            runtime/tests/fixtures/managed_worker_linux/main.go
+      - name: Run packaged Linux cgroup v2 Gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          launcher="$(cat "${RUNNER_TEMP}/shejane-linux-launcher-path")"
+          bubblewrap="$(cat "${RUNNER_TEMP}/shejane-linux-bubblewrap-path")"
+          bubblewrap_dir="$(dirname "${bubblewrap}")"
+          image="python:3.12.10-slim-bookworm@sha256:79082fdf411b897d64983893f44e8e1908e21cade2fc5a794d4f46de76c85275"
+          docker run --rm --privileged --cgroupns=host \
+            -v "${PWD}:/workspace:ro" \
+            -v "${PWD}/${launcher}:/launcher:ro" \
+            -v "${PWD}/${bubblewrap_dir}:/managed-worker-linux:ro" \
+            -v "${RUNNER_TEMP}/shejane-linux-sandbox-worker:/sandbox-worker:ro" \
+            -e PYTHONPATH=/workspace/runtime \
+            -e SHEJANE_TEST_LINUX_CGROUP_LAUNCHER=/launcher \
+            -e SHEJANE_TEST_LINUX_CGROUP_ROOT=/sys/fs/cgroup \
+            -e SHEJANE_TEST_LINUX_BUBBLEWRAP=/managed-worker-linux/shejane-bwrap \
+            -e SHEJANE_TEST_LINUX_SANDBOX_WORKER=/sandbox-worker \
+            "${image}" sh -eu -c '
+              cd /tmp
+              pip install --disable-pip-version-check --no-cache-dir -q \
+                pytest==9.0.3 pytest-asyncio==1.3.0 wasmtime==46.0.1
+              cd /workspace/runtime
+              pytest -q --noconftest -p no:cacheprovider \
+                tests/test_managed_worker_linux.py
+            '
+      - name: Run packaged Linux systemd delegation Gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$(find runtime/dist/shejane-runtime -type f \
+            -path '*/managed-worker-linux/manifest.json' -print -quit)"
+          python="$(cd runtime && uv run which python)"
+          test -f "${manifest}"
+          sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
+            --property=Delegate=yes \
+            --property=DelegateSubgroup=supervisor \
+            --working-directory="${PWD}/runtime" \
+            /usr/bin/env \
+              "PYTHONPATH=${PWD}/runtime" \
+              "SHEJANE_TEST_LINUX_ASSET_MANIFEST=${PWD}/${manifest}" \
+              "SHEJANE_TEST_LINUX_SANDBOX_WORKER=${RUNNER_TEMP}/shejane-linux-sandbox-worker" \
+              "${python}" -m pytest -q --noconftest -p no:cacheprovider \
+                tests/test_managed_worker_linux.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-linux-arm64
+          path: runtime/dist/shejane-runtime
+          if-no-files-found: error
+
+  linux-arm64-node-runtime:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch locked Node.js runtime inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="runtime/plugins/runtime-assets/node/node-24.18.0-linux-arm64.lock.json"
+          inputs="${RUNNER_TEMP}/shejane-node-runtime-inputs"
+          mkdir -p "${inputs}"
+          fetch() {
+            local query="$1"
+            local output="$2"
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "$(jq -r "${query}" "${lock}")" --output "${inputs}/${output}"
+          }
+          fetch '.node.url' node.tar.xz
+          fetch '.signed_checksums.url' SHASUMS256.txt.asc
+          fetch '.release_keyring.url' pubring.kbx
+      - name: Build reproducible Linux arm64 Node.js Runtime Asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          inputs="${RUNNER_TEMP}/shejane-node-runtime-inputs"
+          first="${RUNNER_TEMP}/org.nodejs.runtime-linux-arm64-a.shejane-runtime-asset"
+          second="${RUNNER_TEMP}/org.nodejs.runtime-linux-arm64-b.shejane-runtime-asset"
+          for output in "${first}" "${second}"; do
+            python runtime/plugins/runtime-assets/node/build_linux_arm64.py \
+              --node-archive "${inputs}/node.tar.xz" \
+              --signed-checksums "${inputs}/SHASUMS256.txt.asc" \
+              --release-keyring "${inputs}/pubring.kbx" \
+              --output "${output}"
+          done
+          cmp "${first}" "${second}"
+          mkdir "${RUNNER_TEMP}/node-runtime-probe"
+          unzip -q "${first}" -d "${RUNNER_TEMP}/node-runtime-probe"
+          test "$("${RUNNER_TEMP}/node-runtime-probe/payload/bin/node" --version)" = "v24.18.0"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-runtime-linux-arm64
+          path: ${{ runner.temp }}/org.nodejs.runtime-linux-arm64-a.shejane-runtime-asset
+          if-no-files-found: error
+
+  linux-arm64-office-runtime:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch locked Office Runtime inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="runtime/plugins/office/runtime-assets/libreoffice-25.8.7.lock.json"
+          inputs="${RUNNER_TEMP}/shejane-office-runtime-inputs"
+          mkdir -p "${inputs}"
+          fetch() {
+            local query="$1"
+            local output="$2"
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "$(jq -r "${query}" "${lock}")" --output "${inputs}/${output}"
+          }
+          fetch '.libreoffice.platforms["linux/arm64"].url' libreoffice.tar.gz
+          fetch '.libreoffice.platforms["linux/arm64"].signature.url' libreoffice.tar.gz.asc
+          fetch '.pdf_renderer.source_url' mupdf-source.tar.gz
+          fetch '.font_baseline.url' noto-cjk.zip
+      - name: Build reproducible Linux arm64 Office Runtime Asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          inputs="${RUNNER_TEMP}/shejane-office-runtime-inputs"
+          first="${RUNNER_TEMP}/office-runtime-linux-arm64-a.shejane-runtime-asset"
+          second="${RUNNER_TEMP}/office-runtime-linux-arm64-b.shejane-runtime-asset"
+          for output in "${first}" "${second}"; do
+            python runtime/plugins/office/runtime-assets/build_linux_arm64.py \
+              --libreoffice-archive "${inputs}/libreoffice.tar.gz" \
+              --libreoffice-signature "${inputs}/libreoffice.tar.gz.asc" \
+              --mupdf-source "${inputs}/mupdf-source.tar.gz" \
+              --noto-cjk "${inputs}/noto-cjk.zip" \
+              --output "${output}"
+          done
+          cmp "${first}" "${second}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: office-runtime-linux-arm64
+          path: ${{ runner.temp }}/office-runtime-linux-arm64-a.shejane-runtime-asset
+          if-no-files-found: error
+
+  linux-arm64-pdf-runtime:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch locked MuPDF Runtime source
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="runtime/plugins/pdf/runtime-assets/mupdf-1.27.2.lock.json"
+          curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            "$(jq -r '.upstream.source_url' "${lock}")" \
+            --output "${RUNNER_TEMP}/mupdf-1.27.2-source.tar.gz"
+      - name: Build reproducible Linux arm64 MuPDF Runtime Asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          first="${RUNNER_TEMP}/mupdf-runtime-linux-arm64-a.shejane-runtime-asset"
+          second="${RUNNER_TEMP}/mupdf-runtime-linux-arm64-b.shejane-runtime-asset"
+          for output in "${first}" "${second}"; do
+            python runtime/plugins/pdf/runtime-assets/build_linux_arm64.py \
+              --source "${RUNNER_TEMP}/mupdf-1.27.2-source.tar.gz" \
+              --output "${output}"
+          done
+          cmp "${first}" "${second}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mupdf-runtime-linux-arm64
+          path: ${{ runner.temp }}/mupdf-runtime-linux-arm64-a.shejane-runtime-asset
+          if-no-files-found: error
+
+  linux-arm64-ffmpeg-runtime:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch authenticated FFmpeg Runtime source
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="runtime/plugins/media-foundation/runtime-assets/ffmpeg-8.1.2.lock.json"
+          inputs="${RUNNER_TEMP}/shejane-ffmpeg-runtime-inputs"
+          mkdir -p "${inputs}"
+          fetch() {
+            local query="$1"
+            local output="$2"
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "$(jq -r "${query}" "${lock}")" --output "${inputs}/${output}"
+          }
+          fetch '.upstream.source_url' ffmpeg-8.1.2.tar.xz
+          fetch '.upstream.signature_url' ffmpeg-8.1.2.tar.xz.asc
+          fetch '.upstream.signing_key_url' ffmpeg-devel.asc
+      - name: Build reproducible Linux arm64 FFmpeg Runtime Asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          inputs="${RUNNER_TEMP}/shejane-ffmpeg-runtime-inputs"
+          first="${RUNNER_TEMP}/ffmpeg-runtime-linux-arm64-a.shejane-runtime-asset"
+          second="${RUNNER_TEMP}/ffmpeg-runtime-linux-arm64-b.shejane-runtime-asset"
+          for output in "${first}" "${second}"; do
+            python runtime/plugins/media-foundation/runtime-assets/build_linux_arm64.py \
+              --source "${inputs}/ffmpeg-8.1.2.tar.xz" \
+              --signature "${inputs}/ffmpeg-8.1.2.tar.xz.asc" \
+              --signing-key "${inputs}/ffmpeg-devel.asc" \
+              --output "${output}"
+          done
+          cmp "${first}" "${second}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-runtime-linux-arm64
+          path: ${{ runner.temp }}/ffmpeg-runtime-linux-arm64-a.shejane-runtime-asset
+          if-no-files-found: error
+
+  linux-arm64-ocr-runtime:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch content-locked OCR packages and models
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheelhouse="${RUNNER_TEMP}/shejane-ocr-wheelhouse"
+          models="${RUNNER_TEMP}/shejane-ocr-models"
+          mkdir -p "${wheelhouse}" "${models}"
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          root = Path.cwd()
+          wheelhouse = Path(os.environ["RUNNER_TEMP"]) / "shejane-ocr-wheelhouse"
+          lock = json.loads(
+              (root / "runtime/plugins/ocr/runtime-assets/rapidocr-3.9.1-linux-arm64.lock.json").read_text()
+          )
+          for item in lock["packages"]:
+              filename = item["filename"]
+              project = (
+                  "antlr4-python3-runtime"
+                  if filename.startswith("antlr4-python3-runtime-")
+                  else filename.split("-", 1)[0].replace("_", "-")
+              )
+              with urllib.request.urlopen(f"https://pypi.org/pypi/{project}/json") as response:
+                  metadata = json.load(response)
+              candidates = [
+                  file
+                  for release in metadata["releases"].values()
+                  for file in release
+                  if file["filename"] == filename
+              ]
+              if len(candidates) != 1:
+                  raise SystemExit(f"locked PyPI file is unavailable: {filename}")
+              urllib.request.urlretrieve(candidates[0]["url"], wheelhouse / filename)
+          PY
+          while IFS=$'\t' read -r url filename; do
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "${url}" --output "${models}/${filename}"
+          done < <(jq -r '.models[] | [.source_url, .filename] | @tsv' \
+            runtime/plugins/ocr/runtime-assets/rapidocr-3.9.1.lock.json)
+      - name: Build reproducible Linux arm64 RapidOCR Runtime Asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          first="${RUNNER_TEMP}/rapidocr-runtime-linux-arm64-a.shejane-runtime-asset"
+          second="${RUNNER_TEMP}/rapidocr-runtime-linux-arm64-b.shejane-runtime-asset"
+          for output in "${first}" "${second}"; do
+            python runtime/plugins/ocr/runtime-assets/build_linux_arm64.py \
+              --wheelhouse "${RUNNER_TEMP}/shejane-ocr-wheelhouse" \
+              --model-dir "${RUNNER_TEMP}/shejane-ocr-models" \
+              --output "${output}"
+          done
+          cmp "${first}" "${second}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocr-runtime-linux-arm64
+          path: ${{ runner.temp }}/rapidocr-runtime-linux-arm64-a.shejane-runtime-asset
+          if-no-files-found: error
+
+  darwin-arm64-speech-model:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+      - name: Fetch locked Whisper sources and checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="runtime/plugins/speech/runtime-assets/whisper-1.8.6.lock.json"
+          inputs="${RUNNER_TEMP}/shejane-speech-model-inputs"
+          mkdir -p "${inputs}"
+          fetch() {
+            local query="$1"
+            local output="$2"
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "$(jq -r "${query}" "${lock}")" --output "${inputs}/${output}"
+          }
+          fetch '.whisper_cpp.source_url' whisper.cpp-v1.8.6.tar.gz
+          fetch '.openai_whisper.source_url' openai-whisper-v20250625.tar.gz
+          fetch '.checkpoint.source_url' large-v3-turbo.pt
+      - name: Build canonical quantized Whisper model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "${RUNNER_TEMP}/shejane-speech-model-python"
+          "${RUNNER_TEMP}/shejane-speech-model-python/bin/python" -m pip install \
+            --disable-pip-version-check --require-hashes \
+            -r runtime/plugins/speech/runtime-assets/model-requirements-darwin-arm64.lock
+          inputs="${RUNNER_TEMP}/shejane-speech-model-inputs"
+          PATH="${RUNNER_TEMP}/shejane-speech-model-python/bin:${PATH}" \
+          python runtime/plugins/speech/runtime-assets/build_model_darwin.py \
+            --whisper-source "${inputs}/whisper.cpp-v1.8.6.tar.gz" \
+            --openai-source "${inputs}/openai-whisper-v20250625.tar.gz" \
+            --checkpoint "${inputs}/large-v3-turbo.pt" \
+            --python "${RUNNER_TEMP}/shejane-speech-model-python/bin/python" \
+            --output "${RUNNER_TEMP}/ggml-large-v3-turbo-q5_0.bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-model-q5-0
+          path: ${{ runner.temp }}/ggml-large-v3-turbo-q5_0.bin
+          if-no-files-found: error
+
+  linux-arm64-speech-runtime:
+    needs: darwin-arm64-speech-model
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: whisper-model-q5-0
+          path: ${{ runner.temp }}/shejane-speech-runtime-inputs
+      - name: Fetch locked Whisper sources and checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="runtime/plugins/speech/runtime-assets/whisper-1.8.6.lock.json"
+          inputs="${RUNNER_TEMP}/shejane-speech-runtime-inputs"
+          fetch() {
+            local query="$1"
+            local output="$2"
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "$(jq -r "${query}" "${lock}")" --output "${inputs}/${output}"
+          }
+          fetch '.whisper_cpp.source_url' whisper.cpp-v1.8.6.tar.gz
+          fetch '.openai_whisper.source_url' openai-whisper-v20250625.tar.gz
+          fetch '.checkpoint.source_url' large-v3-turbo.pt
+      - name: Build reproducible Linux arm64 Whisper Runtime Asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          inputs="${RUNNER_TEMP}/shejane-speech-runtime-inputs"
+          first="${RUNNER_TEMP}/whisper-runtime-linux-arm64-a.shejane-runtime-asset"
+          second="${RUNNER_TEMP}/whisper-runtime-linux-arm64-b.shejane-runtime-asset"
+          for output in "${first}" "${second}"; do
+            python runtime/plugins/speech/runtime-assets/build_linux_arm64.py \
+              --whisper-source "${inputs}/whisper.cpp-v1.8.6.tar.gz" \
+              --openai-source "${inputs}/openai-whisper-v20250625.tar.gz" \
+              --checkpoint "${inputs}/large-v3-turbo.pt" \
+              --model "${inputs}/ggml-large-v3-turbo-q5_0.bin" \
+              --output "${output}"
+          done
+          cmp "${first}" "${second}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-runtime-linux-arm64
+          path: ${{ runner.temp }}/whisper-runtime-linux-arm64-a.shejane-runtime-asset
+          if-no-files-found: error
+
+  linux-arm64-documents-worker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible Linux arm64 Documents Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker="${RUNNER_TEMP}/documents-worker"
+          bash runtime/plugins/office/documents/build_worker_linux_arm64.sh "${worker}"
+          tar --sort=name --mtime='@1784160000' --owner=0 --group=0 --numeric-owner \
+            -C "${RUNNER_TEMP}" -cf - documents-worker \
+            | gzip -n > "${RUNNER_TEMP}/documents-worker-linux-arm64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: documents-worker-linux-arm64
+          path: ${{ runner.temp }}/documents-worker-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  linux-arm64-spreadsheets-worker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible Linux arm64 Spreadsheets Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker="${RUNNER_TEMP}/spreadsheets-worker"
+          bash runtime/plugins/office/spreadsheets/build_worker_linux_arm64.sh "${worker}"
+          tar --sort=name --mtime='@1784160000' --owner=0 --group=0 --numeric-owner \
+            -C "${RUNNER_TEMP}" -cf - spreadsheets-worker \
+            | gzip -n > "${RUNNER_TEMP}/spreadsheets-worker-linux-arm64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spreadsheets-worker-linux-arm64
+          path: ${{ runner.temp }}/spreadsheets-worker-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  linux-arm64-presentations-worker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible Linux arm64 Presentations Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker="${RUNNER_TEMP}/presentations-worker"
+          bash runtime/plugins/office/presentations/build_worker_linux_arm64.sh "${worker}"
+          tar --sort=name --mtime='@1784160000' --owner=0 --group=0 --numeric-owner \
+            -C "${RUNNER_TEMP}" -cf - presentations-worker \
+            | gzip -n > "${RUNNER_TEMP}/presentations-worker-linux-arm64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: presentations-worker-linux-arm64
+          path: ${{ runner.temp }}/presentations-worker-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  linux-arm64-pdf-worker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible Linux arm64 PDF Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker="${RUNNER_TEMP}/pdf-worker"
+          bash runtime/plugins/pdf/build_worker_linux_arm64.sh "${worker}"
+          tar --sort=name --mtime='@1784160000' --owner=0 --group=0 --numeric-owner \
+            -C "${RUNNER_TEMP}" -cf - pdf-worker \
+            | gzip -n > "${RUNNER_TEMP}/pdf-worker-linux-arm64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pdf-worker-linux-arm64
+          path: ${{ runner.temp }}/pdf-worker-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  linux-arm64-media-worker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible Linux arm64 Media Foundation Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker="${RUNNER_TEMP}/media-foundation-worker"
+          bash runtime/plugins/media-foundation/build_worker_linux_arm64.sh "${worker}"
+          tar --sort=name --mtime='@1784160000' --owner=0 --group=0 --numeric-owner \
+            -C "${RUNNER_TEMP}" -cf - media-foundation-worker \
+            | gzip -n > "${RUNNER_TEMP}/media-foundation-worker-linux-arm64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: media-foundation-worker-linux-arm64
+          path: ${{ runner.temp }}/media-foundation-worker-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  linux-arm64-ocr-worker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible Linux arm64 OCR Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker="${RUNNER_TEMP}/ocr-worker"
+          bash runtime/plugins/ocr/build_worker_linux_arm64.sh "${worker}"
+          tar --sort=name --mtime='@1784160000' --owner=0 --group=0 --numeric-owner \
+            -C "${RUNNER_TEMP}" -cf - ocr-worker \
+            | gzip -n > "${RUNNER_TEMP}/ocr-worker-linux-arm64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-worker-linux-arm64
+          path: ${{ runner.temp }}/ocr-worker-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  linux-arm64-speech-worker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible Linux arm64 Speech Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker="${RUNNER_TEMP}/speech-worker"
+          bash runtime/plugins/speech/build_worker_linux_arm64.sh "${worker}"
+          tar --sort=name --mtime='@1784160000' --owner=0 --group=0 --numeric-owner \
+            -C "${RUNNER_TEMP}" -cf - speech-worker \
+            | gzip -n > "${RUNNER_TEMP}/speech-worker-linux-arm64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speech-worker-linux-arm64
+          path: ${{ runner.temp }}/speech-worker-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  linux-arm64-vision-worker:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reproducible Linux arm64 Vision Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          worker="${RUNNER_TEMP}/vision-worker"
+          bash runtime/plugins/vision/build_worker_linux_arm64.sh "${worker}"
+          tar --sort=name --mtime='@1784160000' --owner=0 --group=0 --numeric-owner \
+            -C "${RUNNER_TEMP}" -cf - vision-worker \
+            | gzip -n > "${RUNNER_TEMP}/vision-worker-linux-arm64.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vision-worker-linux-arm64
+          path: ${{ runner.temp }}/vision-worker-linux-arm64.tar.gz
+          if-no-files-found: error
+
+  guest-rootfs:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch locked guest rootfs build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="client/vm-assets/darwin-arm64.lock.json"
+          inputs="${RUNNER_TEMP}/shejane-guest-rootfs-inputs"
+          mkdir -p "${inputs}"
+          fetch() {
+            local query="$1"
+            local output="$2"
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "$(jq -r "${query}" "${lock}")" --output "${inputs}/${output}"
+          }
+          fetch '.e2fsprogs.source.url' e2fsprogs.tar.xz
+          fetch '.e2fsprogs.signature.url' e2fsprogs.tar.sign
+          fetch '.e2fsprogs.signing_key.url' e2fsprogs-signing-key.asc
+          mkdir "${inputs}/runtime-packages"
+          while IFS=$'\t' read -r url filename; do
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "${url}" --output "${inputs}/runtime-packages/${filename}"
+          done < <(jq -r '.rootfs.runtime_packages[] | [.url, .filename] | @tsv' "${lock}")
+      - name: Build reproducible Linux arm64 guest rootfs
+        shell: bash
+        run: |
+          set -euo pipefail
+          inputs="${RUNNER_TEMP}/shejane-guest-rootfs-inputs"
+          python client/vm-assets/build_guest_rootfs.py \
+            --e2fs-source "${inputs}/e2fsprogs.tar.xz" \
+            --e2fs-signature "${inputs}/e2fsprogs.tar.sign" \
+            --e2fs-signing-key "${inputs}/e2fsprogs-signing-key.asc" \
+            --runtime-packages "${inputs}/runtime-packages" \
+            --output "${RUNNER_TEMP}/guest-rootfs.ext4"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: managed-worker-guest-rootfs-arm64
+          path: ${{ runner.temp }}/guest-rootfs.ext4
+          if-no-files-found: error
+
+  build:
+    needs:
+      - guest-rootfs
+      - linux-arm64-documents-worker
+      - linux-arm64-ffmpeg-runtime
+      - linux-arm64-media-worker
+      - linux-arm64-node-runtime
+      - linux-arm64-ocr-runtime
+      - linux-arm64-ocr-worker
+      - linux-arm64-office-runtime
+      - linux-arm64-pdf-runtime
+      - linux-arm64-pdf-worker
+      - linux-arm64-presentations-worker
+      - linux-arm64-speech-runtime
+      - linux-arm64-speech-worker
+      - linux-arm64-spreadsheets-worker
+      - linux-arm64-vision-worker
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+            target: mac
+          - runner: macos-15-intel
+            platform: macos
+            arch: x64
+            target: mac
+          - runner: windows-latest
+            platform: windows
+            arch: x64
+            target: win
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - run: pnpm install --frozen-lockfile
+      - name: Build Runtime
+        working-directory: runtime
+        run: |
+          uv sync --frozen
+          uv run pyinstaller shejane-runtime.spec --noconfirm --clean
+      - name: Set Client version
+        if: github.ref_type == 'tag'
+        working-directory: client
+        shell: bash
+        run: pnpm version "${GITHUB_REF_NAME#client-v}" --no-git-tag-version --allow-same-version
+      - name: Import macOS Developer ID certificate
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for name in \
+            MACOS_DEVELOPER_ID_P12_BASE64 \
+            MACOS_DEVELOPER_ID_P12_PASSWORD \
+            APPLE_API_KEY \
+            APPLE_API_KEY_ID \
+            APPLE_API_ISSUER \
+            APPLE_TEAM_ID
+          do
+            test -n "${!name}" || { echo "required macOS release secret is missing: ${name}" >&2; exit 1; }
+          done
+          certificate="${RUNNER_TEMP}/shejane-developer-id.p12"
+          keychain="${RUNNER_TEMP}/shejane-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "${MACOS_DEVELOPER_ID_P12_BASE64}" | base64 --decode > "${certificate}"
+          chmod 600 "${certificate}"
+          security create-keychain -p "${keychain_password}" "${keychain}"
+          security set-keychain-settings -lut 21600 "${keychain}"
+          security unlock-keychain -p "${keychain_password}" "${keychain}"
+          security import "${certificate}" -k "${keychain}" \
+            -P "${MACOS_DEVELOPER_ID_P12_PASSWORD}" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "${keychain_password}" "${keychain}"
+          security list-keychains -d user -s "${keychain}"
+          identity="$(security find-identity -v -p codesigning "${keychain}" \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+            | head -1)"
+          test -n "${identity}" || { echo "Developer ID Application identity is unavailable" >&2; exit 1; }
+          rm -f "${certificate}"
+          echo "SHEJANE_CODESIGN_IDENTITY=${identity}" >> "${GITHUB_ENV}"
+          echo "APPLE_TEAM_ID=${APPLE_TEAM_ID}" >> "${GITHUB_ENV}"
+      - name: Prepare unsupported macOS VM asset directory
+        if: matrix.platform == 'macos' && matrix.arch != 'arm64'
+        run: mkdir -p client/build/vm-assets-${{ matrix.arch }}
+      - name: Fetch locked macOS Managed Worker VM sources
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="client/vm-assets/darwin-arm64.lock.json"
+          inputs="${RUNNER_TEMP}/shejane-managed-worker-vm-inputs"
+          mkdir -p "${inputs}"
+          fetch() {
+            local query="$1"
+            local output="$2"
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "$(jq -r "${query}" "${lock}")" --output "${inputs}/${output}"
+          }
+          fetch '.fedora.kernel_core.url' kernel-core.rpm
+          fetch '.fedora.kernel_modules_core.url' kernel-modules-core.rpm
+          fetch '.fedora.kernel_srpm.url' kernel.src.rpm
+          fetch '.fedora.keyring.url' fedora.gpg
+          fetch '.e2fsprogs.source.url' e2fsprogs.tar.xz
+          fetch '.e2fsprogs.signature.url' e2fsprogs.tar.sign
+          fetch '.e2fsprogs.signing_key.url' e2fsprogs-signing-key.asc
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: managed-worker-guest-rootfs-arm64
+          path: ${{ runner.temp }}/shejane-managed-worker-vm-inputs
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: documents-worker-linux-arm64
+          path: ${{ runner.temp }}/shejane-documents-worker
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: spreadsheets-worker-linux-arm64
+          path: ${{ runner.temp }}/shejane-spreadsheets-worker
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: presentations-worker-linux-arm64
+          path: ${{ runner.temp }}/shejane-presentations-worker
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: pdf-worker-linux-arm64
+          path: ${{ runner.temp }}/shejane-pdf-worker
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: media-foundation-worker-linux-arm64
+          path: ${{ runner.temp }}/shejane-media-worker
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: ocr-worker-linux-arm64
+          path: ${{ runner.temp }}/shejane-ocr-worker
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: speech-worker-linux-arm64
+          path: ${{ runner.temp }}/shejane-speech-worker
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: vision-worker-linux-arm64
+          path: ${{ runner.temp }}/shejane-vision-worker
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: office-runtime-linux-arm64
+          path: ${{ runner.temp }}/shejane-office-runtime
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: mupdf-runtime-linux-arm64
+          path: ${{ runner.temp }}/shejane-mupdf-runtime
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: ffmpeg-runtime-linux-arm64
+          path: ${{ runner.temp }}/shejane-ffmpeg-runtime
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: rapidocr-runtime-linux-arm64
+          path: ${{ runner.temp }}/shejane-rapidocr-runtime
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: whisper-runtime-linux-arm64
+          path: ${{ runner.temp }}/shejane-whisper-runtime
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: node-runtime-linux-arm64
+          path: ${{ runner.temp }}/shejane-node-runtime
+      - name: Extract Linux arm64 Managed Workers
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf "${RUNNER_TEMP}/shejane-documents-worker/documents-worker-linux-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/shejane-documents-worker"
+          tar -xzf "${RUNNER_TEMP}/shejane-spreadsheets-worker/spreadsheets-worker-linux-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/shejane-spreadsheets-worker"
+          tar -xzf "${RUNNER_TEMP}/shejane-presentations-worker/presentations-worker-linux-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/shejane-presentations-worker"
+          tar -xzf "${RUNNER_TEMP}/shejane-pdf-worker/pdf-worker-linux-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/shejane-pdf-worker"
+          tar -xzf "${RUNNER_TEMP}/shejane-media-worker/media-foundation-worker-linux-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/shejane-media-worker"
+          tar -xzf "${RUNNER_TEMP}/shejane-ocr-worker/ocr-worker-linux-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/shejane-ocr-worker"
+          tar -xzf "${RUNNER_TEMP}/shejane-speech-worker/speech-worker-linux-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/shejane-speech-worker"
+          tar -xzf "${RUNNER_TEMP}/shejane-vision-worker/vision-worker-linux-arm64.tar.gz" \
+            -C "${RUNNER_TEMP}/shejane-vision-worker"
+          test -x "${RUNNER_TEMP}/shejane-documents-worker/documents-worker/documents-worker"
+          test -x "${RUNNER_TEMP}/shejane-spreadsheets-worker/spreadsheets-worker/spreadsheets-worker"
+          test -x "${RUNNER_TEMP}/shejane-presentations-worker/presentations-worker/presentations-worker"
+          test -x "${RUNNER_TEMP}/shejane-pdf-worker/pdf-worker/pdf-worker"
+          test -x "${RUNNER_TEMP}/shejane-media-worker/media-foundation-worker/media-foundation-worker"
+          test -x "${RUNNER_TEMP}/shejane-ocr-worker/ocr-worker/ocr-worker"
+          test -x "${RUNNER_TEMP}/shejane-speech-worker/speech-worker/speech-worker"
+          test -x "${RUNNER_TEMP}/shejane-vision-worker/vision-worker/vision-worker"
+      - name: Install verified Linux arm64 Office Runtime Asset
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          from pathlib import Path
+          from shejane_runtime.plugins.runtime_assets import RuntimeAssetStore
+
+          root = Path("${{ runner.temp }}")
+          archive = root / "shejane-office-runtime/office-runtime-linux-arm64-a.shejane-runtime-asset"
+          installed = RuntimeAssetStore(root / "shejane-office-runtime-store").install(archive)
+          (root / "shejane-office-runtime-path").write_text(str(installed.root), encoding="utf-8")
+          (root / "shejane-office-runtime-digest").write_text(installed.digest, encoding="utf-8")
+          PY
+      - name: Install verified Linux arm64 MuPDF Runtime Asset
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          from pathlib import Path
+          from shejane_runtime.plugins.runtime_assets import RuntimeAssetStore
+
+          root = Path("${{ runner.temp }}")
+          archive = root / "shejane-mupdf-runtime/mupdf-runtime-linux-arm64-a.shejane-runtime-asset"
+          installed = RuntimeAssetStore(root / "shejane-mupdf-runtime-store").install(archive)
+          (root / "shejane-mupdf-runtime-digest").write_text(installed.digest, encoding="utf-8")
+          PY
+      - name: Install verified Linux arm64 media Runtime Assets
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          from pathlib import Path
+          from shejane_runtime.plugins.runtime_assets import RuntimeAssetStore
+
+          root = Path("${{ runner.temp }}")
+          assets = {
+              "ffmpeg": root / "shejane-ffmpeg-runtime/ffmpeg-runtime-linux-arm64-a.shejane-runtime-asset",
+              "rapidocr": root / "shejane-rapidocr-runtime/rapidocr-runtime-linux-arm64-a.shejane-runtime-asset",
+              "whisper": root / "shejane-whisper-runtime/whisper-runtime-linux-arm64-a.shejane-runtime-asset",
+          }
+          store = RuntimeAssetStore(root / "shejane-media-runtime-store")
+          for name, archive in assets.items():
+              installed = store.install(archive)
+              (root / f"shejane-{name}-runtime-digest").write_text(
+                  installed.digest, encoding="utf-8"
+              )
+          PY
+      - name: Build and inspect Linux arm64 Office plugin packages
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(cat "${RUNNER_TEMP}/shejane-office-runtime-digest")"
+          packages="${RUNNER_TEMP}/shejane-office-packages"
+          mkdir -p "${packages}"
+          uv run python plugins/office/documents/build_package.py \
+            --platform linux/arm64 \
+            --runtime-asset-digest "${digest}" \
+            --worker "${RUNNER_TEMP}/shejane-documents-worker/documents-worker" \
+            --output "${packages}/documents-0.1.0-linux-arm64.shejane-plugin"
+          uv run python plugins/office/spreadsheets/build_package.py \
+            --platform linux/arm64 \
+            --runtime-asset-digest "${digest}" \
+            --worker "${RUNNER_TEMP}/shejane-spreadsheets-worker/spreadsheets-worker" \
+            --output "${packages}/spreadsheets-0.1.0-linux-arm64.shejane-plugin"
+          uv run python plugins/office/presentations/build_package.py \
+            --platform linux/arm64 \
+            --runtime-asset-digest "${digest}" \
+            --worker "${RUNNER_TEMP}/shejane-presentations-worker/presentations-worker" \
+            --output "${packages}/presentations-0.1.0-linux-arm64.shejane-plugin"
+          for package in "${packages}"/*.shejane-plugin; do
+            uv run shejane-plugin inspect "${package}"
+          done
+      - name: Build and inspect Linux arm64 PDF plugin package
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(cat "${RUNNER_TEMP}/shejane-mupdf-runtime-digest")"
+          output="${RUNNER_TEMP}/shejane-pdf-0.1.0-linux-arm64.shejane-plugin"
+          uv run python plugins/pdf/build_package.py \
+            --platform linux/arm64 \
+            --runtime-asset-digest "${digest}" \
+            --worker "${RUNNER_TEMP}/shejane-pdf-worker/pdf-worker" \
+            --output "${output}"
+          uv run shejane-plugin inspect "${output}"
+      - name: Build and inspect Linux arm64 Media, OCR, Speech, and Cloud Vision packages
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages="${RUNNER_TEMP}/shejane-media-packages"
+          mkdir -p "${packages}"
+          ffmpeg_digest="$(cat "${RUNNER_TEMP}/shejane-ffmpeg-runtime-digest")"
+          rapidocr_digest="$(cat "${RUNNER_TEMP}/shejane-rapidocr-runtime-digest")"
+          whisper_digest="$(cat "${RUNNER_TEMP}/shejane-whisper-runtime-digest")"
+          uv run python plugins/media-foundation/build_package.py \
+            --platform linux/arm64 \
+            --runtime-asset-digest "${ffmpeg_digest}" \
+            --worker "${RUNNER_TEMP}/shejane-media-worker/media-foundation-worker" \
+            --output "${packages}/media-foundation-0.1.0-linux-arm64.shejane-plugin"
+          uv run python plugins/ocr/build_package.py \
+            --platform linux/arm64 \
+            --runtime-asset-digest "${rapidocr_digest}" \
+            --worker "${RUNNER_TEMP}/shejane-ocr-worker/ocr-worker" \
+            --output "${packages}/ocr-0.1.0-linux-arm64.shejane-plugin"
+          uv run python plugins/speech/build_package.py \
+            --platform linux/arm64 \
+            --ffmpeg-runtime-asset-digest "${ffmpeg_digest}" \
+            --whisper-runtime-asset-digest "${whisper_digest}" \
+            --worker "${RUNNER_TEMP}/shejane-speech-worker/speech-worker" \
+            --output "${packages}/speech-0.1.0-linux-arm64.shejane-plugin"
+          uv run python plugins/vision/build_package.py \
+            --backend cloud \
+            --platform linux/arm64 \
+            --worker "${RUNNER_TEMP}/shejane-vision-worker/vision-worker" \
+            --output "${packages}/vision-cloud-0.1.0-linux-arm64.shejane-plugin"
+          for package in "${packages}"/*.shejane-plugin; do
+            uv run shejane-plugin inspect "${package}"
+          done
+      - name: Build locked macOS Managed Worker VM assets
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install gnupg rpm zstd
+          inputs="${RUNNER_TEMP}/shejane-managed-worker-vm-inputs"
+          uv run python ../../client/vm-assets/build_darwin.py \
+            --kernel-core "${inputs}/kernel-core.rpm" \
+            --kernel-modules-core "${inputs}/kernel-modules-core.rpm" \
+            --kernel-srpm "${inputs}/kernel.src.rpm" \
+            --fedora-keyring "${inputs}/fedora.gpg" \
+            --e2fs-source "${inputs}/e2fsprogs.tar.xz" \
+            --e2fs-signature "${inputs}/e2fsprogs.tar.sign" \
+            --e2fs-signing-key "${inputs}/e2fsprogs-signing-key.asc" \
+            --guest-rootfs "${inputs}/guest-rootfs.ext4" \
+            --codesign-identity "${SHEJANE_CODESIGN_IDENTITY}" \
+            --output ../../client/build/vm-assets-arm64
+      - name: Package Client
+        working-directory: client
+        shell: bash
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
+        run: |
+          pnpm build:client
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} \
+              --config.mac.identity="${SHEJANE_CODESIGN_IDENTITY}" --publish never
+          else
+            pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+          fi
+      - name: Verify packaged macOS application
+        if: matrix.platform == 'macos'
+        working-directory: client
+        shell: bash
+        run: |
+          app="$(find release -type d -name '*.app' -print -quit)"
+          codesign --verify --deep --strict --verbose=2 "${app}"
+          codesign -d --verbose=4 "${app}" 2>&1 \
+            | grep -Fq "TeamIdentifier=${APPLE_TEAM_ID}"
+          codesign -d --verbose=4 "${app}" 2>&1 | grep -Eq 'flags=.*runtime'
+          codesign -d --verbose=4 "${app}" 2>&1 | grep -Fq 'Authority=Developer ID Application:'
+          codesign -d --verbose=4 "${app}" 2>&1 | grep -Fq 'Timestamp='
+          spctl --assess --type execute --verbose=4 "${app}"
+          xcrun stapler validate "${app}"
+          dmg="$(find release -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "${dmg}"
+          xcrun stapler validate "${dmg}"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "${dmg}"
+          if [[ "${{ matrix.arch }}" != "arm64" ]]; then
+            test ! -e "${app}/Contents/Resources/sandbox/vm-assets/manifest.json"
+            exit 0
+          fi
+          assets="${app}/Contents/Resources/sandbox/vm-assets"
+          helper="${assets}/shejane-managed-worker-vm"
+          diff -rq build/vm-assets-arm64 "${assets}"
+          for executable in "${helper}" "${assets}/mke2fs"; do
+            codesign --verify --strict --verbose=2 "${executable}"
+            codesign -d --verbose=4 "${executable}" 2>&1 | grep -Eq 'flags=.*runtime'
+            codesign -d --verbose=4 "${executable}" 2>&1 \
+              | grep -Fq 'Authority=Developer ID Application:'
+            codesign -d --verbose=4 "${executable}" 2>&1 | grep -Fq 'Timestamp='
+          done
+          codesign -d --entitlements - "${helper}" 2>&1 \
+            | grep -Fq 'com.apple.security.virtualization'
+          "${helper}" --self-test
+          "${assets}/mke2fs" -V 2>&1 | grep -Fq 'mke2fs 1.47.2'
+      - name: Run packaged Client Runtime smoke
+        if: matrix.platform == 'macos' || matrix.platform == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            packaged="$(find client/release -type d -name '*.app' -print -quit)"
+          else
+            packaged="$(find client/release/win-unpacked -maxdepth 1 -type f -name '*.exe' -print -quit)"
+          fi
+          test -n "${packaged}"
+          node scripts/test-packaged-client-runtime.mjs "${packaged}"
+      - name: Run packaged macOS Managed Worker VM gate
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          assets="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)"
+          manifest="${assets}/manifest.json"
+          SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
+          SHEJANE_TEST_LINUX_DOCUMENTS_WORKER="${RUNNER_TEMP}/shejane-documents-worker/documents-worker" \
+          SHEJANE_TEST_NODE_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-node-runtime/org.nodejs.runtime-linux-arm64-a.shejane-runtime-asset" \
+            uv run pytest tests/test_macos_managed_worker_vm_gate.py -q
+      - name: Run Linux arm64 Office Worker golden gate in packaged macOS VM
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
+          SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
+          SHEJANE_TEST_DOCUMENTS_WORKER="${RUNNER_TEMP}/shejane-documents-worker/documents-worker/documents-worker" \
+          SHEJANE_TEST_SPREADSHEETS_WORKER="${RUNNER_TEMP}/shejane-spreadsheets-worker/spreadsheets-worker/spreadsheets-worker" \
+          SHEJANE_TEST_PRESENTATIONS_WORKER="${RUNNER_TEMP}/shejane-presentations-worker/presentations-worker/presentations-worker" \
+          SHEJANE_TEST_OFFICE_RUNTIME="$(cat "${RUNNER_TEMP}/shejane-office-runtime-path")" \
+            uv run pytest \
+              tests/test_documents_worker.py::test_documents_worker_real_runtime_asset_render \
+              tests/test_spreadsheets_worker.py::test_spreadsheets_worker_real_runtime_recalculation_and_golden \
+              tests/test_presentations_worker.py::test_presentations_worker_real_runtime_render_golden \
+              -q
+      - name: Run Linux arm64 PDF production gate in packaged macOS VM
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
+          SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
+          SHEJANE_TEST_PDF_WORKER="${RUNNER_TEMP}/shejane-pdf-worker/pdf-worker/pdf-worker" \
+          SHEJANE_MUPDF_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-mupdf-runtime/mupdf-runtime-linux-arm64-a.shejane-runtime-asset" \
+            uv run pytest tests/test_pdf_runtime_asset.py -q
+      - name: Run Linux arm64 Media Foundation production gate in packaged macOS VM
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
+          SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
+          SHEJANE_TEST_MEDIA_WORKER="${RUNNER_TEMP}/shejane-media-worker/media-foundation-worker/media-foundation-worker" \
+          SHEJANE_FFMPEG_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-ffmpeg-runtime/ffmpeg-runtime-linux-arm64-a.shejane-runtime-asset" \
+            uv run pytest tests/test_media_foundation_runtime_asset.py -q
+      - name: Run Linux arm64 OCR production gate in packaged macOS VM
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
+          SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
+          SHEJANE_TEST_OCR_WORKER="${RUNNER_TEMP}/shejane-ocr-worker/ocr-worker/ocr-worker" \
+          SHEJANE_RAPIDOCR_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-rapidocr-runtime/rapidocr-runtime-linux-arm64-a.shejane-runtime-asset" \
+            uv run pytest tests/test_ocr_runtime_asset.py -q
+      - name: Run Linux arm64 Speech production gate in packaged macOS VM
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
+          SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
+          SHEJANE_TEST_SPEECH_WORKER="${RUNNER_TEMP}/shejane-speech-worker/speech-worker/speech-worker" \
+          SHEJANE_TEST_MEDIA_WORKER="${RUNNER_TEMP}/shejane-media-worker/media-foundation-worker/media-foundation-worker" \
+          SHEJANE_FFMPEG_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-ffmpeg-runtime/ffmpeg-runtime-linux-arm64-a.shejane-runtime-asset" \
+          SHEJANE_WHISPER_RUNTIME_ASSET="${RUNNER_TEMP}/shejane-whisper-runtime/whisper-runtime-linux-arm64-a.shejane-runtime-asset" \
+            uv run pytest tests/test_speech_runtime_asset.py -q
+      - name: Run Linux arm64 Cloud Vision broker gate in packaged macOS VM
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        working-directory: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find ../../client/release -type d -name '*.app' -print -quit)"
+          manifest="$(cd "${app}/Contents/Resources/sandbox/vm-assets" && pwd)/manifest.json"
+          SHEJANE_TEST_MACOS_VM_ASSETS="${manifest}" \
+          SHEJANE_TEST_VISION_WORKER="${RUNNER_TEMP}/shejane-vision-worker/vision-worker/vision-worker" \
+            uv run pytest \
+              tests/test_vision_worker.py::test_cloud_vision_worker_uses_frozen_host_binding_without_asset \
+              tests/test_plugin_tool_execution.py::test_vision_provider_call_uses_authorized_image_and_redacts_credentials \
+              -q
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            client/release/*.dmg
+            client/release/*.zip
+            client/release/*.exe
+            client/release/latest*.yml
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: client-*
+          path: release
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --generate-notes

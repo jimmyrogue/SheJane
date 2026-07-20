@@ -48,4 +48,4 @@ A Managed Worker manifest references exact `id + version + digest`; its one pack
 
 Runtime Assets remain content-addressed after plugin retirement because an active or recoverable Run may still hold an exact plugin binding. They are physically reclaimed only by the same future reference-aware garbage collector that reclaims retired plugin blobs. v1 intentionally has no independent user-facing remove command: an asset cannot execute or be selected by itself, and independent deletion would break reproducibility.
 
-The first consumer is the shared Office runtime locked in [`plugins/office/runtime-assets`](../../plugins/office/runtime-assets).
+The first consumer is the shared Office runtime locked in [`runtime/plugins/office/runtime-assets`](../../runtime/plugins/office/runtime-assets).

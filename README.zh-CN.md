@@ -2,13 +2,13 @@
 
 # 石间 · SheJane
 
-### 本地优先的桌面 Agent Runtime
+### 本地优先的 Client 与 Agent Runtime
 
 在自己的电脑上运行带工作区、权限、检查点、Skill、MCP 和确定性插件的工具型 Agent。
 
 [![CI](https://img.shields.io/github/actions/workflow/status/jimmyrogue/SheJane/ci.yml?branch=main&style=flat-square&logo=githubactions&label=CI)](https://github.com/jimmyrogue/SheJane/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--only-B3532F?style=flat-square&logo=gnu)](./LICENSE)
-![Desktop](https://img.shields.io/badge/desktop-macOS%20%7C%20Windows-2B2A28?style=flat-square&logo=electron)
+![Client](https://img.shields.io/badge/desktop-macOS%20%7C%20Windows-2B2A28?style=flat-square&logo=electron)
 
 [English](./README.md) · 简体中文
 
@@ -24,13 +24,25 @@
 
 ```mermaid
 flowchart LR
-    D["桌面客户端<br/>Electron + React"] -->|"本地 HTTP + SSE"| R["SheJane Runtime<br/>Python + LangGraph"]
+    C["Client<br/>Electron + React"] -->|"本地 HTTP + SSE"| R["Runtime<br/>Python + LangGraph"]
     R --> W["本地工作区<br/>文件 · 工具 · 检查点"]
     R --> E["扩展能力<br/>Skill · MCP · 插件 · Subagent"]
     R --> B["BYOK 供应商<br/>OpenAI 兼容接口 · 本地模型端点"]
 ```
 
-桌面客户端通过 loopback HTTP 和配对凭证连接 Runtime。Runtime 失败时明确报告本地错误，不静默切换执行路径。
+Client 通过 loopback HTTP 和配对凭证连接 Runtime。Runtime 失败时明确报告本地错误，不静默切换执行路径。
+
+仓库只保留两个产品模块：
+
+```text
+client/                 # UI、Electron 生命周期和 Runtime 状态投影
+runtime/                # 执行核心、协议、SDK、插件和测试
+├── src/shejane_runtime/
+├── sdk/
+└── plugins/
+```
+
+Runtime 可以脱离 Client 独立启动和测试。SDK 与插件放在 Runtime 目录下，是因为它们的契约由 Runtime 拥有；它们仍可独立构建和发布，但不再形成第三个产品模块。
 
 ## 当前包含什么
 
@@ -39,7 +51,7 @@ flowchart LR
 | Runtime | LangGraph 和 Deep Agents 循环、流式事件、检查点、恢复、规划、验证、记忆和人工审批 |
 | 本地工具 | 工作区文件、Shell、Office、网页抓取、剪贴板审批和定时任务 |
 | 扩展能力 | Skill、MCP、确定性的 WASI/Managed Worker 插件、Subagent 和可配置 middleware |
-| 桌面端 | Electron 和 React、Runtime 权威对话的本地投影、文件预览、供应商设置与工作区控制 |
+| Client | Electron 和 React、Runtime 权威对话的本地投影、文件预览、供应商设置与工作区控制 |
 | Runtime SDK | 面向命令、SSE、快照、错误和生成协议类型的公共 TypeScript 客户端 |
 
 业务平台连接器统一通过标准工具或 MCP 接入。
@@ -48,47 +60,52 @@ flowchart LR
 
 ## 快速开始
 
-桌面开发需要**支持 Corepack 的 Node.js 22+**、**Python 3.12+** 与 [uv](https://docs.astral.sh/uv/)。
+开发需要**支持 Corepack 的 Node.js 22+**、**Python 3.12+** 与 [uv](https://docs.astral.sh/uv/)。
 
 ```bash
 make setup-hooks
 corepack enable && pnpm install
-make dev-electron
+make dev
 ```
 
-根目录不需要 `.env`。启动 Desktop 后，在 Runtime 设置中添加 OpenAI 兼容供应商并选择模型即可。启动异常时运行 `make doctor`。
+根目录不需要 `.env`。启动 Client 后，在 Runtime 设置中添加 OpenAI 兼容供应商并选择模型即可。启动异常时运行 `make doctor`。
 
 ## 开发检查
 
 ```bash
-make lint        # 格式、静态检查和密钥边界检查
-make test        # Python Runtime、Desktop 和 Runtime SDK 测试
-make build       # 生产构建
+make dev-client          # 只启动 Client，使用 SHEJANE_RUNTIME_URL 与 SHEJANE_RUNTIME_TOKEN
+make dev-runtime         # 只启动 Runtime
+make test-client         # React 与 Electron 行为
+make test-runtime        # Agent 循环、状态、工具、插件和 HTTP
+make test-runtime-sdk    # 生成类型、HTTP client 与 SSE parser
+make test-contract       # 真实 Runtime HTTP/SSE + SDK，不启动 Electron
+make test-e2e            # 完整 Client + Runtime 路径
+make lint && make test && make build
 ```
+
+故障定位也按边界分层：Runtime 测试失败就留在 `runtime/`；Client 测试失败就留在 `client/`；两边单测通过但 contract 失败，就检查协议边界；contract 通过但 E2E 失败，优先检查 Client 投影或 Electron 进程编排。
 
 ## 从源码构建 Runtime
 
 Runtime 暂不作为独立程序发布到 GitHub Release。请在实际运行它的操作系统和 CPU 架构上构建：
 
 ```bash
-cd services/runtime
-uv sync --frozen
-uv run pyinstaller shejane-runtime.spec --noconfirm --clean
+make package-runtime
 ```
 
-构建结果位于 `services/runtime/dist/shejane-runtime/`。Windows 可执行文件名为 `shejane-runtime.exe`。PyInstaller 会打包平台相关的原生依赖，因此不能跨操作系统或 CPU 架构构建。
+构建结果位于 `runtime/dist/shejane-runtime/`。Windows 可执行文件名为 `shejane-runtime.exe`。PyInstaller 会打包平台相关的原生依赖，因此不能跨操作系统或 CPU 架构构建。
 
-## Desktop 安装包
+## Client 安装包
 
-Desktop 发布工作流会从同一次提交构建 Runtime，并将它放进安装包。GitHub Actions 生成三个产物：
+Client 发布工作流会从同一次提交构建 Runtime，并将它放进安装包。GitHub Actions 生成三个产物：
 
 ```text
-desktop-macos-arm64
-desktop-macos-x64
-desktop-windows-x64
+client-macos-arm64
+client-macos-x64
+client-windows-x64
 ```
 
-手动运行工作流可以测试安装包。推送 `desktop-vX.Y.Z` 标签才会创建 GitHub Release。Runtime SDK 继续使用 `runtime-sdk-vX.Y.Z` 标签发布。
+手动运行工作流可以测试安装包。推送 `client-vX.Y.Z` 标签才会创建 GitHub Release。Runtime SDK 继续使用 `runtime-sdk-vX.Y.Z` 标签发布。
 
 ## 文档
 

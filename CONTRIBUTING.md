@@ -11,18 +11,18 @@ ownership of their work.
 
 ## Architecture in one minute
 
-SheJane is a standalone desktop agent harness:
+SheJane is one monorepo with two product modules:
 
 ```
-Electron/React Desktop ──/local/v1/*──▶ Python Harness Runtime ──▶ BYOK providers
+Electron/React Client  ──/v1/*──▶ Python Agent Runtime   ──▶ BYOK providers
                                              │
                                              └── Skills / MCP / local tools
 
 ```
 
-- `services/runtime/`: Python Runtime built with LangGraph and Deep Agents. It runs the agent loop, tools, and middleware over loopback HTTP.
-- `apps/desktop/`: Electron, React, Vite, and Tailwind client with a local projection of Runtime-owned conversations.
-- `packages/runtime-sdk/`: Public TypeScript SDK for the Runtime protocol.
+- `client/`: Electron, React, Vite, and Tailwind Client with a local projection of Runtime-owned conversations.
+- `runtime/`: independently runnable Python Runtime plus its owned SDK, plugins, schemas, and tests.
+- `runtime/sdk/` is separately buildable and publishable, but it is a Runtime submodule rather than a third product module.
 
 **Read [CLAUDE.md](./CLAUDE.md) first.** It has the full architecture, the request flow (`docs/run-loop.md`), and the four non-negotiable invariants. [AGENTS.md](./AGENTS.md) has the backend, frontend, and testing rules.
 
@@ -38,10 +38,10 @@ Electron/React Desktop ──/local/v1/*──▶ Python Harness Runtime ──�
 ```bash
 make setup-hooks            # installs lefthook + wires git hooks
 corepack enable && pnpm install
-make dev-electron           # Runtime + Vite + Electron, with log tail
+make dev           # Runtime + Vite + Electron, with log tail
 ```
 
-Configure an OpenAI-compatible provider from Desktop after startup. Runtime
+Configure an OpenAI-compatible provider from Client after startup. Runtime
 stores provider secrets in the operating-system credential store.
 
 If anything looks wrong, `make doctor` is the first stop.
@@ -49,9 +49,9 @@ If anything looks wrong, `make doctor` is the first stop.
 ## The four invariants (don't break these)
 
 1. **Runtime provider keys never come from process env.** BYOK keys live in the Runtime credential store. Enforced by `scripts/check.sh`.
-2. **The Runtime's Pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` and `packages/runtime-sdk/src/generated.ts`.
+2. **The Runtime's Pydantic models are the source of truth for the HTTP shape.** After editing `api_schemas.py` or a handler's `response_model`, run `make schemas` and commit the regenerated `openapi.json` and `runtime/sdk/src/generated.ts`.
 3. **The SSE wire envelope is fixed.** See `docs/runtime-protocol.md` before touching streaming.
-4. **Runtime owns accepted commands, conversations, task state, checkpoints, and tool receipts.** Desktop stores only pending commands and a disposable projection.
+4. **Runtime owns accepted commands, conversations, task state, checkpoints, and tool receipts.** Client stores only pending commands and a disposable projection.
 
 ## Workflow
 
@@ -70,14 +70,15 @@ If anything looks wrong, `make doctor` is the first stop.
 
 ```bash
 make lint                   # ruff + project guards
-make test                   # Runtime + Desktop + Runtime SDK
+make test                   # Runtime + Client + Runtime SDK
 make test-e2e               # Runtime 黑盒 + 崩溃恢复 + Playwright Electron E2E
-make test-e2e-real MODEL=local:provider:model  # 正常 Agent/Tool/Desktop 流程 + 真实 BYOK LLM
+make test-e2e-real MODEL=local:provider:model  # 正常 Agent/Tool/Client 流程 + 真实 BYOK LLM
 
 # focused:
-make local-host-test        # uv run python -m pytest
-make client-test            # client Vitest
-make runtime-sdk-test       # public SDK Vitest
+make test-runtime           # uv run python -m pytest
+make test-client            # Client Vitest
+make test-runtime-sdk       # public SDK Vitest
+make test-contract          # real Runtime HTTP/SSE + SDK, no Electron
 ```
 
 CI runs the same lint, deterministic test, build, and Runtime E2E jobs on every PR. The real-LLM suite is an explicit manual/release gate because provider output and availability are external inputs. See [Runtime E2E testing](./docs/runtime-e2e-testing.md) for the test boundary and coverage map.

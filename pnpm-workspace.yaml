@@ -1,6 +1,6 @@
 packages:
-  - apps/desktop
-  - packages/*
+  - client
+  - runtime/sdk
 
 allowBuilds:
   electron: true

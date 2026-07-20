@@ -19,5 +19,5 @@ Other approaches you thought about.
 
 ### Scope
 
-- Component(s): <!-- Runtime / Desktop / Runtime SDK -->
+- Module / layer: <!-- Client / Runtime core / Runtime SDK / Runtime plugins -->
 - Does this touch permissions, remote access, or the secret boundary? <!-- yes/no -->

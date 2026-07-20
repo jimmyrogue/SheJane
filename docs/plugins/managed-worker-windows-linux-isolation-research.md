@@ -108,7 +108,7 @@ MicroVM 中 scratch 是固定长度 RAW block device；Guest 在其上创建 ext
 
 未证明：Windows QEMU binary、LPAC/ACL、Job Object、Windows named pipe、WHPX、TCG 在 Windows 上的性能、固定 Guest source supply chain、Artifact/cancel/escape/ENOSPC 全套模式、最终 Electron/PyInstaller 包与崩溃恢复。因此 `windows_qemu_linux_vm_v1` 的 `proved` 仍为空，全部 Windows blocker 保留。
 
-Windows host boundary 的候选实现位于 `apps/desktop/native/managed-worker-vm-windows.cpp`，独立 CI job 会在 `windows-latest` 用 MSVC 构建并执行 `--self-test`。这个自检不是空的启动冒烟：它创建唯一 LPAC profile，以 `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 和 `PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY` 启动 suspended child，在恢复前加入不可 breakaway Job，并验证 LPAC token、宿主文件拒绝、零网络 capability、Job memory/CPU/process-tree limits、active-process-zero 和 profile/staging 清理。
+Windows host boundary 的候选实现位于 `client/native/managed-worker-vm-windows.cpp`，独立 CI job 会在 `windows-latest` 用 MSVC 构建并执行 `--self-test`。这个自检不是空的启动冒烟：它创建唯一 LPAC profile，以 `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES` 和 `PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY` 启动 suspended child，在恢复前加入不可 breakaway Job，并验证 LPAC token、宿主文件拒绝、零网络 capability、Job memory/CPU/process-tree limits、active-process-zero 和 profile/staging 清理。
 
 Named Pipe 也在同一自检中按真实所有权验证：LPAC child 作为 server 创建 `\\.\pipe\LOCAL\...`，full-trust host 作为 client 交换固定 challenge。Microsoft 明确要求 AppContainer 内的 pipe 使用 `LOCAL` namespace；QEMU Windows `-chardev pipe` 正好创建单个 duplex Named Pipe server。因此只有这个自检在真实 Windows runner 通过后，才允许继续把 QEMU 接到同一边界，不能由 Linux FIFO 探针外推。[ConnectNamedPipe AppContainer constraints](https://learn.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-connectnamedpipe) [QEMU pipe chardev](https://www.qemu.org/docs/master/system/invocation.html)
 
@@ -222,7 +222,7 @@ exit 1
 
 随后加入的完整 Linux/arm64 候选继续在同一真实 kernel Gate 上证明：冻结 Bubblewrap 0.11.2 建立只读 root/package/input 和独立 mount/PID/network/IPC/UTS namespace；host-owned seccomp 禁止 socket、mount、namespace、ptrace、跨进程读取、BPF、keyring、io_uring 以及嵌套 user namespace；私有 tmpfs 固定 bytes/inodes 并在写满时返回 `ENOSPC`。Worker 只看见私有 `/output`，broker 在 Worker 启动前卸载临时 host-output mount、保护描述符并只复制协议中声明且通过 `openat`/`O_NOFOLLOW` 校验的普通 Artifact，未声明 filler 不会进入宿主目录。
 
-Bubblewrap 源码、大小、SHA-256、无 setuid 构建选项、固定 Debian builder、`libcap`、许可证和输出 manifest 已冻结；两次构建逐字节一致。生产 `ManagedWorkerActionExecutor` Gate 已通过宿主文件、credential、PID identity、Unix socket、loopback、外网、只读路径、broker fd/mount、seccomp、scratch、OOM、取消和清理。privileged Docker hierarchy 仍不是最终 Desktop delegation，因此当前只把这些写入 `proved`；`systemd_delegation_gate` 与 `release_ci_gate` 继续阻止 `linux/arm64` 启用。
+Bubblewrap 源码、大小、SHA-256、无 setuid 构建选项、固定 Debian builder、`libcap`、许可证和输出 manifest 已冻结；两次构建逐字节一致。生产 `ManagedWorkerActionExecutor` Gate 已通过宿主文件、credential、PID identity、Unix socket、loopback、外网、只读路径、broker fd/mount、seccomp、scratch、OOM、取消和清理。privileged Docker hierarchy 仍不是最终 Client delegation，因此当前只把这些写入 `proved`；`systemd_delegation_gate` 与 `release_ci_gate` 继续阻止 `linux/arm64` 启用。
 
 ### 3.6 Linux 打包限制
 

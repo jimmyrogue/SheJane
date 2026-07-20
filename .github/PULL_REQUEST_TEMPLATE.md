@@ -16,7 +16,7 @@
 - [ ] `make lint` passes
 - [ ] `make test` passes (or the relevant focused suite)
 - [ ] If I edited `api_schemas.py` or a `response_model`, I ran `make schemas` and committed the regenerated files
-- [ ] No platform-paid provider keys added to the Python daemon (invariant #1)
+- [ ] No platform-paid provider keys added to the Python runtime (invariant #1)
 - [ ] Tests added/updated for the change
 
 ## Notes for reviewers

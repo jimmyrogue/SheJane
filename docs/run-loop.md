@@ -8,12 +8,12 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 
 支持目录变化通知的 MCP Server 发出 `notifications/tools/list_changed` 后，监督器会后台刷新并替换目录；正在执行的 Run 继续使用原快照和会话。MCP 工具达到 12 个时，模型默认只看到 `mcp.search_tools`，搜索结果中的工具结构从下一模型回合起按需暴露；静态 Runtime 工具保持常驻。该本地目录工具不额外调用模型，也不要求供应商支持原生 Tool Search。
 
-> **范围**：`services/runtime/` 中一个 run 从 `POST /local/v1/runs` 到终态的完整路径。
+> **范围**：`runtime/` 中一个 run 从 `POST /v1/runs` 到终态的完整路径。
 > **关联**：[harness-runtime-stages.md](harness-runtime-stages.md) · [runtime-protocol.md](runtime-protocol.md) · [operations.md](operations.md) · [roadmap.md](roadmap.md)
 > **状态**：本文只记录当前代码如何运行，不定义 P1-P12 目标编号。阶段编号以 [harness-runtime-stages.md](harness-runtime-stages.md) 为准。
 > **边界**：业务平台连接器不属于 Runtime 核心，通过标准工具或 MCP 接入。
 
-桌面发行版由 Electron Main 为自带 Runtime 分配本机端点、数据目录和一次性配对 Token，并通过源码与打包产物共用的命令行入口启动进程。Desktop 不提供 Runtime 连接设置；开发者仍可通过 Main 进程配置接入自己管理的 loopback Runtime，地址和加密 Token 不会回传 Renderer，Electron 也不会关闭外部进程。Runtime 拒绝非 loopback 监听，未来远程客户端必须通过独立接入网关或用户自管的同机私网代理。两种本机模式都使用带认证的 `/local/v1/runtime` 握手，要求协议版本为 1 且具备 `agent.run`、`agent.stream` 能力。托管子进程只有明确报告“地址已占用”并退出时才换端点重试，所有尝试共享一个 30 秒期限；其他启动错误或仍存活却未就绪时直接失败。连接失败时 Desktop 进入离线状态，提示用户重启应用或检查开发配置。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。
+桌面发行版由 Electron Main 为自带 Runtime 分配本机端点、数据目录和一次性配对 Token，并通过源码与打包产物共用的命令行入口启动进程。Client 不提供 Runtime 连接设置；开发者仍可通过 Main 进程配置接入自己管理的 loopback Runtime，地址和加密 Token 不会回传 Renderer，Electron 也不会关闭外部进程。Runtime 拒绝非 loopback 监听，未来远程客户端必须通过独立接入网关或用户自管的同机私网代理。两种本机模式都使用带认证的 `/v1/runtime` 握手，要求协议版本为 1 且具备 `agent.run`、`agent.stream` 能力。托管子进程只有明确报告“地址已占用”并退出时才换端点重试，所有尝试共享一个 30 秒期限；其他启动错误或仍存活却未就绪时直接失败。连接失败时 Client 进入离线状态，提示用户重启应用或检查开发配置。桌面托管进程在应用退出时先收到 `SIGTERM`，有限等待后仍未退出才会被强制结束。
 
 ---
 
@@ -26,7 +26,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 
   ┌─ 1. 入口与状态机 ────────────────────────────────────────────────────────────────┐
   │                                                                                  │
-  │  POST /local/v1/runs                                                              │
+  │  POST /v1/runs                                                              │
   │       ├─ Electron Main 为 Runtime 请求注入 Bearer Token；Renderer 只持有地址和会话标记 │
   │       ├─ 配对 Token 映射为稳定 Runtime 身份 local:owner                          │
   │       ├─ 认证后、JSON 解析前限制请求体为 1 MiB                                   │
@@ -45,19 +45,19 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │       ├─ store.accept_run_command(...)                                            │
   │       │    同一事务写命令 + 对话消息 + Run + pending 作业 + 线程变化              │
   │       │    P3 同事务解析启用/显式/Command 插件，并写精确 run_plugin_bindings       │
-  │       │    显式插件选择按已验证 manifest 规范化到用户消息 metadata；Desktop 历史只投影该值 │
+  │       │    显式插件选择按已验证 manifest 规范化到用户消息 metadata；Client 历史只投影该值 │
   │       │    fork 继承源 Run 的精确 digest；更新或退休不改写已接受 Run               │
   │       │    已有对话的 history 从 Runtime 消息生成；客户端历史只用于一次旧数据迁入 │
   │       │    同编号同内容返回原 run；同编号不同内容返回 409                         │
   │       └─ 返回“已持久化”回执，不在 HTTP 请求中启动 Agent                          │
   │                                                                                  │
-  │  POST /local/v1/runs/{source_run_id}/fork                                        │
+  │  POST /v1/runs/{source_run_id}/fork                                        │
   │       ├─ Renderer 先在同一待发队列保存 run.fork 和新对话临时投影                │
   │       ├─ 请求携带协议版本与所需能力；不兼容时不写入任何分支状态                 │
   │       ├─ Runtime 原子写命令、分支对话、消息、Run、作业和稳定回执                │
   │       └─ 断网或重启后复用同一待发分支，不改写旧分支                            │
   │                                                                                  │
-  │  POST /local/v1/commands  （支持取消、四类等待决定与插件生命周期命令）            │
+  │  POST /v1/commands  （支持取消、四类等待决定与插件生命周期命令）            │
   │       ├─ Renderer 先把命令写入同一个 IndexedDB 待发队列                         │
   │       ├─ Runtime 在同一事务保存命令、取消请求和稳定回执                         │
   │       ├─ 等待态取消会同时关闭权限、问题、计划审批和其他等待候选                 │
@@ -136,7 +136,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │   │      └──────────┬───────────────┘                                       │    │
   │   │                 ▼                                                       │    │
   │   │            sse-starlette 推流（sep="\n"）                              │    │
-  │   │                                /local/v1/runs/:id/stream                 │    │
+  │   │                                /v1/runs/:id/stream                 │    │
   │   │                                每帧 data: <envelope JSON>                │    │
   │   │                                最后 data: [DONE] sentinel                │    │
   │   └──────────────────────────────────────────────────────────────────────────┘    │
@@ -306,7 +306,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
                                        ▼
 
   ┌─ 4. 横切：观测层 ─────────────────────────────────────────────────────────────────┐
-  │   DaemonObserver(AsyncCallbackHandler) 通过 config["callbacks"] 注入 agent       │
+  │   RuntimeObserver(AsyncCallbackHandler) 通过 config["callbacks"] 注入 agent       │
   │                                                                                  │
   │   on_chat_model_start  → llm.start  {model_name, message_count, tags}            │
   │   on_llm_end           → llm.end    {input_tokens, output_tokens, elapsed_ms}    │
@@ -338,7 +338,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 1e | **拒绝回执** | 拒绝不进入工具，保存 `rejected` 回执 | `capability_1e_denied_tool_is_not_executed_and_has_rejected_receipt` ✅ |
 | 1f | **整批先暂停** | 混合只读和写入调用时，确认前一个也不执行 | `capability_1f_review_pauses_the_entire_mixed_tool_batch` ✅ |
 | 1g | **参数前置校验** | 无效参数不询问用户、不进入工具 | `capability_1g_invalid_tool_arguments_fail_before_review` ✅ |
-| 1i | **任务级权限模式** | `ask`、`auto`、`full_access` 在 Runtime 工具审查层裁决，Desktop 只提交选择 | `test_permission_mode_*` ✅ |
+| 1i | **任务级权限模式** | `ask`、`auto`、`full_access` 在 Runtime 工具审查层裁决，Client 只提交选择 | `test_permission_mode_*` ✅ |
 | 2 | **SubAgent 派发** | LLM 返 `task` tool_call | `cap_2_subagent_spawned` + `runtime-agent.contract.test.ts` 真实 Runtime 纵向链路 ✅ |
 | 2c | **子 Agent 同一执行边界** | 子 Agent 内工具也经过确认和回执 | `capability_2c_subagent_tools_share_review_and_receipt_boundary` ✅ |
 | 3 | 供应商缓存边界 | Runtime 不注入供应商私有缓存标记，由标准供应商适配器决定 | `capability_3_prompt_caching_is_gateway_owned` ✅ |
@@ -375,11 +375,11 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | orphan tool_call 自愈 | `before_agent` 扫 messages | `test_middleware` |
 | Input guard | `@before_agent` | `test_middleware` |
 | Output guard | `@after_model` observe-only flag for empty/refusal finals | `test_middleware` |
-| 验证回环 | `@after_model + jump_to="model"`，`task.verify` 失败后最多按 `SHEJANE_LOCAL_VERIFY_REPAIR_MAX` 重做 | `test_middleware` / `test_agent_builder` |
+| 验证回环 | `@after_model + jump_to="model"`，`task.verify` 失败后最多按 `SHEJANE_RUNTIME_VERIFY_REPAIR_MAX` 重做 | `test_middleware` / `test_agent_builder` |
 | 用户确认 retry workflow | `metadata.intent=retry` → `<state>` 重试上下文；普通恢复重试携带 source run/message、attempt 和失败分类，帮助模型避免盲目重复失败路径 | `test_runs_http` / `App.test` |
 | 编辑重跑 | 复用持久 `run.start`，以当前未替换的用户消息为前置条件；Runtime 原子隐藏旧投影并创建新 Run，旧记录不删除 | `test_run_result_commit` / `App.test` |
 | 检查点分叉 | 客户端持久保存 `run.fork`；Runtime 从公开检查点创建新产品对话和明确分支头，同编号重放返回原 Run | `test_runs_http` / `client.test` / `App.test` |
-| 用户触发 repair workflow | `metadata.intent=repair` → `<state>` 修复上下文 + `repair.workflow` started/completed/failed/rejected/canceled；client 按 `{conversation_id, assistant_message_id}` 给 repair action 加 in-flight guard，避免同一失败消息被连续点击创建重复替换 run；attempt 超过 `SHEJANE_LOCAL_REPAIR_WORKFLOW_MAX` 时 fail-fast，不调用模型 | `test_runs_http` / `test_context_builder` / `test_run_recovery` / `App.test` |
+| 用户触发 repair workflow | `metadata.intent=repair` → `<state>` 修复上下文 + `repair.workflow` started/completed/failed/rejected/canceled；client 按 `{conversation_id, assistant_message_id}` 给 repair action 加 in-flight guard，避免同一失败消息被连续点击创建重复替换 run；attempt 超过 `SHEJANE_RUNTIME_REPAIR_WORKFLOW_MAX` 时 fail-fast，不调用模型 | `test_runs_http` / `test_context_builder` / `test_run_recovery` / `App.test` |
 | 复杂任务小步执行 | `PlanFirstMiddleware` 按当前 Run 的 `task_input` 写入 `incremental_execution` 状态，不注入 Plan-First 文案；`CompletionRouter` 在 P9 强制先写 2–8 个 todos、只保留一个 `in_progress`、每次最多完成一个任务，并阻止未全部完成时提交最终答案。默认 `auto`，可显式关闭 | `test_plan_first` / `test_middleware` / `test_e2e_capabilities` |
 | 执行结算与资源清理 | 所有结束方式先关闭执行级 `AsyncExitStack`，再从助手草稿、模型账本、工具回执和验证记录生成结构化结果；清理不明时进入不可自动重试的隔离态 | `test_run_jobs` / `test_model_ledger` |
 | 显式长期记忆 | 主任务入口从真实用户输入提取精确记忆事实；`memory.write` 只能写入该能力允许的原文，子 Agent 不拥有写权限；读写按所有者与工作区双重隔离 | `test_memory` / `test_memory_http` / `test_subagents` |
@@ -395,8 +395,8 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 模型错误 durable failure | 供应商错误进入统一失败策略；不可恢复或重试耗尽后写入结构化 `run.failed` | `test_model_ledger` / `test_runs_http` / `test_agent_builder` / `test_failure_policy` |
 | 验证结果诊断 | `handoff.verification` 暴露最新 `task.verify` 结构化结果；最新验证通过时不再把更早的 `task.verify` 失败作为当前 failure/blocker | `test_runs_http` / `DiagnosticsPanel.test` |
 | 工具 envelope 失败翻译 | `ToolMessage` content 为 `ok:false` JSON/dict envelope 时翻译成 `tool.failed`，并保留 error_code / recoverable / retryable | `test_event_translator` / `test_runs_http` |
-| **流式 token** | `messages` 模式先用 `llm.round.started` 标记新的模型回合，再用 `llm.delta` 发送增量；Desktop 在新回合开始时替换旧的临时草稿 | `test_streaming_latency` / `chatStore.test` |
-| 取消 | 客户端持久保存 `run.cancel` → `POST /local/v1/commands` → Runtime 原子保存取消请求与回执 → `task.cancel()` → `CancelledError` | `test_runs_http` / `test_run_commands` / `App.test` |
+| **流式 token** | `messages` 模式先用 `llm.round.started` 标记新的模型回合，再用 `llm.delta` 发送增量；Client 在新回合开始时替换旧的临时草稿 | `test_streaming_latency` / `chatStore.test` |
+| 取消 | 客户端持久保存 `run.cancel` → `POST /v1/commands` → Runtime 原子保存取消请求与回执 → `task.cancel()` → `CancelledError` | `test_runs_http` / `test_run_commands` / `App.test` |
 | 权限决定 | 客户端持久保存 `permission.resolve` → Runtime 原子保存决定、事件与回执；同批候选齐全时创建恢复作业 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
 | 计划审批 | 客户端持久保存 `plan.resolve` → Runtime 原子保存决定、事件与回执；与同一等待周期的其他候选共同结算 | `test_runs_http` / `test_plan_approval` / `client.test` / `App.test` |
 | 工具对账 | 客户端持久保存 `tool.reconcile` → Runtime 原子结算工具回执、等待候选、事件和命令回执 | `test_runs_http` / `test_tool_receipts` / `client.test` / `App.test` |
@@ -405,7 +405,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 快照与事件恢复 | 助手消息投影原子记录正文覆盖的事件高水位；客户端保存 `lastEventSeq`，SSE 用 `?after=<seq>` 仅回放后续事件 | `test_run_result_commit` / `test_sse_envelope` / `client.test` / `runtimeProjection.test` |
 | 游标重同步 | Runtime 拒绝超出事件窗口的游标；客户端读取完整线程快照后继续订阅 | `test_sse_envelope` / `client.test` / `App.test` |
 | 临时增量 | 模型回合边界、逐字文本、推理、临时用量和未完成调用片段只走每订阅者有界队列，不写事件日志或重连重放；模型开始新回合或进入工具调用时清空上一回合的临时正文，失败时不把未完成正文显示为最终回答 | `test_sse_envelope` / `test_run_jobs` / `chatStore.test` / `MessageBubble.test` |
-| 观测层 | `DaemonObserver` callback | `test_observability` ✅ 9 case |
+| 观测层 | `RuntimeObserver` callback | `test_observability` ✅ 9 case |
 
 ### Failure recovery contract
 
@@ -423,16 +423,16 @@ SheJane follows the same split as LangGraph's fault-tolerance model:
 
 | 概念 | 文件 |
 |---|---|
-| 入口 + 路由 | [`local_host/server.py`](../services/runtime/local_host/server.py) |
-| RunCoordinator + driver loop | [`local_host/runs.py`](../services/runtime/local_host/runs.py) |
-| build_agent + middleware 装配 | [`local_host/agent/builder.py`](../services/runtime/local_host/agent/builder.py) |
-| Subagent 定义 | [`local_host/agent/subagents.py`](../services/runtime/local_host/agent/subagents.py) |
-| Runtime middleware | [`local_host/middleware/`](../services/runtime/local_host/middleware/) |
-| 模型适配、上下文与调用账本 | [`local_host/llm/`](../services/runtime/local_host/llm/) |
-| LangGraph → 客户端事件翻译 | [`local_host/event_translator.py`](../services/runtime/local_host/event_translator.py) |
-| structlog + DaemonObserver | [`local_host/observability.py`](../services/runtime/local_host/observability.py) |
-| 工具注册 | [`local_host/tools/registry.py`](../services/runtime/local_host/tools/registry.py) |
-| 持久化 store | [`local_host/store/sqlite.py`](../services/runtime/local_host/store/sqlite.py) |
+| 入口 + 路由 | [`shejane_runtime/server.py`](../runtime/src/shejane_runtime/server.py) |
+| RunCoordinator + driver loop | [`shejane_runtime/runs.py`](../runtime/src/shejane_runtime/runs.py) |
+| build_agent + middleware 装配 | [`shejane_runtime/agent/builder.py`](../runtime/src/shejane_runtime/agent/builder.py) |
+| Subagent 定义 | [`shejane_runtime/agent/subagents.py`](../runtime/src/shejane_runtime/agent/subagents.py) |
+| Runtime middleware | [`shejane_runtime/middleware/`](../runtime/src/shejane_runtime/middleware/) |
+| 模型适配、上下文与调用账本 | [`shejane_runtime/llm/`](../runtime/src/shejane_runtime/llm/) |
+| LangGraph → 客户端事件翻译 | [`shejane_runtime/event_translator.py`](../runtime/src/shejane_runtime/event_translator.py) |
+| structlog + RuntimeObserver | [`shejane_runtime/observability.py`](../runtime/src/shejane_runtime/observability.py) |
+| 工具注册 | [`shejane_runtime/tools/registry.py`](../runtime/src/shejane_runtime/tools/registry.py) |
+| 持久化 store | [`shejane_runtime/store/sqlite.py`](../runtime/src/shejane_runtime/store/sqlite.py) |
 
 ---
 

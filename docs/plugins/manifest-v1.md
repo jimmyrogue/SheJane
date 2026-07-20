@@ -4,7 +4,7 @@
 
 The manifest describes what a plugin contributes and what the Runtime must authorize. It is data, not executable setup code. Installing a package must never evaluate its entrypoint.
 
-The canonical machine-readable contract is [`schemas/plugin-manifest.v1.schema.json`](../../schemas/plugin-manifest.v1.schema.json).
+The canonical machine-readable contract is [`runtime/plugins/schemas/plugin-manifest.v1.schema.json`](../../runtime/plugins/schemas/plugin-manifest.v1.schema.json).
 
 ## Package layout
 
@@ -171,7 +171,7 @@ Install into a content-addressed, immutable directory. Enabling a version update
 
 ## Reference packages
 
-- [`plugins/fixtures/wasi-archive`](../../plugins/fixtures/wasi-archive) exercises `wasi` and archive extraction.
-- [`plugins/fixtures/worker-documents`](../../plugins/fixtures/worker-documents) exercises `managed_worker` and document rendering.
+- [`runtime/plugins/fixtures/wasi-archive`](../../runtime/plugins/fixtures/wasi-archive) exercises `wasi` and archive extraction.
+- [`runtime/plugins/fixtures/worker-documents`](../../runtime/plugins/fixtures/worker-documents) exercises `managed_worker` and document rendering.
 
 They are contract fixtures, not yet executable plugins.

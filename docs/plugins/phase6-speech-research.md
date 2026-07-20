@@ -175,13 +175,13 @@ passes from first sentence through last under the same deterministic background,
 an explicit technical-term prompt. A real `media.extract_audio` FLAC Artifact feeds
 `speech.transcribe` through the file boundary without inline media bytes. An engine
 response reporting 7,200,001 milliseconds is rejected before Artifact creation. The
-observed two-run cold-start time was 129 seconds on the local host.
+observed two-run cold-start time was 129 seconds on the development machine.
 Proper nouns remain normal probabilistic ASR: `SheJane` became `She Jane`/`She Janes`
 and `石间` became `时间`, even with an initial prompt. The plugin must not promise
 dictionary-constrained names or treat `initial_prompt` as a correction guarantee.
 
 The asset/model/Worker/package and real VM tests are wired into
-`release-desktop.yml`. A real Developer ID signed and notarized run has not passed, so
+`release-client.yml`. A real Developer ID signed and notarized run has not passed, so
 `release_ci_gate` and Registry remain closed. Real music, mixed-language/Latin-script
 breadth, a real encoded two-hour boundary corpus, excessive segment/text/output cases,
 Linux/amd64 and Windows native gates remain open. No host-installed Whisper/FFmpeg or

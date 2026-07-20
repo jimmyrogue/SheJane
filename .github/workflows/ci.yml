@@ -36,25 +36,25 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-          cache-dependency-glob: services/runtime/uv.lock
+          cache-dependency-glob: runtime/uv.lock
 
       - name: Install Python deps
         run: uv sync
-        working-directory: services/runtime
+        working-directory: runtime
 
       - name: ruff check
-        run: uv run ruff check .
-        working-directory: services/runtime
+        run: uv run ruff check src tests
+        working-directory: runtime
 
       - name: ruff format --check
-        run: uv run ruff format --check .
-        working-directory: services/runtime
+        run: uv run ruff format --check src tests
+        working-directory: runtime
 
       - name: Project guards
         run: ./scripts/check.sh
 
       # Schema-drift guard — `make schemas` regenerates openapi.json
-      # + generated.ts from the daemon's pydantic models. If the
+      # + generated.ts from the runtime's pydantic models. If the
       # committed files don't match the regenerated output, the PR
       # changed a response_model but didn't run `make schemas`.
       # Catches the failure mode where a Python-side change silently
@@ -64,9 +64,9 @@ jobs:
 
       - name: Schema drift (make schemas + git diff)
         run: |
-          ./scripts/export-daemon-openapi.sh
+          ./scripts/export-runtime-openapi.sh
           pnpm --filter @shejane/runtime-sdk generate
-          if ! git diff --exit-code -- packages/runtime-sdk/openapi.json packages/runtime-sdk/src/generated.ts; then
+          if ! git diff --exit-code -- runtime/sdk/openapi.json runtime/sdk/src/generated.ts; then
             echo "::error::Schemas drifted. Run 'make schemas' locally and commit the result."
             exit 1
           fi
@@ -90,7 +90,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Setup Python (local-host daemon)
+      - name: Setup Python (Runtime)
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -105,14 +105,14 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-          cache-dependency-glob: services/runtime/uv.lock
+          cache-dependency-glob: runtime/uv.lock
 
       - name: Install workspace dependencies
         run: corepack enable && pnpm install --frozen-lockfile
 
-      - name: Install local-host (Python) dependencies
+      - name: Install runtime (Python) dependencies
         run: uv sync
-        working-directory: services/runtime
+        working-directory: runtime
 
       - name: Unit suites + build
         run: make test build
@@ -145,7 +145,7 @@ jobs:
         run: >-
           call "%VSDEVCMD%" -arch=x64 &&
           cl /nologo /std:c++20 /EHsc /W4 /WX /MT
-          apps\desktop\native\managed-worker-vm-windows.cpp
+          client\native\managed-worker-vm-windows.cpp
           /Fe:"%RUNNER_TEMP%\shejane-managed-worker-vm.exe"
 
       - name: Run the native confinement self-test
@@ -156,9 +156,9 @@ jobs:
   # readiness, cleanup and failure logs so local and CI runs cannot drift.
   #
   # Why it's a separate job (not part of deterministic-tests):
-  #   • Needs a running daemon as a background service — pollutes the
+  #   • Needs a running runtime as a background service — pollutes the
   #     hermetic test env.
-  #   • Failure mode is "client and daemon disagree on a contract" —
+  #   • Failure mode is "client and runtime disagree on a contract" —
   #     surfacing it as its own check name makes triage instant.
   contract:
     name: Runtime E2E
@@ -183,14 +183,14 @@ jobs:
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-          cache-dependency-glob: services/runtime/uv.lock
+          cache-dependency-glob: runtime/uv.lock
 
       - name: Install workspace dependencies
         run: corepack enable && pnpm install --frozen-lockfile
 
-      - name: Install daemon deps
+      - name: Install runtime deps
         run: uv sync
-        working-directory: services/runtime
+        working-directory: runtime
 
       - name: Run Runtime E2E
         run: make test-e2e
