@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { IconPlus, IconTrash } from '@tabler/icons-react'
+import { IconPhoto, IconPlus, IconTool, IconTrash } from '@tabler/icons-react'
 import {
   Dialog,
   DialogContent,
@@ -39,6 +39,7 @@ const PROVIDER_TEMPLATES = [
 
 type ProviderTemplateID = typeof PROVIDER_TEMPLATES[number]['id']
 type ProviderKind = LocalModelProvider['kind']
+const compactTokens = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
 
 function customProviderID(kind: ProviderKind) {
   return `custom-${kind === 'anthropic' ? 'anthropic' : 'openai'}-${Date.now().toString(36)}`.slice(0, 32)
@@ -147,10 +148,7 @@ export function ModelProvidersSettings({
     setMaxInputTokens(sharedMaxInputTokens?.toString() ?? '')
     setMaxOutputTokens(sharedMaxOutputTokens?.toString() ?? '')
     setRequiresAPIKey(provider.requires_api_key)
-    setDiscoveredModels(provider.models.map((candidate) => ({
-      model_id: candidate.model_id,
-      display_name: candidate.display_name,
-    })))
+    setDiscoveredModels(provider.models.map((candidate) => ({ ...candidate })))
     setManualModelID(false)
     setSavedCredentialConfigured(provider.credential_configured)
     setEditing(true)
@@ -176,8 +174,7 @@ export function ModelProvidersSettings({
       for (const selected of selectedModels) {
         if (!discovered.some((candidate) => candidate.model_id === selected.model_id)) {
           discovered.push({
-            model_id: selected.model_id,
-            display_name: selected.display_name,
+            ...selected,
           })
         }
       }
@@ -200,11 +197,7 @@ export function ModelProvidersSettings({
     setSelectedModels((current) => current.some((candidate) => candidate.model_id === model.model_id)
       ? current.filter((candidate) => candidate.model_id !== model.model_id)
       : [...current, {
-          model_id: model.model_id,
-          display_name: model.display_name,
-          tool_calling: true,
-          streaming: true,
-          image_inputs: false,
+          ...model,
         }])
   }
 
@@ -223,12 +216,6 @@ export function ModelProvidersSettings({
       streaming: true,
       image_inputs: false,
     }))
-  }
-
-  const setModelImageInputs = (modelID: string, imageInputs: boolean) => {
-    setSelectedModels((current) => current.map((model) => (
-      model.model_id === modelID ? { ...model, image_inputs: imageInputs } : model
-    )))
   }
 
   const showModelConfiguration = !requiresAPIKey || Boolean(apiKey.trim()) || savedCredentialConfigured
@@ -436,8 +423,11 @@ export function ModelProvidersSettings({
                         role="group"
                         aria-label={t('settings.models.model')}
                       >
-                        {visibleModels.map((model) => (
-                          <label className="settings-provider-model-choice" key={model.model_id}>
+                        {visibleModels.map((model) => {
+                          const context = model.max_input_tokens
+                            ? compactTokens.format(model.max_input_tokens)
+                            : null
+                          return <label className="settings-provider-model-choice" key={model.model_id}>
                             <input
                               type="checkbox"
                               checked={selectedModels.some((candidate) => candidate.model_id === model.model_id)}
@@ -446,12 +436,23 @@ export function ModelProvidersSettings({
                             />
                             <span className="settings-provider-model-option">
                               <span>{model.display_name}</span>
-                              {model.display_name !== model.model_id ? (
-                                <span className="settings-provider-model-id">{model.model_id}</span>
-                              ) : null}
+                              <span className="settings-provider-model-details">
+                                {model.display_name !== model.model_id ? (
+                                  <span className="settings-provider-model-id">{model.model_id}</span>
+                                ) : null}
+                                <span className="settings-provider-model-metadata">
+                                  {context ? <span>{t('settings.models.contextWindow', { size: context })}</span> : null}
+                                  {model.image_inputs ? (
+                                    <span><IconPhoto size={12} aria-hidden="true" />{t('settings.models.imageCapability')}</span>
+                                  ) : null}
+                                  {model.tool_calling ? (
+                                    <span><IconTool size={12} aria-hidden="true" />{t('settings.models.toolCapability')}</span>
+                                  ) : null}
+                                </span>
+                              </span>
                             </span>
                           </label>
-                        ))}
+                        })}
                       </div>
                       <div className="settings-provider-model-footer">
                         <span>{t('settings.models.selectedCount', { count: selectedModels.length })}</span>
@@ -470,22 +471,6 @@ export function ModelProvidersSettings({
                       </div>
                     </div>
                   )}
-                  {selectedModels.length > 0 ? (
-                    <div className="settings-provider-model-capabilities">
-                      {selectedModels.map((model) => (
-                        <label key={model.model_id} className="settings-provider-model-capability">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(model.image_inputs)}
-                            aria-label={`${model.display_name} ${t('settings.models.imageInputs')}`}
-                            onChange={(event) => setModelImageInputs(model.model_id, event.target.checked)}
-                          />
-                          <span>{model.display_name}</span>
-                          <small>{t('settings.models.imageInputs')}</small>
-                        </label>
-                      ))}
-                    </div>
-                  ) : null}
                 </div>
 
                 <details className="settings-provider-advanced">

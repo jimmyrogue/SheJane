@@ -87,7 +87,6 @@ describe('ModelProvidersSettings', () => {
     fireEvent.change(screen.getByRole('textbox', { name: '模型 ID 1' }), { target: { value: 'gpt-4.1' } })
     fireEvent.click(screen.getByRole('button', { name: '添加模型' }))
     fireEvent.change(screen.getByRole('textbox', { name: '模型 ID 2' }), { target: { value: 'gpt-4o' } })
-    fireEvent.click(screen.getByRole('checkbox', { name: 'gpt-4o 支持图片' }))
     expect(screen.getByRole('button', { name: '获取模型' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
 
@@ -99,7 +98,7 @@ describe('ModelProvidersSettings', () => {
         api_key: 'secret-key',
         models: [
           expect.objectContaining({ model_id: 'gpt-4.1' }),
-          expect.objectContaining({ model_id: 'gpt-4o', image_inputs: true }),
+          expect.objectContaining({ model_id: 'gpt-4o' }),
         ],
       }),
       expect.objectContaining({ token: 'tok' }),
@@ -111,8 +110,24 @@ describe('ModelProvidersSettings', () => {
   it('discovers provider model names and saves multiple selected models', async () => {
     listLocalModelProviders.mockResolvedValue([])
     discoverLocalModels.mockResolvedValue([
-      { model_id: 'openai/gpt-4.1', display_name: 'GPT-4.1' },
-      { model_id: 'anthropic/claude-sonnet-4', display_name: 'Claude Sonnet 4' },
+      {
+        model_id: 'openai/gpt-4.1',
+        display_name: 'GPT-4.1',
+        tool_calling: true,
+        streaming: true,
+        image_inputs: true,
+        max_input_tokens: 1_000_000,
+        max_output_tokens: 32_768,
+      },
+      {
+        model_id: 'anthropic/claude-sonnet-4',
+        display_name: 'Claude Sonnet 4',
+        tool_calling: true,
+        streaming: true,
+        image_inputs: false,
+        max_input_tokens: 200_000,
+        max_output_tokens: 64_000,
+      },
     ])
     upsertLocalModelProvider.mockResolvedValue({})
     render(
@@ -136,6 +151,9 @@ describe('ModelProvidersSettings', () => {
       expect.objectContaining({ token: 'tok' }),
     ))
     await screen.findByRole('group', { name: '模型' })
+    expect(screen.getByText('1M 上下文')).toBeInTheDocument()
+    expect(screen.getAllByText('图片')).toHaveLength(1)
+    expect(screen.getAllByText('工具')).toHaveLength(2)
     fireEvent.click(screen.getByRole('checkbox', { name: 'GPT-4.1 (openai/gpt-4.1)' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Claude Sonnet 4 (anthropic/claude-sonnet-4)' }))
     expect(screen.getByText('已选择 2 个模型')).toBeInTheDocument()
@@ -148,6 +166,9 @@ describe('ModelProvidersSettings', () => {
           expect.objectContaining({
             model_id: 'openai/gpt-4.1',
             display_name: 'GPT-4.1',
+            image_inputs: true,
+            max_input_tokens: 1_000_000,
+            max_output_tokens: 32_768,
           }),
           expect.objectContaining({
             model_id: 'anthropic/claude-sonnet-4',

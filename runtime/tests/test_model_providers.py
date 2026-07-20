@@ -8,6 +8,7 @@ from contextlib import AsyncExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import httpx
 import keyring
 import pytest
 from fastapi.testclient import TestClient
@@ -32,7 +33,15 @@ class _OpenAICompatibleHandler(BaseHTTPRequestHandler):
             {
                 "object": "list",
                 "data": [
-                    {"id": "provider/model-a", "name": "Model A", "object": "model"},
+                    {
+                        "id": "provider/model-a",
+                        "name": "Model A",
+                        "object": "model",
+                        "context_length": 128000,
+                        "architecture": {"input_modalities": ["text", "image"]},
+                        "supported_parameters": ["tools"],
+                        "top_provider": {"max_completion_tokens": 16384},
+                    },
                     {"id": "provider/model-b", "object": "model"},
                 ],
             }
@@ -368,6 +377,52 @@ def test_anthropic_provider_persists_kind_and_binding(
     assert list(credential_vault.values()) == ["provider-secret"]
 
 
+def test_deepseek_v4_binding_uses_official_limits_when_profile_omits_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    credential_vault: dict[str, str],
+) -> None:
+    settings = reset_settings_for_tests(
+        SHEJANE_RUNTIME_TOKEN="tok",
+        data_dir=tmp_path,
+    )
+    monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
+    with TestClient(create_app(settings)) as client:
+        headers = {"Authorization": "Bearer tok"}
+        created = client.put(
+            "/v1/model-providers/deepseek",
+            headers=headers,
+            json=_provider_payload(
+                name="DeepSeek",
+                base_url="https://api.deepseek.com",
+                models=[
+                    {
+                        "model_id": "deepseek-v4-flash",
+                        "display_name": "DeepSeek V4 Flash",
+                        "tool_calling": True,
+                        "streaming": True,
+                    }
+                ],
+            ),
+        )
+        run = client.post(
+            "/v1/runs",
+            headers=headers,
+            json=run_command(
+                "inspect",
+                model="local:deepseek:deepseek-v4-flash",
+            ),
+        )
+
+    assert created.status_code == 200
+    assert created.json()["models"][0]["max_input_tokens"] == 1_000_000
+    assert created.json()["models"][0]["max_output_tokens"] == 384_000
+    assert run.status_code == 200
+    profile = json.loads(run.json()["settings_json"])["_model_binding"]["profile"]
+    assert profile["max_input_tokens"] == 1_000_000
+    assert profile["max_output_tokens"] == 384_000
+
+
 async def test_model_provider_kind_migration_preserves_existing_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "local.db"
     with sqlite3.connect(db_path) as conn:
@@ -423,7 +478,7 @@ async def test_model_provider_kind_migration_preserves_existing_rows(tmp_path: P
     assert created["kind"] == "anthropic"
 
 
-def test_provider_api_discovers_model_ids_and_display_names(
+def test_provider_api_discovers_model_profiles_when_upstream_exposes_them(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -450,8 +505,24 @@ def test_provider_api_discovers_model_ids_and_display_names(
         assert response.status_code == 200
         assert response.json() == {
             "models": [
-                {"model_id": "provider/model-a", "display_name": "Model A"},
-                {"model_id": "provider/model-b", "display_name": "provider/model-b"},
+                {
+                    "model_id": "provider/model-a",
+                    "display_name": "Model A",
+                    "tool_calling": True,
+                    "streaming": True,
+                    "image_inputs": True,
+                    "max_input_tokens": 128000,
+                    "max_output_tokens": 16384,
+                },
+                {
+                    "model_id": "provider/model-b",
+                    "display_name": "provider/model-b",
+                    "tool_calling": True,
+                    "streaming": True,
+                    "image_inputs": False,
+                    "max_input_tokens": None,
+                    "max_output_tokens": None,
+                },
             ]
         }
         assert _OpenAICompatibleHandler.authorization == "Bearer provider-secret"
@@ -460,6 +531,66 @@ def test_provider_api_discovers_model_ids_and_display_names(
         upstream.shutdown()
         upstream.server_close()
         thread.join(timeout=2)
+
+
+def test_provider_api_fills_official_model_profiles_from_models_dev(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://api.openai.com/v1/models":
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "gpt-5.2", "object": "model"}]},
+                request=request,
+            )
+        assert str(request.url) == "https://models.dev/api.json"
+        return httpx.Response(
+            200,
+            json={
+                "openai": {
+                    "models": {
+                        "gpt-5.2": {
+                            "tool_call": True,
+                            "modalities": {"input": ["text", "image"]},
+                            "limit": {"input": 272000, "output": 128000},
+                        }
+                    }
+                }
+            },
+            request=request,
+        )
+
+    class PatchedClient(httpx.AsyncClient):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(transport=httpx.MockTransport(handler), **kwargs)
+
+    settings = reset_settings_for_tests(SHEJANE_RUNTIME_TOKEN="tok", data_dir=tmp_path)
+    monkeypatch.setattr(RunCoordinator, "start", lambda _self: None)
+    monkeypatch.setattr("shejane_runtime.server.httpx.AsyncClient", PatchedClient)
+    with TestClient(create_app(settings)) as client:
+        response = client.post(
+            "/v1/model-providers/discover-models",
+            headers={"Authorization": "Bearer tok"},
+            json={
+                "provider_id": "openai",
+                "base_url": "https://api.openai.com/v1",
+                "api_key": "provider-secret",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["models"] == [
+        {
+            "model_id": "gpt-5.2",
+            "display_name": "gpt-5.2",
+            "tool_calling": True,
+            "streaming": True,
+            "image_inputs": True,
+            "max_input_tokens": 272000,
+            "max_output_tokens": 128000,
+        }
+    ]
 
 
 def test_provider_api_discovers_anthropic_models(
@@ -494,6 +625,11 @@ def test_provider_api_discovers_anthropic_models(
                 {
                     "model_id": "claude-sonnet-4-6",
                     "display_name": "Claude Sonnet 4.6",
+                    "tool_calling": True,
+                    "streaming": True,
+                    "image_inputs": False,
+                    "max_input_tokens": None,
+                    "max_output_tokens": None,
                 }
             ]
         }

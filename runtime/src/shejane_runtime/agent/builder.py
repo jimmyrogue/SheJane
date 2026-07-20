@@ -77,6 +77,7 @@ from ..middleware.tool_result_retry import ToolResultRetryMiddleware
 from ..middleware.tool_review import ToolReviewMiddleware
 from ..middleware.tool_visibility import ToolVisibilityMiddleware, delivered_plugin_tool_name
 from ..model_credentials import CredentialStoreError, get_model_api_key
+from ..model_profiles import apply_known_model_profile_defaults
 from ..plugins.catalog import PluginExecutionLease
 from ..plugins.linux_cgroup import load_linux_cgroup_resources
 from ..plugins.macos_vm import load_macos_vm_resources
@@ -672,6 +673,11 @@ async def _invoke_plugin_vision(
         ),
         None,
     )
+    if isinstance(current_profile, dict):
+        current_profile = apply_known_model_profile_defaults(
+            current_profile,
+            provider_base_url=str(provider.get("base_url") or "") if provider else "",
+        )
     if (
         provider is None
         or not bool(provider.get("enabled"))

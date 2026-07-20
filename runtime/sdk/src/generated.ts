@@ -1318,8 +1318,27 @@ export interface components {
         DiscoveredLocalModel: {
             /** Display Name */
             display_name: string;
+            /**
+             * Image Inputs
+             * @default false
+             */
+            image_inputs: boolean;
+            /** Max Input Tokens */
+            max_input_tokens?: number | null;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
             /** Model Id */
             model_id: string;
+            /**
+             * Streaming
+             * @default true
+             */
+            streaming: boolean;
+            /**
+             * Tool Calling
+             * @default true
+             */
+            tool_calling: boolean;
         };
         /** EditedToolAction */
         EditedToolAction: {

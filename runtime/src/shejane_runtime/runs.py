@@ -50,6 +50,7 @@ from .model_credentials import (
     CredentialStoreError,
     get_model_api_key,
 )
+from .model_profiles import apply_known_model_profile_defaults
 from .observability import build_callbacks
 from .plugins.catalog import PluginCatalog
 from .plugins.identity import plugin_action_tool_version
@@ -692,6 +693,10 @@ class RunCoordinator:
                 "model_not_found",
                 "model is not configured for this provider",
             )
+        profile = apply_known_model_profile_defaults(
+            profile,
+            provider_base_url=str(provider.get("base_url") or ""),
+        )
         missing = [
             capability for capability in required_capabilities if not bool(profile.get(capability))
         ]

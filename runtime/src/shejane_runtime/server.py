@@ -128,6 +128,7 @@ from .model_credentials import (
     new_credential_ref,
     set_model_api_key,
 )
+from .model_profiles import apply_known_model_profile_defaults, discovered_model_profile
 from .plugins.registry import PluginRegistry, PluginRegistryError
 from .progress_ledger import (
     latest_feature_ledger as _latest_feature_ledger,
@@ -199,6 +200,13 @@ def _apply_runtime_settings(settings: Settings, values: dict[str, Any]) -> Setti
 _HANDOFF_STATUSES = {"completed", "failed", "canceled", "waiting_permission", "waiting_input"}
 _TERMINAL_RUN_STATUSES = {"completed", "failed", "canceled", "cleanup_required"}
 _MODEL_PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+_MODEL_CATALOG_PROVIDER_HOSTS = {
+    ("openai", "api.openai.com"),
+    ("openrouter", "openrouter.ai"),
+    ("deepseek", "api.deepseek.com"),
+    ("anthropic", "api.anthropic.com"),
+}
+_MODELS_DEV_URL = "https://models.dev/api.json"
 
 
 def _model_provider_base_url(raw: str) -> str:
@@ -221,7 +229,17 @@ def _provider_models(row: dict[str, Any]) -> list[dict[str, Any]]:
         models = json.loads(row.get("models_json") or "[]")
     except (json.JSONDecodeError, TypeError):
         return []
-    return models if isinstance(models, list) else []
+    if not isinstance(models, list):
+        return []
+    return [
+        apply_known_model_profile_defaults(
+            model,
+            provider_base_url=str(row.get("base_url") or ""),
+        )
+        if isinstance(model, dict)
+        else model
+        for model in models
+    ]
 
 
 async def _model_provider_response(
@@ -904,7 +922,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 trust_env=False,
             ) as client:
                 upstream = await client.get(discovery_url, headers=headers)
-            upstream.raise_for_status()
+                upstream.raise_for_status()
+                catalog: dict[str, Any] = getattr(app.state, "model_metadata_catalog", {})
+                catalog_provider = (
+                    provider_id
+                    if (provider_id, urlparse(base_url).hostname) in _MODEL_CATALOG_PROVIDER_HOSTS
+                    else None
+                )
+                if catalog_provider and not catalog:
+                    try:
+                        catalog_response = await client.get(_MODELS_DEV_URL)
+                        if catalog_response.is_success:
+                            catalog_payload = catalog_response.json()
+                            if isinstance(catalog_payload, dict):
+                                catalog = catalog_payload
+                                app.state.model_metadata_catalog = catalog
+                    except (httpx.RequestError, ValueError):
+                        pass
         except httpx.HTTPStatusError as exc:
             raise HTTPException(
                 status_code=502,
@@ -930,7 +964,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail="model provider returned an invalid model list",
             )
 
-        models: list[dict[str, str]] = []
+        models: list[dict[str, Any]] = []
+        catalog_provider_entry = (
+            catalog.get(catalog_provider)
+            if catalog_provider and isinstance(catalog, dict)
+            else None
+        )
+        catalog_models = (
+            catalog_provider_entry.get("models", {})
+            if isinstance(catalog_provider_entry, dict)
+            else {}
+        )
         seen: set[str] = set()
         for candidate in candidates:
             if not isinstance(candidate, dict):
@@ -949,7 +993,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not display_name or len(display_name) > 100:
                 display_name = model_id[:100]
             seen.add(model_id)
-            models.append({"model_id": model_id, "display_name": display_name})
+            models.append(
+                discovered_model_profile(
+                    candidate,
+                    model_id=model_id,
+                    display_name=display_name,
+                    provider_base_url=base_url,
+                    catalog_model=(
+                        catalog_models.get(model_id)
+                        if isinstance(catalog_models, dict)
+                        and isinstance(catalog_models.get(model_id), dict)
+                        else None
+                    ),
+                )
+            )
             if len(models) >= 1000:
                 break
         return {"models": models}

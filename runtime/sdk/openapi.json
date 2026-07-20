@@ -1356,14 +1356,61 @@
         "type": "object"
       },
       "DiscoveredLocalModel": {
+        "additionalProperties": false,
         "properties": {
           "display_name": {
+            "maxLength": 100,
+            "minLength": 1,
             "title": "Display Name",
             "type": "string"
           },
+          "image_inputs": {
+            "default": false,
+            "title": "Image Inputs",
+            "type": "boolean"
+          },
+          "max_input_tokens": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Input Tokens"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "maximum": 1000000.0,
+                "minimum": 128.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
           "model_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^\\S+$",
             "title": "Model Id",
             "type": "string"
+          },
+          "streaming": {
+            "default": true,
+            "title": "Streaming",
+            "type": "boolean"
+          },
+          "tool_calling": {
+            "default": true,
+            "title": "Tool Calling",
+            "type": "boolean"
           }
         },
         "required": [

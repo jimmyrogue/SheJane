@@ -152,9 +152,8 @@ class DiscoverLocalModelsRequest(BaseModel):
     api_key: str | None = Field(default=None, min_length=1, max_length=8192)
 
 
-class DiscoveredLocalModel(BaseModel):
-    model_id: str
-    display_name: str
+class DiscoveredLocalModel(LocalModelProfile):
+    pass
 
 
 class DiscoverLocalModelsResponse(BaseModel):
