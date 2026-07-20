@@ -97,7 +97,7 @@ jobs:
             -v "${PWD}/${launcher}:/launcher:ro" \
             -v "${PWD}/${bubblewrap_dir}:/managed-worker-linux:ro" \
             -v "${RUNNER_TEMP}/shejane-linux-sandbox-worker:/sandbox-worker:ro" \
-            -e PYTHONPATH=/workspace/runtime \
+            -e PYTHONPATH=/workspace/runtime/src \
             -e SHEJANE_TEST_LINUX_CGROUP_LAUNCHER=/launcher \
             -e SHEJANE_TEST_LINUX_CGROUP_ROOT=/sys/fs/cgroup \
             -e SHEJANE_TEST_LINUX_BUBBLEWRAP=/managed-worker-linux/shejane-bwrap \
@@ -123,7 +123,7 @@ jobs:
             --property=DelegateSubgroup=supervisor \
             --working-directory="${PWD}/runtime" \
             /usr/bin/env \
-              "PYTHONPATH=${PWD}/runtime" \
+              "PYTHONPATH=${PWD}/runtime/src" \
               "SHEJANE_TEST_LINUX_ASSET_MANIFEST=${PWD}/${manifest}" \
               "SHEJANE_TEST_LINUX_SANDBOX_WORKER=${RUNNER_TEMP}/shejane-linux-sandbox-worker" \
               "${python}" -m pytest -q --noconftest -p no:cacheprovider \
