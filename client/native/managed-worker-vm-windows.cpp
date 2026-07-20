@@ -281,7 +281,7 @@ int probe(const std::filesystem::path& denied_path, const std::wstring& pipe_nam
   if (!GetTokenInformation(
           token.get(), TokenIsLessPrivilegedAppContainer, &is_lpac, sizeof(is_lpac),
           &returned)) {
-    return 23;
+    return 2'300 + static_cast<int>(GetLastError());
   }
   if (is_lpac != 1) return 24;
   Handle denied(CreateFileW(
