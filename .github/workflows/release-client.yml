@@ -116,15 +116,25 @@ jobs:
           set -euo pipefail
           manifest="$(find runtime/dist/shejane-runtime -type f \
             -path '*/managed-worker-linux/manifest.json' -print -quit)"
+          launcher="$(cat "${RUNNER_TEMP}/shejane-linux-launcher-path")"
+          bubblewrap="$(cat "${RUNNER_TEMP}/shejane-linux-bubblewrap-path")"
+          portable_root="/tmp/shejane-runtime-systemd-gate"
+          sudo install -d -m 0755 "${portable_root}/_internal"
+          sudo cp "${launcher}" "${portable_root}/_internal/shejane-managed-worker-linux"
+          sudo cp -R "$(dirname "${bubblewrap}")" \
+            "${portable_root}/_internal/managed-worker-linux"
+          sudo chmod -R a+rX "${portable_root}"
+          portable_manifest="${portable_root}/_internal/managed-worker-linux/manifest.json"
           python="$(cd runtime && uv run which python)"
           test -f "${manifest}"
+          test -f "${portable_manifest}"
           sudo systemd-run --quiet --wait --pipe --collect --service-type=exec \
             --property=Delegate=yes \
             --property=DelegateSubgroup=supervisor \
             --working-directory="${PWD}/runtime" \
             /usr/bin/env \
               "PYTHONPATH=${PWD}/runtime/src" \
-              "SHEJANE_TEST_LINUX_ASSET_MANIFEST=${PWD}/${manifest}" \
+              "SHEJANE_TEST_LINUX_ASSET_MANIFEST=${portable_manifest}" \
               "SHEJANE_TEST_LINUX_SANDBOX_WORKER=${RUNNER_TEMP}/shejane-linux-sandbox-worker" \
               "${python}" -m pytest -q --noconftest -p no:cacheprovider \
                 tests/test_managed_worker_linux.py
