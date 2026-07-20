@@ -10,8 +10,10 @@
 # fast and lets each inner binary be code-signed individually (needed for macOS
 # notarization in a later phase).
 
-from pathlib import Path
 import sys
+from importlib.util import find_spec
+from pathlib import Path
+from shutil import copy2
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
@@ -56,13 +58,19 @@ for pkg in (
     hiddenimports += h
 
 # wasmtime resolves its platform library with ctypes from an exact package-relative
-# path. collect_all classifies that file as both data and a binary; keeping the
-# binary entry lets PyInstaller relocate it and leaves the ctypes path missing.
-# Preserve only the data copy at wasmtime/<platform>/_libwasmtime.*.
+# path. PyInstaller reclassifies the file differently across platforms, so exclude
+# it from automatic collection and restore it after COLLECT at the required path.
 d, b, h = collect_all("wasmtime")
-datas += d
+datas += [entry for entry in d if not Path(entry[0]).name.startswith("_libwasmtime.")]
 binaries += [entry for entry in b if not Path(entry[0]).name.startswith("_libwasmtime.")]
 hiddenimports += h
+wasmtime_spec = find_spec("wasmtime")
+if wasmtime_spec is None or wasmtime_spec.origin is None:
+    raise SystemExit("wasmtime package must be installed before PyInstaller")
+wasmtime_root = Path(wasmtime_spec.origin).parent
+wasmtime_library = next(wasmtime_root.glob("*/_libwasmtime.*"), None)
+if wasmtime_library is None:
+    raise SystemExit("wasmtime platform library is missing from the installed wheel")
 
 # The runtime boots via uvicorn.run("shejane_runtime.server:app", ...) — a STRING
 # import — so the whole shejane_runtime package is invisible to static analysis.
@@ -109,3 +117,14 @@ coll = COLLECT(
     a.datas,
     name="shejane-runtime",  # → dist/shejane-runtime/
 )
+
+wasmtime_destination = (
+    Path(DISTPATH)
+    / "shejane-runtime"
+    / "_internal"
+    / "wasmtime"
+    / wasmtime_library.parent.name
+    / wasmtime_library.name
+)
+wasmtime_destination.parent.mkdir(parents=True, exist_ok=True)
+copy2(wasmtime_library, wasmtime_destination)
