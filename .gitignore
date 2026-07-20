@@ -45,11 +45,13 @@ dist/
 **/dist/
 build/
 **/build/
-# Exception: electron-builder's build-resources dir holds the NSIS installer
-# customization (committed source, not a build artifact). Re-include just that file.
+# Exception: electron-builder's build-resources dir holds committed packaging
+# configuration and the NSIS installer customization, not only build artifacts.
 !client/build/
 client/build/*
 !client/build/installer.nsh
+!client/build/entitlements.mac.plist
+!client/build/entitlements.mac.inherit.plist
 !client/build/managed-worker-vm.entitlements.plist
 .vite/
 **/.vite/
