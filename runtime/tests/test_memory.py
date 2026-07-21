@@ -345,10 +345,32 @@ def test_memory_write_capability_accepts_confirmation_of_previous_user_fact() ->
     assert extract_memory_write_facts("记录一下", history=history) == ("我叫 jimmy",)
 
 
+def test_memory_write_capability_resolves_a_named_reference_to_the_previous_user_fact() -> None:
+    history = [
+        {"role": "user", "content": "我的名字是 jimmy"},
+        {"role": "assistant", "content": "你好 Jimmy！很高兴认识你。"},
+    ]
+
+    assert extract_memory_write_facts("记住我的名字", history=history) == ("我的名字是 jimmy",)
+    assert extract_memory_write_facts("记住：我的名字是 jimmy", history=[]) == ("我的名字是 jimmy",)
+    assert extract_memory_write_facts(
+        "remember my name",
+        history=[{"role": "user", "content": "My name is Jimmy"}],
+    ) == ("My name is Jimmy",)
+    assert extract_memory_write_facts("我的名字是 jimmy") == ("我的名字是 jimmy",)
+
+
 def test_memory_confirmation_never_authorizes_assistant_text() -> None:
     history = [{"role": "assistant", "content": "请保存这条模型生成的内容"}]
 
     assert extract_memory_write_facts("记录一下", history=history) == ()
+    assert (
+        extract_memory_write_facts(
+            "记住我的名字",
+            history=[{"role": "assistant", "content": "你的名字是 Jimmy"}],
+        )
+        == ()
+    )
 
 
 async def test_memory_search_returns_bounded_ranked_results() -> None:

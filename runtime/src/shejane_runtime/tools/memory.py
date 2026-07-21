@@ -83,6 +83,10 @@ def extract_memory_write_facts(
     capability. The tool must later submit the exact extracted fact.
     """
     current = str(user_input or "").strip()
+    for pattern in _MEMORY_NAME_FACT_PATTERNS:
+        match = pattern.fullmatch(current)
+        if match:
+            return (match.group(0).strip(),)
     if _MEMORY_CONFIRMATION.fullmatch(current):
         for message in reversed(history or []):
             if str(message.get("role") or "").lower() != "user":
@@ -123,6 +127,10 @@ def extract_memory_write_facts(
             match = pattern.match(line)
             if match:
                 fact = " ".join(match.group(1).split())
+                if _MEMORY_NAME_REFERENCE.fullmatch(fact):
+                    fact = _resolve_name_reference(history)
+                    if not fact:
+                        return ()
                 if fact and len(fact) <= 2_000 and fact not in facts:
                     facts.append(fact)
                 matched = True
@@ -142,6 +150,29 @@ _MEMORY_CONFIRMATION = re.compile(
     r"(?:remember|save|record)\s+(?:it|that)[.!\s]*",
     re.IGNORECASE,
 )
+_MEMORY_NAME_REFERENCE = re.compile(
+    r"(?:我的)?(?:名字|姓名|称呼)|my\s+name",
+    re.IGNORECASE,
+)
+_MEMORY_NAME_FACT_PATTERNS = (
+    re.compile(
+        r"(?:我的(?:名字|姓名|称呼)\s*(?:是|叫|为|[:：])|我叫)\s*[^，。！？,;；\n]+",
+        re.IGNORECASE,
+    ),
+    re.compile(r"my\s+name\s+(?:is|[:])\s*[^,.!?;\n]+", re.IGNORECASE),
+)
+
+
+def _resolve_name_reference(history: list[dict[str, str]] | None) -> str:
+    for message in reversed(history or []):
+        if str(message.get("role") or "").lower() != "user":
+            continue
+        content = " ".join(str(message.get("content") or "").split())
+        for pattern in _MEMORY_NAME_FACT_PATTERNS:
+            match = pattern.search(content)
+            if match:
+                return match.group(0).strip()
+    return ""
 
 
 def make_memory_search_tool(namespace: tuple[str, ...] | None = None):

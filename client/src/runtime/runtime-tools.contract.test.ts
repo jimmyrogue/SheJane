@@ -496,39 +496,24 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
     expect(existsSync(join(workspace, 'schema-extra-must-not-exist.txt'))).toBe(false)
   })
 
-  it('persists a previous user fact after a natural follow-up confirmation and recalls it', async () => {
+  it('persists an explicitly stated name in one turn and recalls it in a new thread', async () => {
     const suffix = Date.now().toString(36)
-    const fact = `我的测试代号是 Jimmy-${suffix}`
-    const threadID = `thread_e2e_memory_confirmation_${suffix}`
+    const fact = `我的名字是 Jimmy-${suffix}`
+    const threadID = `thread_e2e_memory_name_${suffix}`
     const firstRun = await createLocalRun({
       commandId: `cmd_e2e_memory_fact_${suffix}`,
       clientMessageId: `msg_e2e_memory_fact_${suffix}`,
       threadId: threadID,
       userInput: fact,
-      goal: fact,
+      goal: REAL_LLM_MODEL
+        ? fact
+        : encodedToolGoal('memory.write', { fact }),
       mode: RUN_MODEL,
       settings: MEMORY_SETTINGS,
     }, config)
     const firstEvents: RuntimeEvent[] = []
     await collectRunEvents(firstRun.id, config, firstEvents)
     expect(firstEvents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'run.completed' }),
-    ]))
-
-    const confirmationRun = await createLocalRun({
-      commandId: `cmd_e2e_memory_confirm_${suffix}`,
-      clientMessageId: `msg_e2e_memory_confirm_${suffix}`,
-      threadId: threadID,
-      userInput: '记录一下',
-      goal: REAL_LLM_MODEL
-        ? '记录一下'
-        : encodedToolGoal('memory.write', { fact }),
-      mode: RUN_MODEL,
-      settings: MEMORY_SETTINGS,
-    }, config)
-    const confirmationEvents: RuntimeEvent[] = []
-    await collectRunEvents(confirmationRun.id, config, confirmationEvents)
-    expect(confirmationEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'tool.completed',
         payload: expect.objectContaining({
@@ -543,10 +528,10 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
       commandId: `cmd_e2e_memory_recall_${suffix}`,
       clientMessageId: `msg_e2e_memory_recall_${suffix}`,
       threadId: `thread_e2e_memory_recall_${suffix}`,
-      userInput: '我的测试代号是什么？',
+      userInput: '我的名字是什么？',
       goal: REAL_LLM_MODEL
-        ? '我的测试代号是什么？请先查询长期记忆。'
-        : encodedToolGoal('memory.search', { query: '测试代号' }, undefined, fact),
+        ? '我的名字是什么？请先查询长期记忆。'
+        : encodedToolGoal('memory.search', { query: '名字' }, undefined, fact),
       mode: RUN_MODEL,
       settings: MEMORY_SETTINGS,
     }, config)
