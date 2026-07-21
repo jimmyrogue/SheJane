@@ -13,20 +13,27 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
-def test_permission_policy_routes_only_auto_gray_area_to_reviewer() -> None:
+def test_permission_policy_auto_allows_sandboxed_commands_but_not_deletion() -> None:
+    from shejane_runtime.middleware.tool_execution import tool_risk
     from shejane_runtime.middleware.tool_review import approval_policy_decision
 
     assert (
         approval_policy_decision("plugin.example.archive.extract", "plugin_action", "auto").decision
         == "allow"
     )
-    assert approval_policy_decision("execute", "external_or_unknown", "auto").decision == ("review")
+    assert tool_risk("execute") == "sandboxed_command"
+    assert approval_policy_decision("execute", "sandboxed_command", "auto").decision == "allow"
+    assert approval_policy_decision("execute", "sandboxed_command", "ask").decision == "ask"
     assert approval_policy_decision("clipboard.read", "runtime_state", "auto").decision == "ask"
+    assert (
+        approval_policy_decision("office.delete_slide", "workspace_write", "full_access").decision
+        == "ask"
+    )
     assert (
         approval_policy_decision("plugin.example.archive.extract", "plugin_action", "ask").decision
         == "ask"
     )
-    assert approval_policy_decision("execute", "external_or_unknown", "full_access").decision == (
+    assert approval_policy_decision("execute", "sandboxed_command", "full_access").decision == (
         "allow"
     )
 

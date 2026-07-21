@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import shlex
 import socket
 import subprocess
 import sys
@@ -100,7 +99,7 @@ def test_waiting_permission_resumes_after_runtime_restart(tmp_path: Path) -> Non
             assert receipts[0]["attempt_count"] == 1
 
 
-def test_runtime_killed_after_tool_side_effect_quarantines_without_replay(
+def test_runtime_killed_during_sandboxed_command_quarantines_without_replay(
     tmp_path: Path,
 ) -> None:
     port = _free_port()
@@ -108,19 +107,9 @@ def test_runtime_killed_after_tool_side_effect_quarantines_without_replay(
     data_dir = tmp_path / "data"
     workspace = tmp_path / "workspace-killpoint"
     workspace.mkdir()
-    ready = workspace / "tool-ready"
-    release = workspace / "tool-release"
-    side_effects = workspace / "side-effects.log"
-    child_pid = workspace / "tool-child.pid"
     headers = {"Authorization": f"Bearer {token}"}
-    command = " ; ".join(
-        [
-            f"printf 'commit\\n' >> {shlex.quote(str(side_effects))}",
-            f"printf '%s' \"$$\" > {shlex.quote(str(child_pid))}",
-            f"printf ready > {shlex.quote(str(ready))}",
-            f"while [ ! -f {shlex.quote(str(release))} ]; do sleep 0.05; done",
-        ]
-    )
+    marker = f"shejane-process-kill-{time.time_ns()}"
+    command = f"/bin/sh -c 'sleep 30' {marker}"
     goal = _encoded_tool_goal("execute", {"command": command})
 
     with _runtime_process(tmp_path, port=port, token=token, data_dir=data_dir) as process:
@@ -166,13 +155,12 @@ def test_runtime_killed_after_tool_side_effect_quarantines_without_replay(
                 },
             )
             assert resolved.status_code == 200, resolved.text
-            _wait_for_path(ready, process)
-            assert side_effects.read_text(encoding="utf-8").splitlines() == ["commit"]
+            child_pids = _wait_for_process_marker(marker, process)
             process.kill()
             process.wait(timeout=10)
 
-    release.write_text("release", encoding="utf-8")
-    _wait_for_process_exit(int(child_pid.read_text(encoding="utf-8")))
+    for child_pid in child_pids:
+        _wait_for_process_exit(child_pid)
 
     with _runtime_process(tmp_path, port=port, token=token, data_dir=data_dir):
         with httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=headers) as client:
@@ -182,8 +170,6 @@ def test_runtime_killed_after_tool_side_effect_quarantines_without_replay(
             )
             assert cleanup["payload"]["category"] == "execution_lease_expired"
             assert cleanup["payload"]["retryable"] is False
-            assert side_effects.read_text(encoding="utf-8").splitlines() == ["commit"]
-
             diagnostics = client.get(f"/v1/runs/{run_id}/diagnostics")
             assert diagnostics.status_code == 200, diagnostics.text
             receipts = [
@@ -275,8 +261,8 @@ def test_completed_tool_receipt_is_not_replayed_when_final_model_call_is_killed(
         [
             "[[e2e:post-tool-slow]]",
             _encoded_tool_goal(
-                "execute",
-                {"command": f"printf 'commit\\n' >> {shlex.quote(str(side_effects))}"},
+                "write_file",
+                {"file_path": "/side-effects.log", "content": "commit\n"},
             ),
         ]
     )
@@ -348,7 +334,7 @@ def test_completed_tool_receipt_is_not_replayed_when_final_model_call_is_killed(
             receipts = [
                 receipt
                 for receipt in diagnostics.json()["tool_receipts"]
-                if receipt["tool_name"] == "execute"
+                if receipt["tool_name"] == "write_file"
             ]
             assert len(receipts) == 1
             assert receipts[0]["status"] == "completed"
@@ -380,6 +366,9 @@ def _runtime_process(
         "LANGSMITH_TRACING": "false",
         "LANGCHAIN_TRACING_V2": "false",
     }
+    sandbox_command = os.environ.get("SHEJANE_MANAGED_WORKER_SANDBOX_COMMAND")
+    if sandbox_command:
+        env["SHEJANE_MANAGED_WORKER_SANDBOX_COMMAND"] = sandbox_command
     with log_path.open("ab") as log:
         process = subprocess.Popen(
             [
@@ -463,15 +452,27 @@ def _encoded_tool_goal(name: str, args: dict[str, Any]) -> str:
     return f"[[e2e:tool:{encoded}]]"
 
 
-def _wait_for_path(path: Path, process: subprocess.Popen[bytes]) -> None:
+def _wait_for_process_marker(
+    marker: str,
+    process: subprocess.Popen[bytes],
+) -> list[int]:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        if path.exists():
-            return
         if process.poll() is not None:
-            raise AssertionError(f"Runtime exited before Tool kill-point: {process.returncode}")
+            raise AssertionError(
+                f"Runtime exited before shell marker appeared: {process.returncode}"
+            )
+        result = subprocess.run(
+            ["pgrep", "-f", marker],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        pids = [int(value) for value in result.stdout.split() if value.isdigit()]
+        if pids:
+            return pids
         time.sleep(0.05)
-    raise AssertionError(f"Tool did not reach kill-point {path}")
+    raise AssertionError(f"timed out waiting for shell marker {marker}")
 
 
 def _wait_for_process_exit(pid: int) -> None:
@@ -482,7 +483,7 @@ def _wait_for_process_exit(pid: int) -> None:
         except ProcessLookupError:
             return
         time.sleep(0.05)
-    raise AssertionError(f"Tool child process {pid} did not exit after release")
+    raise AssertionError(f"Tool child process {pid} did not exit")
 
 
 def _free_port() -> int:

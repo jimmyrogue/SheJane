@@ -130,6 +130,7 @@ from .model_credentials import (
     set_model_api_key,
 )
 from .model_profiles import apply_known_model_profile_defaults, discovered_model_profile
+from .permission_policy import PermissionScopeNotAllowedError
 from .plugins.registry import PluginRegistry, PluginRegistryError
 from .progress_ledger import (
     latest_feature_ledger as _latest_feature_ledger,
@@ -1764,6 +1765,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=404, detail="permission not found") from exc
             except (CommandConflictError, WaitDecisionConflictError) as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PermissionScopeNotAllowedError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             except WorkspaceAdmissionError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             if receipt["resumed"]:
@@ -2128,8 +2131,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resumes only after every permission in the current pause batch is
         resolved, preserving the original `permission.required` order.
 
-        `scope=run` is a bounded durable grant for the same tool, exact
-        argument fingerprint, and risk class; it never widens by tool name.
+        `scope=run` is a bounded durable grant for an eligible ordinary tool
+        with the same version and risk class. Irreversible and unknown actions
+        cannot receive this scope.
         """
         decision_text = body.decision
         scope = body.scope
@@ -2185,6 +2189,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 decision=hitl_decision,
                 event_payload=None if already_resolved else resolution_event,
             )
+        except PermissionScopeNotAllowedError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except (PermissionDecisionConflictError, WaitDecisionConflictError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         coordinator: RunCoordinator = app.state.coordinator

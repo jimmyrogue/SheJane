@@ -2796,6 +2796,7 @@ class RunCoordinator:
                     "review_source": action.get("review_source"),
                     "review_reason": action.get("review_reason"),
                     "allowed_decisions": action.get("allowed_decisions") or ["approve", "reject"],
+                    "allow_run_scope": action.get("allow_run_scope") is True,
                     "wait_cycle_id": wait_cycle_id,
                     "interrupt_id": interrupt_id,
                 },

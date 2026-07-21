@@ -347,27 +347,35 @@ class FakeBackendChatModel(BaseChatModel):
         if "[[e2e:run-scope-grant]]" in prompt:
             first_result = _last_tool_result(
                 messages,
-                "execute",
+                "write_file",
                 tool_call_id="call_e2e_run_grant_first",
             )
             second_result = _last_tool_result(
                 messages,
-                "execute",
+                "write_file",
                 tool_call_id="call_e2e_run_grant_second",
             )
-            action = {
-                "name": "execute",
-                "args": {"command": "printf x >> run-grant.txt"},
-            }
             if first_result is None:
                 return AIMessage(
                     content="",
-                    tool_calls=[{"id": "call_e2e_run_grant_first", **action}],
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_run_grant_first",
+                            "name": "write_file",
+                            "args": {"file_path": "/run-grant-a.txt", "content": "a"},
+                        }
+                    ],
                 )
             if second_result is None:
                 return AIMessage(
                     content="",
-                    tool_calls=[{"id": "call_e2e_run_grant_second", **action}],
+                    tool_calls=[
+                        {
+                            "id": "call_e2e_run_grant_second",
+                            "name": "write_file",
+                            "args": {"file_path": "/run-grant-b.txt", "content": "b"},
+                        }
+                    ],
                 )
             return AIMessage(content="E2E run-scoped grant reused exactly once.")
         if "Please remember that E2E memory fact." in prompt:

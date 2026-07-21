@@ -205,6 +205,8 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │  • 准备 Tool Receipt，并优先复用 operation 已持久化的审批决定            │     │
   │     │  • 按 Run 冻结的 ask / auto / full_access 权限模式决定是否询问           │     │
   │     │  • auto 先走确定性规则；只有外部/未知灰区交给当前冻结模型批量审查         │     │
+  │     │  • execute 进入无网络、工作区只读的 OS 沙箱；无启动器时 fail closed      │     │
+  │     │  • 删除等不可恢复工具始终询问，且不能取得整段任务授权                    │     │
   │     │  • 审查模型无工具且只返回 allow/ask；超时、异常或非法结果回退人工确认     │     │
   │     │  • 审查调用写入同一模型账本的 approval_review 独立预算                   │     │
   │     │  • full_access 只取消普通询问，不扩大工作区、系统权限或参数校验边界      │     │
@@ -274,7 +276,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │                                                                                     │
   │     permission.resolve 命令流程：                                                    │
   │       客户端先持久保存不可变决定，再由 /commands 幂等接纳                           │
-  │       scope=run 只允许同一参数指纹、同一风险和同一图版本，24 小时且最多复用 20 次   │
+  │       scope=run 只允许合格的同一工具、风险和图版本，参数变化仍逐次校验，24 小时且最多复用 20 次 │
   │       event: permission.resolved { request_id, decision, scope }                   │
   │       current_batch = permission.required since latest run.started/run.resumed     │
   │       if any current_batch permission still pending: return {resumed:false}        │
@@ -334,7 +336,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 1b | 审批恢复 | `permission.resolve` 命令幂等保存决定，再翻译成 `{"decisions": [...]}` | `capability_1b_permission_approve_resumes_the_run` ✅ |
 | 1b2 | HITL 多 action 批次审批 | 当前 pause 批次全部 resolved 后按 `permission.required` 顺序 resume | `test_multi_permission_batch_waits_for_all_decisions_before_resume` ✅ |
 | 1c | `permission.resolved` 清空审批卡 | HTTP 决策事件持久化，并在恢复流先于 `run.resumed` 重放 | `cap_1c_permission_resolved_event_clears_card` ✅ |
-| 1d | **有限运行级授权** | 同参数、同风险、同图版本，24 小时且最多复用 20 次 | `capability_1d_scope_run_does_not_widen_to_new_arguments` ✅ |
+| 1d | **有限运行级授权** | 合格工具在同风险、同图版本下允许参数变化，24 小时且最多复用 20 次；删除类不合格 | `capability_1d_scope_run_stops_asking_for_new_arguments` ✅ |
 | 1e | **拒绝回执** | 拒绝不进入工具，保存 `rejected` 回执 | `capability_1e_denied_tool_is_not_executed_and_has_rejected_receipt` ✅ |
 | 1f | **整批先暂停** | 混合只读和写入调用时，确认前一个也不执行 | `capability_1f_review_pauses_the_entire_mixed_tool_batch` ✅ |
 | 1g | **参数前置校验** | 无效参数不询问用户、不进入工具 | `capability_1g_invalid_tool_arguments_fail_before_review` ✅ |

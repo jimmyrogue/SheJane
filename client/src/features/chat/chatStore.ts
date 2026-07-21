@@ -118,6 +118,7 @@ export function timelineItem(event: AgentRunEvent, t: Translator = createTransla
           payload.arguments && typeof payload.arguments === 'object' && !Array.isArray(payload.arguments)
             ? payload.arguments as Record<string, unknown>
             : {},
+        permissionCanGrantForRun: payload.allow_run_scope === true,
       }
     }
     case 'permission.resolved': {

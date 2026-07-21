@@ -20,6 +20,9 @@ PID_FILE="${TMP_DIR}/contract-runtime.pid"
 DATA_DIR="${TMP_DIR}/data"
 HOME_DIR="${TMP_DIR}/home"
 BIN_DIR="${TMP_DIR}/bin"
+NODE_BIN="$(type -P node)"
+SRT_CLI="${ROOT_DIR}/client/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js"
+SANDBOX_COMMAND="[\"${NODE_BIN}\",\"${SRT_CLI}\"]"
 mkdir -p "$DATA_DIR" "$HOME_DIR" "$BIN_DIR"
 TRUE_BIN="$(type -P true)"
 ln -s "$TRUE_BIN" "$BIN_DIR/pbcopy"
@@ -124,6 +127,7 @@ echo "→ Starting contract runtime at ${URL}"
     "SHEJANE_FAKE_LLM=1" \
     "SHEJANE_PLAN_FIRST=off" \
     "SHEJANE_MCP_TOOL_TIMEOUT_SECONDS=1" \
+    "SHEJANE_MANAGED_WORKER_SANDBOX_COMMAND=$SANDBOX_COMMAND" \
     "LANGSMITH_TRACING=false" \
     "LANGCHAIN_TRACING_V2=false" \
     "PYTHONUNBUFFERED=1" \
@@ -163,7 +167,9 @@ fi
 echo "→ Running real-process recovery suite"
 (
   cd runtime
-  SHEJANE_RUN_PROCESS_E2E=1 uv run python -m pytest -q tests/test_process_recovery_e2e.py
+  SHEJANE_RUN_PROCESS_E2E=1 \
+  SHEJANE_MANAGED_WORKER_SANDBOX_COMMAND="$SANDBOX_COMMAND" \
+  uv run python -m pytest -q tests/test_process_recovery_e2e.py
 )
 echo "→ Running official MCP client conformance scenarios"
 MCP_CLIENT_COMMAND="uv run --project ${ROOT_DIR}/runtime python ${ROOT_DIR}/runtime/tests/fixtures/e2e_mcp_conformance_client.py"

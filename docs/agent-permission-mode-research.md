@@ -9,7 +9,7 @@ SheJane 已提供 `ask`、`auto`、`full_access` 三种任务级权限模式。C
 ## 当前实现
 
 - Client 新对话默认选择 `auto`，输入框盾牌菜单可以切换三种模式。
-- Runtime 支持 `once` 和 `run` 两种人工批准范围；`run` 只复用同一工具、风险、参数和工具版本的有界授权。
+- Runtime 支持 `once` 和 `run` 两种人工批准范围；界面显示为“允许一次”和“不再询问”。`run` 只对合格普通工具按同一风险和工具版本有界复用，每次新参数仍重新校验；删除等不可恢复工具不具备该范围。
 - 自动决定按 operation 写入 Tool Receipt，恢复和重放不会重复调用审查模型。
 - `permission.auto_approved` 会携带 `rule` 或 `llm` 来源；人工确认继续使用 `permission.required`。
 

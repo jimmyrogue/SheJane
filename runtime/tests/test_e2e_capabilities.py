@@ -298,6 +298,7 @@ def test_capability_1_humanintheloop_pauses_on_destructive_tool(monkeypatch) -> 
     perm_payload = perm_event[1]
     assert perm_payload["request_id"]
     assert perm_payload["tool"] == "write_file"
+    assert perm_payload["allow_run_scope"] is True
     # `args` must round-trip — without them the approval card has no
     # context to show the user.
     assert perm_payload["arguments"]["file_path"] == "spike.txt"
@@ -745,7 +746,7 @@ def test_auto_rename_redirects_later_file_tools_without_asking_again(
     assert (tmp_path / "snake-2.html").read_text(encoding="utf-8") == "refined"
 
 
-def test_permission_mode_auto_uses_current_model_for_gray_actions(
+def test_permission_mode_auto_allows_sandboxed_command_without_model_review(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -761,30 +762,10 @@ def test_permission_mode_auto_uses_current_model_for_gray_actions(
                             {
                                 "id": "call_auto_execute",
                                 "name": "execute",
-                                "arguments": {"command": "printf reviewed > reviewed.txt"},
+                                "arguments": {"command": "cat reviewed.txt"},
                             },
                         ),
                         ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
-                    ]
-                )
-            if len(self.requests) == 2:
-                review_payload = json.loads(body["messages"][-1]["content"])
-                operation_id = review_payload["actions"][0]["operation_id"]
-                decision = json.dumps(
-                    {
-                        "decisions": [
-                            {
-                                "operation_id": operation_id,
-                                "decision": "allow",
-                                "reason": "The command directly fulfills the requested local task.",
-                            }
-                        ]
-                    }
-                )
-                return _sse(
-                    [
-                        ("llm.delta", {"content_delta": decision}),
-                        ("llm.done", {"request_id": "review-1", "finish_reason": "stop"}),
                     ]
                 )
             return _sse(
@@ -796,6 +777,7 @@ def test_permission_mode_auto_uses_current_model_for_gray_actions(
 
     handler = ApprovalAwareHandler(scripts=[])
     with _make_client(monkeypatch, handler) as client:
+        (tmp_path / "reviewed.txt").write_text("reviewed", encoding="utf-8")
         headers = {"Authorization": "Bearer tok"}
         authorized = client.post(
             "/v1/workspaces",
@@ -807,7 +789,7 @@ def test_permission_mode_auto_uses_current_model_for_gray_actions(
             "/v1/runs",
             headers=headers,
             json=run_command(
-                "create reviewed.txt in the workspace",
+                "read reviewed.txt in the workspace",
                 workspace_path=str(tmp_path),
                 permission_mode="auto",
             ),
@@ -823,10 +805,10 @@ def test_permission_mode_auto_uses_current_model_for_gray_actions(
         receipts = client.portal.call(client.app.state.store.list_tool_receipts_for_run, run_id)
 
     approval = next(payload for name, payload in events if name == "permission.auto_approved")
-    assert approval["source"] == "llm"
+    assert approval["source"] == "rule"
     assert "permission.required" not in {name for name, _payload in events}
     assert (tmp_path / "reviewed.txt").read_text(encoding="utf-8") == "reviewed"
-    assert receipts[0]["review_source"] == "llm"
+    assert receipts[0]["review_source"] == "rule"
 
 
 def test_permission_mode_auto_still_prompts_for_sensitive_and_external_tools(monkeypatch) -> None:
@@ -949,12 +931,8 @@ def _parse_sse_persisted(client: TestClient, run_id: str) -> list[tuple[str, dic
     return [(e["event_type"], e["payload"]) for e in diag["events"]]
 
 
-def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch, tmp_path) -> None:
-    """A run grant is bound to the approved argument fingerprint.
-
-    Approving write_file for a.txt must not silently authorize b.txt merely
-    because both calls share the same tool name.
-    """
+def test_capability_1d_scope_run_stops_asking_for_new_arguments(monkeypatch, tmp_path) -> None:
+    """ "Don't ask again" covers later ordinary calls to the same tool."""
     handler = RecordingHandler(
         scripts=[
             # Turn 1: ask to write file A (paused by HITL)
@@ -969,8 +947,8 @@ def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch, tm
                 ),
                 ("llm.done", {"request_id": "r1", "finish_reason": "tool_calls"}),
             ],
-            # Turn 2 (after first approve + tool exec): a different path must
-            # produce a fresh review candidate.
+            # Turn 2 (after "don't ask again"): a different path executes
+            # without another permission pause.
             [
                 (
                     "llm.tool_call",
@@ -982,7 +960,7 @@ def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch, tm
                 ),
                 ("llm.done", {"request_id": "r2", "finish_reason": "tool_calls"}),
             ],
-            # Turn 3 (after auto-approve + tool exec): final answer
+            # Turn 3: final answer
             [
                 ("llm.delta", {"content_delta": "done"}),
                 ("llm.done", {"request_id": "r3", "finish_reason": "stop"}),
@@ -1004,7 +982,7 @@ def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch, tm
         ).json()
         with client.stream("GET", f"/v1/runs/{run['id']}/stream", headers=headers) as resp:
             resp.read()
-        # Approve only this exact argument fingerprint for the run.
+        # Approve this ordinary tool for the rest of the run.
         perm_id = next(
             e for e in _parse_sse_persisted(client, run["id"]) if e[0] == "permission.required"
         )[1]["request_id"]
@@ -1017,26 +995,18 @@ def test_capability_1d_scope_run_does_not_widen_to_new_arguments(monkeypatch, tm
         with client.stream("GET", f"/v1/runs/{run['id']}/stream", headers=headers) as resp:
             body = resp.read().decode("utf-8")
         events = _parse_sse(body)
-        # A new subscriber replays the durable log from its own cursor, so the
-        # first review can appear again. Assert specifically on the new call.
+        # A new subscriber replays the durable log from its own cursor. The
+        # second call must execute without creating a new review candidate.
         second_required = [
             e
             for e in events
             if e[0] == "permission.required" and e[1].get("tool_call_id") == "call_b"
         ]
-        assert len(second_required) == 1
-        assert second_required[0][1]["arguments"]["file_path"] == "b.txt"
-        second_id = second_required[0][1]["request_id"]
-        approved = client.post(
-            f"/v1/permissions/{second_id}",
-            headers=headers,
-            json={"decision": "approve", "scope": "once"},
-        )
-        assert approved.status_code == 200, approved.text
-        with client.stream("GET", f"/v1/runs/{run['id']}/stream", headers=headers) as resp:
-            completed_body = resp.read().decode("utf-8")
+        assert second_required == []
 
-    assert "run.completed" in [event[0] for event in _parse_sse(completed_body)]
+    assert "run.completed" in [event[0] for event in events]
+    assert (tmp_path / "a.txt").read_text() == "A"
+    assert (tmp_path / "b.txt").read_text() == "B"
 
 
 def test_capability_1b_permission_approve_resumes_the_run(monkeypatch, tmp_path) -> None:

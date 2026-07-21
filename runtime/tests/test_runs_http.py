@@ -497,6 +497,7 @@ def test_permission_resolve_command_is_idempotent_and_resumes_after_the_batch(
             tool_call_id="call-first",
             tool_name="write_file",
             arguments={"path": "a.txt"},
+            risk="workspace_write",
             wait_cycle_id="permission-batch",
             interrupt_id="permission-interrupt",
             action_index=0,
@@ -3005,6 +3006,56 @@ def test_permission_decision_is_idempotent_and_conflicting_replay_is_rejected(
     # Identical replay rechecks/enqueues the durable resume owner so a crash
     # between decision commit and job creation cannot strand the run.
     assert len(resume_calls) == 2
+
+
+def test_irreversible_permission_cannot_be_approved_for_the_rest_of_the_run(
+    client: TestClient,
+) -> None:
+    store = client.app.state.store
+
+    async def prepare() -> dict:
+        run = await store.create_run(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            goal="delete a slide",
+            workspace_path=None,
+        )
+        permission = await store.create_permission(
+            run_id=run["id"],
+            tool_call_id="call_delete_slide",
+            operation_id="toolop_delete_slide",
+            tool_name="office.delete_slide",
+            arguments={"path": "deck.pptx", "index": 1},
+            arguments_hash="hash_delete_slide",
+            risk="workspace_write",
+        )
+        await store.update_run_status(run["id"], "waiting_permission")
+        return permission
+
+    permission = asyncio.run(prepare())
+    response = client.post(
+        f"/v1/permissions/{permission['id']}",
+        headers={"Authorization": "Bearer tok"},
+        json={"decision": "approve", "scope": "run"},
+    )
+    command_response = client.post(
+        "/v1/commands",
+        headers={"Authorization": "Bearer tok"},
+        json={
+            "type": "permission.resolve",
+            "command_id": "reject_delete_run_scope",
+            "permission_id": permission["id"],
+            "decision": "approve",
+            "scope": "run",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "this operation cannot be approved for the rest of the run"
+    assert command_response.status_code == 400
+    assert command_response.json()["detail"] == response.json()["detail"]
+    persisted = asyncio.run(store.get_permission(permission["id"]))
+    assert persisted is not None
+    assert persisted["status"] == "pending"
 
 
 def test_permission_edit_preserves_tool_name_and_resumes_with_edited_args(

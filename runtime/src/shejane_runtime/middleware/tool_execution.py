@@ -65,6 +65,7 @@ WORKSPACE_WRITE_TOOLS = {
 }
 RUNTIME_STATE_TOOLS = {"memory.write", "task.progress", "write_todos"}
 CONTROL_FLOW_TOOLS = {"task", "user.ask"}
+SANDBOXED_COMMAND_TOOLS = {"execute"}
 MAX_MODEL_TOOL_RESULT_BYTES = 64 * 1024
 MAX_TOOL_ARTIFACT_BYTES = 16 * 1024 * 1024
 
@@ -157,6 +158,8 @@ def tool_risk(tool_name: str) -> str:
         return "runtime_state"
     if tool_name in CONTROL_FLOW_TOOLS:
         return "control_flow"
+    if tool_name in SANDBOXED_COMMAND_TOOLS:
+        return "sandboxed_command"
     return "external_or_unknown"
 
 

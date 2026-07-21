@@ -49,7 +49,7 @@ Runtime is independently runnable and testable. The SDK and plugins live below i
 | Area | Current implementation |
 |---|---|
 | Runtime | LangGraph and Deep Agents loop, streaming events, checkpoints, recovery, planning, verification, memory, and human approval |
-| Local tools | Workspace files, shell execution, Office operations, web fetch, clipboard approval, and scheduled runs |
+| Local tools | Workspace files, read-only-workspace/no-network sandboxed shell execution, Office operations, web fetch, clipboard approval, and scheduled runs |
 | Extensions | Skills, MCP servers, deterministic WASI/Managed Worker plugins, subagents, and configurable middleware |
 | Client | Electron and React UI, local Runtime conversation projection, previews, provider settings, and workspace controls |
 | Runtime SDK | Public TypeScript client for commands, SSE, snapshots, errors, and generated protocol types |

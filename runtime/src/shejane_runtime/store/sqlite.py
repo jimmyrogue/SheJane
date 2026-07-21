@@ -45,6 +45,7 @@ from typing import Any
 import aiosqlite
 
 from ..auth import LOCAL_OWNER_PRINCIPAL_ID
+from ..permission_policy import require_allowed_permission_scope
 from ..plugins.identity import plugin_action_catalog_hash
 
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
@@ -4719,11 +4720,6 @@ class LocalStore:
             }
             permission_status = "denied"
         decision_json = _encode_payload(hitl_decision)
-        grant_max_uses = 20 if scope == "run" and permission_status == "approved" else 0
-        grant_expires_at = (
-            (datetime.now(UTC) + timedelta(hours=24)).isoformat() if grant_max_uses else None
-        )
-
         async with aiosqlite.connect(str(self._db_path)) as conn:
             await _configure_connection(conn)
             await conn.execute("BEGIN IMMEDIATE")
@@ -4742,7 +4738,7 @@ class LocalStore:
                 record = await (
                     await conn.execute(
                         "SELECT p.run_id, p.wait_cycle_id, p.status AS permission_status, "
-                        "p.scope AS permission_scope, p.decision_json, p.tool_name, "
+                        "p.scope AS permission_scope, p.decision_json, p.tool_name, p.risk, "
                         "p.operation_id, r.status AS run_status, r.principal_id, "
                         "r.goal, r.user_input, r.workspace_path, r.mode, r.history_json, "
                         "r.settings_json, r.metadata_json "
@@ -4765,6 +4761,18 @@ class LocalStore:
                     edited_action is None or edited_action.get("name") != record["tool_name"]
                 ):
                     raise WaitDecisionConflictError("tool name cannot be changed")
+                require_allowed_permission_scope(
+                    tool_name=str(record["tool_name"]),
+                    risk=record["risk"],
+                    status=permission_status,
+                    scope=scope,
+                )
+                grant_max_uses = 20 if scope == "run" and permission_status == "approved" else 0
+                grant_expires_at = (
+                    (datetime.now(UTC) + timedelta(hours=24)).isoformat()
+                    if grant_max_uses
+                    else None
+                )
 
                 if record["permission_status"] == "pending":
                     if record["run_status"] not in {"waiting_permission", "waiting_input"}:
@@ -6541,6 +6549,12 @@ class LocalStore:
         current_status = str(record.get("status") or "")
         current_scope = str(record.get("scope") or "once")
         requested_scope = scope or current_scope
+        require_allowed_permission_scope(
+            tool_name=str(record["tool_name"]),
+            risk=record.get("risk"),
+            status=status,
+            scope=requested_scope,
+        )
         grant_max_uses = 20 if requested_scope == "run" and status == "approved" else 0
         grant_expires_at = (
             (datetime.now(UTC) + timedelta(hours=24)).isoformat() if grant_max_uses else None
@@ -6617,13 +6631,12 @@ class LocalStore:
         operation_id: str,
         tool_name: str,
         tool_version: str = "",
-        arguments_hash: str,
         risk: str,
     ) -> bool:
-        """Atomically consume one bounded exact-argument run grant use.
+        """Atomically consume one bounded tool-level run grant use.
 
-        A grant never widens to every call with the same tool name. This keeps
-        a harmless command/path approval from authorizing a different one.
+        Every invocation still passes schema, capability, workspace, version,
+        and risk checks before reaching this grant.
         """
         async with self.run_write_transaction(run_id) as conn:
             existing = await (
@@ -6639,11 +6652,11 @@ class LocalStore:
                 await conn.execute(
                     "SELECT id FROM local_permissions "
                     "WHERE run_id = ? AND tool_name = ? AND tool_version = ? "
-                    "AND arguments_hash = ? AND risk = ? "
+                    "AND risk = ? "
                     "AND status = 'approved' AND scope = 'run' "
                     "AND grant_use_count < grant_max_uses AND grant_expires_at > ? "
                     "ORDER BY resolved_at DESC LIMIT 1",
-                    (run_id, tool_name, tool_version, arguments_hash, risk, _now()),
+                    (run_id, tool_name, tool_version, risk, _now()),
                 )
             ).fetchone()
             if grant is None:

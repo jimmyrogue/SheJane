@@ -74,7 +74,7 @@ MCP 规范把未知 Tool/畸形请求的 protocol error 与可供模型自我修
 
 ### 3. HITL 已覆盖核心决定，恢复竞态仍有空白
 
-公开边界现已覆盖 approve、reject、edit、同批多审批、部分解决后仍等待、重复/冲突决定、`scope=run` 对新 call ID 的精确 fingerprint 复用，以及等待状态下进程重启。仍缺过期/撤销图版本、迟到决定和恢复期间取消。
+公开边界现已覆盖 approve、reject、edit 兼容协议、同批多审批、部分解决后仍等待、重复/冲突决定、`scope=run` 对合格同工具不同参数的有界复用、不可恢复工具拒绝 Run scope，以及等待状态下进程重启。仍缺过期/撤销图版本、迟到决定和恢复期间取消。
 
 LangGraph 的 interrupt 恢复会从发生 interrupt 的 node 开头重新执行；同一 thread ID 才能恢复，并且多 interrupt 的匹配依赖稳定顺序。因此 E2E 必须证明 interrupt 前副作用幂等、resume 不重复执行 Tool、顺序不漂移：[LangGraph interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts)。LangGraph 自身的测试同时检查中断后的 `next` 节点与 checkpoint 数量，而不只断言最终文本：[LangGraph interruption tests](https://github.com/langchain-ai/langgraph/blob/main/libs/langgraph/tests/test_interruption.py)。
 

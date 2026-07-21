@@ -14,6 +14,7 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
+from ..permission_policy import IRREVERSIBLE_TOOLS, can_grant_for_run
 from ..store.sqlite import LocalStore, PermissionDecisionConflictError
 from ..tool_schemas import validate_tool_input
 from .approval_reviewer import ApprovalReviewUnavailable, review_approval_batch
@@ -47,6 +48,8 @@ def approval_policy_decision(
     permission_mode: str = "ask",
 ) -> ApprovalPolicyDecision:
     """Return the Runtime-owned P10 decision before optional model review."""
+    if tool_name in IRREVERSIBLE_TOOLS:
+        return ApprovalPolicyDecision("ask", "irreversible")
     if permission_mode == "full_access":
         return ApprovalPolicyDecision("allow", "full_access")
     if tool_name == "clipboard.read":
@@ -55,7 +58,7 @@ def approval_policy_decision(
         if risk == "external_or_unknown":
             return ApprovalPolicyDecision("review", "external_or_unknown")
         return ApprovalPolicyDecision("allow", "runtime_safe")
-    if risk in {"workspace_write", "external_or_unknown", "plugin_action"}:
+    if risk in {"workspace_write", "sandboxed_command", "external_or_unknown", "plugin_action"}:
         return ApprovalPolicyDecision("ask", risk)
     return ApprovalPolicyDecision("allow", "read_only")
 
@@ -185,7 +188,6 @@ class ToolReviewMiddleware(AgentMiddleware):
                     operation_id=operation_id,
                     tool_name=tool_name,
                     tool_version=tool_version,
-                    arguments_hash=arguments_hash,
                     risk=risk,
                 ):
                     await _record_review_decision(
@@ -465,6 +467,10 @@ def _append_human_review(
                 call["name"], call.get("args") or {}, metadata["risk"]
             ),
             "allowed_decisions": ["approve", "edit", "reject"],
+            "allow_run_scope": can_grant_for_run(
+                tool_name=str(call["name"]),
+                risk=str(metadata["risk"]),
+            ),
         }
     )
 
@@ -528,7 +534,12 @@ def _emit_auto_approved(
     source: str,
     reason: str,
 ) -> None:
-    if risk not in {"workspace_write", "plugin_action", "external_or_unknown"}:
+    if risk not in {
+        "workspace_write",
+        "sandboxed_command",
+        "plugin_action",
+        "external_or_unknown",
+    }:
         return
     try:
         writer = get_stream_writer()

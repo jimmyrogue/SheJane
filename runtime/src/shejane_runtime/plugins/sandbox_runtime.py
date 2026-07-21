@@ -211,6 +211,69 @@ def prepare_srt_command(
         "allowAppleEvents": False,
     }
     settings_path = input_root.parent / "sandbox-settings.json"
+    _write_private_policy(settings_path, policy)
+
+    return [*launcher, "-s", str(settings_path), *worker_command]
+
+
+def prepare_agent_shell_command(
+    *,
+    launcher: tuple[str, ...],
+    command: str,
+    workspace_root: Path,
+    scratch_root: Path,
+    executable_roots: tuple[Path, ...] = (),
+) -> list[str]:
+    """Wrap a host command in a no-network, read-only-workspace SRT policy."""
+
+    if not launcher or not command:
+        raise SandboxRuntimeError("sandbox launcher and command are required")
+    launcher_path = Path(launcher[0])
+    if not launcher_path.is_absolute() or not launcher_path.is_file():
+        raise SandboxRuntimeError("sandbox launcher must be an absolute file")
+    workspace_root = workspace_root.resolve(strict=True)
+    scratch_root = scratch_root.resolve(strict=True)
+    if workspace_root == Path(workspace_root.anchor) or scratch_root == Path(scratch_root.anchor):
+        raise SandboxRuntimeError("sandbox roots are unsafe")
+    if (
+        workspace_root == scratch_root
+        or workspace_root in scratch_root.parents
+        or scratch_root in workspace_root.parents
+    ):
+        raise SandboxRuntimeError("sandbox roots must not overlap")
+    readable_executables = tuple(
+        path.resolve(strict=True) for path in executable_roots if path.exists() and path.is_dir()
+    )
+    policy = {
+        "filesystem": {
+            "denyRead": [_filesystem_root(workspace_root)],
+            "allowRead": sorted(
+                {
+                    *(str(path) for path in _system_read_roots()),
+                    str(workspace_root),
+                    str(scratch_root),
+                    *(str(path) for path in readable_executables),
+                }
+            ),
+            "allowWrite": [str(scratch_root)],
+            "denyWrite": [],
+        },
+        "network": {
+            "allowedDomains": [],
+            "deniedDomains": [],
+            "allowLocalBinding": False,
+            "allowAllUnixSockets": False,
+        },
+        "enableWeakerNestedSandbox": False,
+        "enableWeakerNetworkIsolation": False,
+        "allowAppleEvents": False,
+    }
+    settings_path = scratch_root / "sandbox-settings.json"
+    _write_private_policy(settings_path, policy)
+    return [*launcher, "-s", str(settings_path), "-c", command]
+
+
+def _write_private_policy(settings_path: Path, policy: dict[str, object]) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -221,8 +284,6 @@ def prepare_srt_command(
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         json.dump(policy, stream, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         stream.write("\n")
-
-    return [*launcher, "-s", str(settings_path), *worker_command]
 
 
 def _filesystem_root(path: Path) -> str:

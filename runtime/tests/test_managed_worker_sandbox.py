@@ -21,6 +21,7 @@ from shejane_runtime.plugins.sandbox_runtime import (
     SandboxRuntimeError,
     configured_srt_launcher,
     managed_worker_release_gate,
+    prepare_agent_shell_command,
     prepare_srt_command,
 )
 from shejane_runtime.plugins.tools import PluginActionError, _executor_for_action
@@ -110,6 +111,38 @@ def test_srt_policy_denies_root_and_grants_only_package_input_output(tmp_path: P
     assert policy["network"]["allowAllUnixSockets"] is False
     assert policy["enableWeakerNestedSandbox"] is False
     assert policy["enableWeakerNetworkIsolation"] is False
+
+
+def test_agent_shell_policy_is_read_only_outside_private_scratch(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    scratch = tmp_path / "scratch"
+    executable_root = tmp_path / "bin"
+    workspace.mkdir()
+    scratch.mkdir()
+    executable_root.mkdir()
+    launcher = tmp_path / "srt"
+    launcher.write_bytes(b"launcher")
+
+    command = prepare_agent_shell_command(
+        launcher=(str(launcher),),
+        command="make test",
+        workspace_root=workspace,
+        scratch_root=scratch,
+        executable_roots=(executable_root,),
+    )
+
+    settings_path = scratch / "sandbox-settings.json"
+    policy = json.loads(settings_path.read_text())
+    assert command == [str(launcher), "-s", str(settings_path), "-c", "make test"]
+    assert policy["filesystem"]["denyRead"] == [workspace.anchor]
+    assert str(workspace) in policy["filesystem"]["allowRead"]
+    assert str(executable_root) in policy["filesystem"]["allowRead"]
+    assert policy["filesystem"]["allowWrite"] == [str(scratch)]
+    assert str(workspace) not in policy["filesystem"]["allowWrite"]
+    assert policy["network"]["allowedDomains"] == []
+    assert policy["network"]["allowLocalBinding"] is False
+    assert policy["network"]["allowAllUnixSockets"] is False
+    assert policy["allowAppleEvents"] is False
 
 
 def test_srt_policy_rejects_worker_outside_package(tmp_path: Path) -> None:

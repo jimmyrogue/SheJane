@@ -8,6 +8,7 @@ import os
 import re
 import signal
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,8 @@ from deepagents.backends.protocol import (
 )
 from langgraph.runtime import get_runtime
 from markitdown import MarkItDown
+
+from ..plugins.sandbox_runtime import prepare_agent_shell_command
 
 MODEL_FILE_READ_MAX_MB = 20
 PDF_FILE_READ_MAX_MB = 200
@@ -141,9 +144,11 @@ class RuntimeLocalShellBackend(_BoundedReadMixin, LocalShellBackend):
         *args: Any,
         max_file_size_mb: int = MODEL_FILE_READ_MAX_MB,
         pdf_max_file_size_mb: int = PDF_FILE_READ_MAX_MB,
+        sandbox_launcher: tuple[str, ...] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
+        self._sandbox_launcher = sandbox_launcher
         self._configure_read_limits(
             default_max_mb=max_file_size_mb,
             pdf_max_mb=pdf_max_file_size_mb,
@@ -161,6 +166,12 @@ class RuntimeLocalShellBackend(_BoundedReadMixin, LocalShellBackend):
                 exit_code=1,
                 truncated=False,
             )
+        if self._sandbox_launcher is None:
+            return ExecuteResponse(
+                output="Error: Command sandbox is unavailable; execution was blocked.",
+                exit_code=1,
+                truncated=False,
+            )
 
         effective_timeout = timeout if timeout is not None else self._default_timeout
         if effective_timeout <= 0:
@@ -169,36 +180,61 @@ class RuntimeLocalShellBackend(_BoundedReadMixin, LocalShellBackend):
         process: asyncio.subprocess.Process | None = None
         communicate_task: asyncio.Task[tuple[bytes, bytes]] | None = None
         try:
-            platform_args: dict[str, Any]
-            if os.name == "nt":
-                platform_args = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-            else:
-                platform_args = {"start_new_session": True}
-            process = await asyncio.create_subprocess_shell(
-                command,
-                cwd=str(self.cwd),
-                env=self._env,
-                stdin=subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                **platform_args,
+            executable_roots = tuple(
+                Path(part)
+                for part in str(self._env.get("PATH") or "").split(os.pathsep)
+                if part and Path(part).is_absolute()
             )
-            communicate_task = asyncio.create_task(process.communicate())
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    asyncio.shield(communicate_task),
-                    timeout=effective_timeout,
+            scratch_parent = self._env.get("TMPDIR") or None
+            with tempfile.TemporaryDirectory(
+                prefix="shejane-agent-shell-",
+                dir=scratch_parent,
+            ) as scratch_value:
+                scratch_root = Path(scratch_value)
+                wrapped_command = prepare_agent_shell_command(
+                    launcher=self._sandbox_launcher,
+                    command=command,
+                    workspace_root=Path(self.cwd),
+                    scratch_root=scratch_root,
+                    executable_roots=executable_roots,
                 )
-            except TimeoutError:
-                await _kill_shell_process_tree(process)
-                await communicate_task
-                message = f"Error: Command timed out after {effective_timeout} seconds" + (
-                    " (custom timeout). The command may be stuck or require more time."
-                    if timeout is not None
-                    else ". For long-running commands, re-run using the timeout parameter."
+                sandbox_env = {
+                    **self._env,
+                    "HOME": str(scratch_root),
+                    "TMPDIR": str(scratch_root),
+                    "TMP": str(scratch_root),
+                    "TEMP": str(scratch_root),
+                }
+                platform_args: dict[str, Any]
+                if os.name == "nt":
+                    platform_args = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                else:
+                    platform_args = {"start_new_session": True}
+                process = await asyncio.create_subprocess_exec(
+                    *wrapped_command,
+                    cwd=str(self.cwd),
+                    env=sandbox_env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    **platform_args,
                 )
-                return ExecuteResponse(output=message, exit_code=124, truncated=False)
-            return self._execute_response(stdout, stderr, process.returncode or 0)
+                communicate_task = asyncio.create_task(process.communicate())
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        asyncio.shield(communicate_task),
+                        timeout=effective_timeout,
+                    )
+                except TimeoutError:
+                    await _kill_shell_process_tree(process)
+                    await communicate_task
+                    message = f"Error: Command timed out after {effective_timeout} seconds" + (
+                        " (custom timeout). The command may be stuck or require more time."
+                        if timeout is not None
+                        else ". For long-running commands, re-run using the timeout parameter."
+                    )
+                    return ExecuteResponse(output=message, exit_code=124, truncated=False)
+                return self._execute_response(stdout, stderr, process.returncode or 0)
         except asyncio.CancelledError:
             if process is not None and process.returncode is None:
                 await _kill_shell_process_tree(process)

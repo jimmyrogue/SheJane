@@ -111,7 +111,7 @@ describe('findConversationPendingApproval', () => {
       ]),
       t,
     )
-    expect(result).toEqual({ kind: 'approval', messageID: 'm2', requestID: 'p9', tool: '运行命令', toolName: '', arguments: {} })
+    expect(result).toEqual({ kind: 'approval', messageID: 'm2', requestID: 'p9', tool: '运行命令', toolName: '', arguments: {}, canGrantForRun: false })
   })
 
   it('falls back to the stripped label when permissionTool is absent', () => {

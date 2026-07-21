@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -707,17 +707,18 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
       ]))
     })
 
-    it('contains invalid UTF-8 output and preserves quoted paths with spaces', async () => {
+    it('contains invalid UTF-8 output and reads quoted paths with spaces', async () => {
       const suffix = Date.now().toString(36)
       const directory = join(workspace, `space ' quoted ${suffix}`)
       const outputPath = join(directory, 'result file.txt')
+      mkdirSync(directory, { recursive: true })
+      writeFileSync(outputPath, 'quoted path ok')
       const run = await createLocalRun({
         commandId: `cmd_e2e_execute_encoding_${suffix}`,
         clientMessageId: `msg_e2e_execute_encoding_${suffix}`,
         goal: encodedToolGoal('execute', {
           command: [
-            `mkdir -p ${shellQuote(directory)}`,
-            `printf '%s' 'quoted path ok' > ${shellQuote(outputPath)}`,
+            `cat ${shellQuote(outputPath)}`,
             "printf '\\377binary-tail\\n'",
           ].join('; '),
         }),
@@ -740,12 +741,12 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
 
     it('terminates the complete shell process group when execute times out', async () => {
       const suffix = Date.now().toString(36)
-      const childPIDPath = join(workspace, `execute-timeout-child-${suffix}.pid`)
+      const marker = `shejane-timeout-${suffix}`
       const run = await createLocalRun({
         commandId: `cmd_e2e_execute_timeout_${suffix}`,
         clientMessageId: `msg_e2e_execute_timeout_${suffix}`,
         goal: encodedToolGoal('execute', {
-          command: `sleep 30 & child=$!; printf '%s' "$child" > ${shellQuote(childPIDPath)}; wait`,
+          command: `/bin/sh -c 'sleep 30' ${marker} & wait`,
           timeout: 1,
         }),
         workspacePath: workspace,
@@ -762,19 +763,17 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
         expect.objectContaining({ type: 'run.completed' }),
       ]))
       expect(JSON.stringify(events)).toContain('timed out after 1 seconds')
-      const childPID = Number(readFileSync(childPIDPath, 'utf8'))
-      expect(Number.isSafeInteger(childPID)).toBe(true)
-      await expectProcessGone(childPID)
+      expect(processesForMarker(marker)).toEqual([])
     })
 
     it('cancels execute and reaps the complete shell process group', async () => {
       const suffix = Date.now().toString(36)
-      const childPIDPath = join(workspace, `execute-cancel-child-${suffix}.pid`)
+      const marker = `shejane-cancel-${suffix}`
       const run = await createLocalRun({
         commandId: `cmd_e2e_execute_cancel_${suffix}`,
         clientMessageId: `msg_e2e_execute_cancel_${suffix}`,
         goal: encodedToolGoal('execute', {
-          command: `sleep 30 & child=$!; printf '%s' "$child" > ${shellQuote(childPIDPath)}; wait`,
+          command: `/bin/sh -c 'sleep 30' ${marker} & wait`,
         }),
         workspacePath: workspace,
         mode: RUN_MODEL,
@@ -793,9 +792,7 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
       )
 
       const activeStream = collectRunEvents(run.id, config, events)
-      await waitForFile(childPIDPath)
-      const childPID = Number(readFileSync(childPIDPath, 'utf8'))
-      expect(Number.isSafeInteger(childPID)).toBe(true)
+      const childPIDs = await waitForProcessMarker(marker)
       const cancelReceipt = await cancelLocalRunCommand(
         `cmd_e2e_execute_cancel_run_${suffix}`,
         run.id,
@@ -810,7 +807,7 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
         JSON.stringify({ cancelReceipt, run: diagnostics.run, events }, null, 2),
       ).toContain('run.canceled')
       expect(events.map(event => event.type)).not.toContain('run.completed')
-      await expectProcessGone(childPID)
+      for (const childPID of childPIDs) await expectProcessGone(childPID)
     })
   })
 
@@ -1580,6 +1577,29 @@ async function expectProcessGone(pid: number): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 20))
   }
   throw new Error(`Shell child process ${pid} remained alive`)
+}
+
+function processesForMarker(marker: string): number[] {
+  try {
+    return execFileSync('pgrep', ['-f', marker], { encoding: 'utf8' })
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(Number)
+      .filter(Number.isSafeInteger)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException & { status?: number }).status === 1) return []
+    throw error
+  }
+}
+
+async function waitForProcessMarker(marker: string): Promise<number[]> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const processes = processesForMarker(marker)
+    if (processes.length > 0) return processes
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  throw new Error(`Timed out waiting for shell process marker ${marker}`)
 }
 
 function shellQuote(value: string): string {

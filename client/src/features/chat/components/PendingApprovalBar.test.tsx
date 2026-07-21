@@ -20,7 +20,7 @@ describe('PendingApprovalBar', () => {
     render(
       <I18nProvider>
         <PendingApprovalBar
-          approval={{ kind: 'approval', messageID: 'm1', requestID: 'p1', tool: '运行命令', toolName: 'execute', arguments: { command: 'make test' } }}
+          approval={{ kind: 'approval', messageID: 'm1', requestID: 'p1', tool: '运行命令', toolName: 'execute', arguments: { command: 'make test' }, canGrantForRun: true }}
           onDecision={onDecision}
         />
       </I18nProvider>,
@@ -28,31 +28,34 @@ describe('PendingApprovalBar', () => {
 
     expect(screen.getByText('等待批准：运行命令')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByText('本次运行允许相同参数'))
-    expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'approve', 'run', undefined)
+    fireEvent.click(screen.getByText('不再询问'))
+    expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'approve', 'run')
     expect(screen.queryByText('等待批准：运行命令')).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('等待批准：运行命令')).toBeInTheDocument())
 
     fireEvent.click(screen.getByText('允许一次'))
-    expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'approve', 'once', undefined)
+    expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'approve', 'once')
     await waitFor(() => expect(screen.getByText('等待批准：运行命令')).toBeInTheDocument())
 
     fireEvent.click(screen.getByText('拒绝'))
-    expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'deny', undefined, undefined)
+    expect(onDecision).toHaveBeenCalledWith('m1', 'p1', 'deny', undefined)
     await waitFor(() => expect(screen.getByText('等待批准：运行命令')).toBeInTheDocument())
+    expect(screen.queryByText('修改参数')).not.toBeInTheDocument()
+  })
 
-    fireEvent.click(screen.getByText('修改参数'))
-    fireEvent.change(screen.getByLabelText('修改参数'), {
-      target: { value: '{"command":"make lint"}' },
-    })
-    fireEvent.click(screen.getByText('按修改后参数执行'))
-    expect(onDecision).toHaveBeenCalledWith(
-      'm1',
-      'p1',
-      'edit',
-      'once',
-      { name: 'execute', args: { command: 'make lint' } },
+  it('does not offer a lasting grant for an irreversible operation', () => {
+    render(
+      <I18nProvider>
+        <PendingApprovalBar
+          approval={{ kind: 'approval', messageID: 'm1', requestID: 'p-delete', tool: '删除幻灯片', toolName: 'office.delete_slide', arguments: {}, canGrantForRun: false }}
+          onDecision={vi.fn()}
+        />
+      </I18nProvider>,
     )
+
+    expect(screen.getByText('允许一次')).toBeInTheDocument()
+    expect(screen.getByText('拒绝')).toBeInTheDocument()
+    expect(screen.queryByText('不再询问')).not.toBeInTheDocument()
   })
 
   it('requires an explicit reconciliation outcome', () => {

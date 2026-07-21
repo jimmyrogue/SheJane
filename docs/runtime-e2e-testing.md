@@ -108,7 +108,7 @@ Tool case 在测试输出中按 `filesystem`、`runtime-context`、`network`、`
 - Runtime 在 Tool 写出一次外部副作用后被 SIGKILL，会在原执行租约到期时发出 `run.cleanup_required`，receipt 保持 `outcome_unknown`、attempt 为 1，重启过程不会重放 Tool；
 - Runtime 在模型已输出首个临时 `llm.delta` 后被 SIGKILL，不会把未知结果重放成第二次模型调用；租约到期后唯一收敛为 `run.cleanup_required`，事件 seq 单调无重复、没有假 `run.completed`/`run.failed`、没有 Tool receipt，diagnostics 和 thread snapshot 均为 `cleanup_required`；
 - Runtime 在 Tool receipt 已 completed、最终模型回合只输出首个临时 delta 时被 SIGKILL，重启后 Tool receipt 仍为 completed/attempt 1、磁盘副作用恰好一次且绝不重放；未知模型结果使 Run 安全收敛到 `cleanup_required`；
-- edit 决策只执行修改后的参数，冲突的旧决策被拒绝；两个写 Tool 的批次逐项决策，只产生被批准的一次副作用；`scope=run` 只对新 call ID、相同 Tool version、精确参数指纹和风险复用，连续两次相同 `execute` 只询问一次且产生两个独立 completed receipt；
+- edit 决策的兼容协议仍只执行修改后的参数，冲突的旧决策被拒绝；确认卡只显示允许一次、不再询问和拒绝；两个写 Tool 的批次逐项决策，只产生被批准的一次副作用；`scope=run` 对合格工具按相同 Tool version 与风险复用，新参数仍重新校验，删除类操作被服务端拒绝授予该范围；
 - 同一轮只读 + 写入 Tool 批次在批准前全部保持 `prepared`，批准后各执行一次；
 - MCP Tool 的显式错误形成 failed receipt；真实 stdio server 通过 opaque cursor 返回多页 Tool、structured output 按发布 schema 进入 Agent、progress 以单调序列投影为 `tool.progress`；用户在首个 progress 后取消会形成 `run.canceled`/`outcome_unknown`、终止旧进程并自动建立新 session。stdio Tool 阻塞超过 Runtime 上限或进程在调用中崩溃时同样必须 reconciliation，不能静默重试；Streamable HTTP server 返回过期 session 的 404 后也会建立第二个 session；等待批准期间 MCP 配置改变会使旧 Run 以 `tool_receipt_conflict` 安全失效，绝不拿旧批准执行新实现，只有新 Run 使用新配置；
 - Plugin 请求未开放的 `network.http` capability 会返回结构化 `capability_denied`、failed receipt 与零 Artifact；WASI guest 的结构化失败同样回到模型，不会击穿 Agent loop；合法组件耗尽确定性 fuel 时会归一化为 `resource_exhausted`；guest 返回与已发布 output schema 不一致时会归一化为 `protocol_violation`，且在任何 Artifact 持久化前失败；同一健康 Plugin 随后仍能完成并提升 Artifact；

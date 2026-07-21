@@ -82,7 +82,7 @@ from ..plugins.catalog import PluginExecutionLease
 from ..plugins.linux_cgroup import load_linux_cgroup_resources
 from ..plugins.macos_vm import load_macos_vm_resources
 from ..plugins.platforms import current_managed_worker_platform
-from ..plugins.sandbox_runtime import SandboxRuntimeError
+from ..plugins.sandbox_runtime import SandboxRuntimeError, configured_srt_launcher
 from ..plugins.tools import PluginActionError, build_plugin_tool
 from ..store.sqlite import LocalStore
 from ..tools.mcp import (
@@ -344,6 +344,7 @@ def _build_agent_backend(
     default = RuntimeLocalShellBackend(
         root_dir=workspace_root,
         virtual_mode=True,
+        sandbox_launcher=configured_srt_launcher(),
         env={
             key: os.environ[key]
             for key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SHELL", "USER")

@@ -620,7 +620,7 @@ describe.skipIf(!BASE_URL)('flow:P5-P12 > contract: Runtime agent loop (live run
     }
   })
 
-  it('reuses a run-scoped grant only for a new call with the exact fingerprint', async () => {
+  it('reuses a run-scoped grant for new validated arguments to the same ordinary tool', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'shejane-e2e-run-grant-'))
     let workspaceID = ''
     try {
@@ -629,7 +629,7 @@ describe.skipIf(!BASE_URL)('flow:P5-P12 > contract: Runtime agent loop (live run
       const run = await createLocalRun({
         commandId: `cmd_e2e_run_grant_${suffix}`,
         clientMessageId: `msg_e2e_run_grant_${suffix}`,
-        goal: '[[e2e:run-scope-grant]] execute the same exact action twice',
+        goal: '[[e2e:run-scope-grant]] write two files with one tool grant',
         workspacePath: workspace,
         mode: RUN_MODEL,
         settings: SETTINGS,
@@ -671,9 +671,10 @@ describe.skipIf(!BASE_URL)('flow:P5-P12 > contract: Runtime agent loop (live run
         }),
         expect.objectContaining({ type: 'run.completed' }),
       ]))
-      expect(readFileSync(join(workspace, 'run-grant.txt'), 'utf8')).toBe('xx')
+      expect(readFileSync(join(workspace, 'run-grant-a.txt'), 'utf8')).toBe('a')
+      expect(readFileSync(join(workspace, 'run-grant-b.txt'), 'utf8')).toBe('b')
       const diagnostics = await getLocalRunDiagnostics(run.id, config)
-      expect((diagnostics.tool_receipts ?? []).filter(receipt => receipt.tool_name === 'execute'))
+      expect((diagnostics.tool_receipts ?? []).filter(receipt => receipt.tool_name === 'write_file'))
         .toEqual([
           expect.objectContaining({ status: 'completed', attempt_count: 1 }),
           expect.objectContaining({ status: 'completed', attempt_count: 1 }),

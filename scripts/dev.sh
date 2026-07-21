@@ -10,6 +10,8 @@ RUNTIME_PORT="${SHEJANE_RUNTIME_PORT:-17371}"
 RUNTIME_URL="${SHEJANE_RUNTIME_URL:-http://127.0.0.1:${RUNTIME_PORT}}"
 CLIENT_DEV_PORT="${CLIENT_DEV_PORT:-55173}"
 CLIENT_DEV_URL="${ELECTRON_DEV_URL:-http://127.0.0.1:${CLIENT_DEV_PORT}}"
+NODE_BIN="$(command -v node || true)"
+SRT_DEV_CLI="${ROOT_DIR}/client/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js"
 
 PIDS=()
 RUNTIME_ENV=(
@@ -23,6 +25,9 @@ RUNTIME_ENV=(
 )
 [[ -n "${SHEJANE_RUNTIME_MCP_SERVERS:-}" ]] && RUNTIME_ENV+=("SHEJANE_RUNTIME_MCP_SERVERS=$SHEJANE_RUNTIME_MCP_SERVERS")
 [[ -n "${SHEJANE_RUNTIME_SKILLS_PATH:-}" ]] && RUNTIME_ENV+=("SHEJANE_RUNTIME_SKILLS_PATH=$SHEJANE_RUNTIME_SKILLS_PATH")
+if [[ -n "$NODE_BIN" ]]; then
+  RUNTIME_ENV+=("SHEJANE_MANAGED_WORKER_SANDBOX_COMMAND=[\"${NODE_BIN}\",\"${SRT_DEV_CLI}\"]")
+fi
 
 kill_tree() {
   local pid="$1"
@@ -174,6 +179,7 @@ launch_electron() {
 
 start_stack() {
   require_command curl
+  require_command node
   require_command pnpm
   require_command uv
   mkdir -p "$LOG_DIR"
@@ -189,6 +195,7 @@ start_stack() {
 
 start_runtime_only() {
   require_command curl
+  require_command node
   require_command uv
   mkdir -p "$LOG_DIR"
   restart_runtime

@@ -281,8 +281,13 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
 
       const approval = page.locator('.approval-bar')
       await expect(approval).toBeVisible()
+      await expect(approval.getByRole('button')).toHaveCount(3)
+      await expect(approval.getByRole('button', { name: /允许一次|Allow once/ })).toBeVisible()
+      await expect(approval.getByRole('button', { name: /不再询问|Don't ask again/ })).toBeVisible()
+      await expect(approval.getByRole('button', { name: /拒绝|Deny/ })).toBeVisible()
+      await expect(approval.getByRole('button', { name: /修改参数|Edit arguments/ })).toHaveCount(0)
       const permissionRequestsBefore = faultProxy.requestCount('POST', '/v1/commands')
-      await approval.getByRole('button', { name: /允许一次|Allow once/ }).click()
+      await approval.getByRole('button', { name: /不再询问|Don't ask again/ }).click()
       await expect.poll(
         () => faultProxy.requestCount('POST', '/v1/commands'),
         { timeout: 5_000 },

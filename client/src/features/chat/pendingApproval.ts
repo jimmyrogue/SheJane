@@ -8,6 +8,7 @@ export interface PendingApproval {
   tool: string
   toolName: string
   arguments: Record<string, unknown>
+  canGrantForRun?: boolean
   source?: 'rule' | 'llm' | 'fallback' | 'run_grant'
   reason?: string
 }
@@ -58,6 +59,7 @@ export function findConversationPendingApproval(
           requestID: event.permissionRequestId,
           toolName: event.permissionToolName || '',
           arguments: event.permissionArguments || {},
+          canGrantForRun: event.permissionCanGrantForRun === true,
           source: event.permissionSource,
           reason: event.permissionReason,
           tool:

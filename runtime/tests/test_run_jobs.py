@@ -1617,6 +1617,7 @@ async def test_dispatcher_acquires_a_slot_before_leasing_the_next_job(tmp_path: 
             tool_call_id="call_1",
             tool_name="write_file",
             arguments={},
+            risk="workspace_write",
         )
         await store.resolve_permission(permission["id"], status="approved", scope="run")
         await _accepted_run(store, "cmd_slot_2")

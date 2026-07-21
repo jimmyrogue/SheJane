@@ -44,9 +44,10 @@ describe('runtime timeline', () => {
       permissionSource: 'fallback',
       permissionReason: 'reviewer unavailable',
     })
-    expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-write', tool: 'fs.write' } })).toMatchObject({
+    expect(timelineItem({ event_type: 'permission.required', payload: { request_id: 'perm-write', tool: 'fs.write', allow_run_scope: true } })).toMatchObject({
       label: '需要权限：写入文件',
       permissionTool: '写入文件',
+      permissionCanGrantForRun: true,
     })
     expect(timelineItem({ event_type: 'tool.requested', payload: { tool: 'fs.list' } })).toMatchObject({
       label: '调用工具：列出文件',

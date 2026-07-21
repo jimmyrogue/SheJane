@@ -541,7 +541,7 @@ async def test_tool_receipt_persists_auto_review_decision_for_replay(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_auto_mode_uses_model_reviewer_for_gray_tool_call(
+async def test_auto_mode_does_not_use_model_reviewer_for_sandboxed_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, run = await _store_and_run(tmp_path)
@@ -619,11 +619,11 @@ async def test_auto_mode_uses_model_reviewer_for_gray_tool_call(
 
         assert result is None
         assert replayed is None
-        assert reviewer_calls == 1
+        assert reviewer_calls == 0
         receipts = await store.list_tool_receipts_for_run(str(run["id"]))
         assert len(receipts) == 1
         assert receipts[0]["review_decision"] == "allow"
-        assert receipts[0]["review_source"] == "llm"
+        assert receipts[0]["review_source"] == "rule"
     finally:
         await store.close()
 
@@ -649,8 +649,8 @@ async def test_auto_mode_falls_back_to_human_review_when_model_fails(
     call = ToolCall(
         type="tool_call",
         id="call-auto-fallback",
-        name="execute",
-        args={"command": "make test"},
+        name="clipboard.write",
+        args={"text": "copy this"},
     )
     context = RuntimeContext(
         store=store,
@@ -662,11 +662,11 @@ async def test_auto_mode_falls_back_to_human_review_when_model_fails(
         mode="local:test:model",
         model=FailingReviewerModel(),
         tool_registry={
-            "execute": SimpleNamespace(
+            "clipboard.write": SimpleNamespace(
                 tool_call_schema={
                     "type": "object",
-                    "properties": {"command": {"type": "string"}},
-                    "required": ["command"],
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
                     "additionalProperties": False,
                 }
             )
@@ -1333,7 +1333,7 @@ async def test_blob_gc_keeps_catalog_bodies_and_removes_old_orphans(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_run_permission_grant_is_exact_expiring_and_count_bounded(
+async def test_run_permission_grant_is_tool_level_expiring_and_count_bounded(
     tmp_path: Path,
 ) -> None:
     store, run = await _store_and_run(tmp_path)
@@ -1342,11 +1342,11 @@ async def test_run_permission_grant_is_exact_expiring_and_count_bounded(
             run_id=str(run["id"]),
             tool_call_id="approved-call",
             operation_id="approved-operation",
-            tool_name="execute",
+            tool_name="write_file",
             tool_version="graph-v1",
             arguments={"command": "make test"},
             arguments_hash="approved-hash",
-            risk="external_or_unknown",
+            risk="workspace_write",
         )
         await store.resolve_permission(
             permission["id"],
@@ -1357,20 +1357,18 @@ async def test_run_permission_grant_is_exact_expiring_and_count_bounded(
         assert not await store.consume_run_permission_grant(
             run_id=str(run["id"]),
             operation_id="different-version-operation",
-            tool_name="execute",
+            tool_name="write_file",
             tool_version="graph-v2",
-            arguments_hash="approved-hash",
-            risk="external_or_unknown",
+            risk="workspace_write",
         )
 
         uses = [
             await store.consume_run_permission_grant(
                 run_id=str(run["id"]),
                 operation_id=f"operation-{index}",
-                tool_name="execute",
+                tool_name="write_file",
                 tool_version="graph-v1",
-                arguments_hash="approved-hash",
-                risk="external_or_unknown",
+                risk="workspace_write",
             )
             for index in range(21)
         ]
@@ -1378,18 +1376,16 @@ async def test_run_permission_grant_is_exact_expiring_and_count_bounded(
         assert await store.consume_run_permission_grant(
             run_id=str(run["id"]),
             operation_id="operation-0",
-            tool_name="execute",
+            tool_name="write_file",
             tool_version="graph-v1",
-            arguments_hash="approved-hash",
-            risk="external_or_unknown",
+            risk="workspace_write",
         )
         assert not await store.consume_run_permission_grant(
             run_id=str(run["id"]),
             operation_id="different-operation",
-            tool_name="execute",
+            tool_name="edit_file",
             tool_version="graph-v1",
-            arguments_hash="different-hash",
-            risk="external_or_unknown",
+            risk="workspace_write",
         )
     finally:
         await store.close()
@@ -1579,7 +1575,7 @@ async def test_child_run_reconciles_ancestor_before_repeating_side_effect(
         tool_version="graph-v1",
         arguments_hash=arguments_hash,
         arguments_json=arguments_json,
-        risk="external_or_unknown",
+        risk="sandboxed_command",
     )
     await store.begin_tool_receipt(
         operation_id=operation_id,
@@ -1770,7 +1766,7 @@ async def test_expired_execution_lease_marks_running_tool_outcome_unknown(
             tool_name="execute",
             arguments_hash=arguments_hash,
             arguments_json=arguments_json,
-            risk="external_or_unknown",
+            risk="sandboxed_command",
         )
         await store.begin_tool_receipt(
             operation_id=operation_id,

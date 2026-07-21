@@ -78,6 +78,7 @@ export interface AgentTimelineItem {
   permissionTool?: string
   permissionToolName?: string
   permissionArguments?: Record<string, unknown>
+  permissionCanGrantForRun?: boolean
   permissionDecision?: 'approve' | 'edit' | 'deny'
   permissionScope?: 'once' | 'run'
   permissionSource?: 'rule' | 'llm' | 'fallback' | 'run_grant'

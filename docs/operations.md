@@ -103,7 +103,9 @@ Runtime 接受单个 `.shejane-plugin` ZIP，通过 `plugin.install` Command 安
 
 官方或第三方插件都以 `.shejane-plugin` 文件分发。用户下载、接收或自行构建后，从 Plugin Tab 本地导入；Runtime 不维护远程插件来源、索引或来源公钥。官方必要插件可以随应用提供，但仍使用相同的包格式、安装记录和运行约束。
 
-`@anthropic-ai/sandbox-runtime@0.0.65` 只保留为旧路径和对照测试，不是 Linux 完整 backend。Linux 使用随 Runtime 冻结的 Bubblewrap 0.11.2、原生 launcher、seccomp、私有 tmpfs、Artifact broker 与 delegated cgroup v2；macOS arm64 使用下述短命 VM。任何旧 SRT 路径都只能证明 access layer，不会自动得到 `resource_isolated=true` 或 `sandboxed=true`。
+`@anthropic-ai/sandbox-runtime@0.0.65` 现在承担主 Agent `execute` 的宿主访问隔离：默认禁止网络，只允许读取已授权工作区和运行工具所需的系统/PATH 路径，只允许写入每次命令的私有临时目录；启动器缺失或策略创建失败时命令 fail closed，不回退到宿主 shell。开发入口 `scripts/dev.sh` 使用 pnpm 安装的 SRT CLI，打包入口由 Electron 注入包内 launcher。代码改写继续使用 Runtime 的 `write_file` / `edit_file` 等受工作区约束且有回执的结构化工具。
+
+这层 SRT 是主 Agent shell 的 access sandbox，不等同于不受信任插件的完整资源隔离，也不会得到 Managed Worker 的 `resource_isolated=true` 证明。Managed Worker 在 Linux 使用随 Runtime 冻结的 Bubblewrap 0.11.2、原生 launcher、seccomp、私有 tmpfs、Artifact broker 与 delegated cgroup v2；macOS arm64 使用下述短命 VM。
 
 macOS arm64 VM 资产集由 `client/vm-assets/build_darwin.py` 构建。生成器只接受 lock 中精确大小与 SHA-256 的 Fedora 44 已签名 kernel RPM/SRPM、Fedora keyring、e2fsprogs 1.47.2 源码/签名和固定 kernel.org OpenPGP key；它验证 RPM 身份与签名、源码签名、Xcode/Clang/SDK/Go 工具链，确定性生成 Linux Image、guestd initramfs、host-native `mke2fs`、带 `com.apple.security.virtualization` entitlement 的 launcher、许可证、SPDX SBOM 和 canonical manifest。两次完整构建已经逐字节一致。
 

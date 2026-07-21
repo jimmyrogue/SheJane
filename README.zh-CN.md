@@ -49,7 +49,7 @@ Runtime 可以脱离 Client 独立启动和测试。SDK 与插件放在 Runtime 
 | 领域 | 当前实现 |
 |---|---|
 | Runtime | LangGraph 和 Deep Agents 循环、流式事件、检查点、恢复、规划、验证、记忆和人工审批 |
-| 本地工具 | 工作区文件、Shell、Office、网页抓取、剪贴板审批和定时任务 |
+| 本地工具 | 工作区文件、工作区只读且无网络的沙箱 Shell、Office、网页抓取、剪贴板审批和定时任务 |
 | 扩展能力 | Skill、MCP、确定性的 WASI/Managed Worker 插件、Subagent 和可配置 middleware |
 | Client | Electron 和 React、Runtime 权威对话的本地投影、文件预览、供应商设置与工作区控制 |
 | Runtime SDK | 面向命令、SSE、快照、错误和生成协议类型的公共 TypeScript 客户端 |
