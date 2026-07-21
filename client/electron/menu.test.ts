@@ -46,6 +46,7 @@ describe('Electron menu policy', () => {
     expect(desktopText('en-US', 'dialogs.selectWorkspaceTitle')).toBe('Choose local workspace')
     expect(desktopText('zh-CN', 'dialogs.selectWorkspaceTitle')).toBe('选择本地工作区')
     expect(desktopText('zh-CN', 'update.readyMessage', { version: '0.1.12' })).toBe('石间 v0.1.12 已准备好')
+    expect(desktopText('zh-CN', 'update.installFailed', { message: 'boom' })).toBe('无法重启并安装更新：boom')
   })
 
   it('uses template tray icons only on macOS', () => {

@@ -158,7 +158,13 @@ async function stopRuntimeProcess(child, {
   }
 }
 
+async function installUpdateAfterRuntimeStop({ stopRuntime, quitAndInstall }) {
+  await stopRuntime()
+  quitAndInstall(false, true)
+}
+
 module.exports = {
+  installUpdateAfterRuntimeStop,
   isPortConflictError,
   startRuntimeWithPortRetry,
   stopRuntimeProcess,

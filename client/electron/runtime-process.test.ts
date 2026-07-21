@@ -4,12 +4,17 @@ import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const {
+  installUpdateAfterRuntimeStop,
   isPortConflictError,
   startRuntimeWithPortRetry,
   stopRuntimeProcess,
   waitForRuntimeReady,
   waitForRuntimeProcessClose,
 } = require('./runtime-process.cjs') as {
+  installUpdateAfterRuntimeStop: (options: {
+    stopRuntime: () => Promise<void>
+    quitAndInstall: (isSilent: boolean, isForceRunAfter: boolean) => void
+  }) => Promise<void>
   isPortConflictError: (output: string) => boolean
   startRuntimeWithPortRetry: <T extends { exitCode: number | null }>(options: {
     maxAttempts?: number
@@ -49,6 +54,25 @@ function runtimeProcess(kill: (signal: string) => boolean) {
 }
 
 describe('Electron local Runtime process lifecycle', () => {
+  it('stops the bundled Runtime before handing quit control to the updater', async () => {
+    let finishRuntimeStop!: () => void
+    const stopRuntime = vi.fn(() => new Promise<void>((resolve) => {
+      finishRuntimeStop = resolve
+    }))
+    const quitAndInstall = vi.fn()
+
+    const install = installUpdateAfterRuntimeStop({ stopRuntime, quitAndInstall })
+    await Promise.resolve()
+
+    expect(stopRuntime).toHaveBeenCalledOnce()
+    expect(quitAndInstall).not.toHaveBeenCalled()
+
+    finishRuntimeStop()
+    await install
+
+    expect(quitAndInstall).toHaveBeenCalledWith(false, true)
+  })
+
   it('recognizes only address-in-use startup errors as port conflicts', () => {
     expect(isPortConflictError("ERROR: [Errno 48] address already in use")).toBe(true)
     expect(isPortConflictError('OSError: [WinError 10048] only one usage is permitted')).toBe(true)

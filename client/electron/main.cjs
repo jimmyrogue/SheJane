@@ -19,6 +19,7 @@ const net = require('node:net')
 const { installLocalRuntimeAuthorization } = require('./runtime-auth.cjs')
 const { materializeFileCopy } = require('./file-open.cjs')
 const {
+  installUpdateAfterRuntimeStop,
   isPortConflictError,
   startRuntimeWithPortRetry,
   stopRuntimeProcess,
@@ -597,15 +598,33 @@ async function checkClientUpdate() {
   return clientUpdateState
 }
 
-function installClientUpdate() {
+async function installClientUpdate() {
   if (!clientAutoUpdater || clientUpdateState.status !== 'ready') {
     return false
   }
-  // quitAndInstall closes windows before Electron emits before-quit. Mark this
-  // as a real quit first so the close-to-tray handler cannot swallow it.
+  const updater = clientAutoUpdater
   app.isQuitting = true
-  clientAutoUpdater.quitAndInstall(false, true)
-  return true
+  try {
+    // electron-updater emits before-quit only after starting the installer.
+    // Finish our asynchronous Runtime shutdown first so that handler cannot
+    // cancel the updater-owned quit while the installer waits for this app.
+    await installUpdateAfterRuntimeStop({
+      stopRuntime: stopBundledRuntime,
+      quitAndInstall: (isSilent, isForceRunAfter) => updater.quitAndInstall(isSilent, isForceRunAfter),
+    })
+    return true
+  } catch (error) {
+    app.isQuitting = false
+    publishClientUpdateState({ status: 'error', progress: undefined })
+    console.error('[updater] install failed:', error)
+    dialog.showErrorBox(
+      currentAppName(),
+      desktopText(currentLocale, 'update.installFailed', {
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    )
+    return false
+  }
 }
 
 async function promptForClientUpdate(version) {
@@ -627,7 +646,7 @@ async function promptForClientUpdate(version) {
     ? await dialog.showMessageBox(mainWindow, options)
     : await dialog.showMessageBox(options)
   if (result.response === 0) {
-    installClientUpdate()
+    await installClientUpdate()
   }
 }
 

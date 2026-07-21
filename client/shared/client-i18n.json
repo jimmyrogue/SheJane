@@ -36,7 +36,8 @@
       "readyMessage": "石间 v{version} 已准备好",
       "readyDetail": "重启应用即可完成更新。",
       "restartNow": "立即重启更新",
-      "later": "稍后"
+      "later": "稍后",
+      "installFailed": "无法重启并安装更新：{message}"
     },
     "dialogs": {
       "selectWorkspaceTitle": "选择本地工作区",
@@ -91,7 +92,8 @@
       "readyMessage": "SheJane v{version} is ready",
       "readyDetail": "Restart the app to finish installing the update.",
       "restartNow": "Restart and update",
-      "later": "Later"
+      "later": "Later",
+      "installFailed": "Could not restart and install the update: {message}"
     },
     "dialogs": {
       "selectWorkspaceTitle": "Choose local workspace",
