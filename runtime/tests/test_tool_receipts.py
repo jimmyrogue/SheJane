@@ -1333,7 +1333,7 @@ async def test_blob_gc_keeps_catalog_bodies_and_removes_old_orphans(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_run_permission_grant_is_tool_level_expiring_and_count_bounded(
+async def test_run_permission_grant_is_tool_level_for_the_rest_of_the_run(
     tmp_path: Path,
 ) -> None:
     store, run = await _store_and_run(tmp_path)
@@ -1370,9 +1370,9 @@ async def test_run_permission_grant_is_tool_level_expiring_and_count_bounded(
                 tool_version="graph-v1",
                 risk="workspace_write",
             )
-            for index in range(21)
+            for index in range(25)
         ]
-        assert uses == [True] * 20 + [False]
+        assert uses == [True] * 25
         assert await store.consume_run_permission_grant(
             run_id=str(run["id"]),
             operation_id="operation-0",

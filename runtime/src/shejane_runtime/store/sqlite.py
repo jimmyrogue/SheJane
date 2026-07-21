@@ -4792,12 +4792,8 @@ class LocalStore:
                     status=permission_status,
                     scope=scope,
                 )
-                grant_max_uses = 20 if scope == "run" and permission_status == "approved" else 0
-                grant_expires_at = (
-                    (datetime.now(UTC) + timedelta(hours=24)).isoformat()
-                    if grant_max_uses
-                    else None
-                )
+                grant_max_uses = -1 if scope == "run" and permission_status == "approved" else 0
+                grant_expires_at = None
 
                 if record["permission_status"] == "pending":
                     if record["run_status"] not in {"waiting_permission", "waiting_input"}:
@@ -6587,10 +6583,8 @@ class LocalStore:
             status=status,
             scope=requested_scope,
         )
-        grant_max_uses = 20 if requested_scope == "run" and status == "approved" else 0
-        grant_expires_at = (
-            (datetime.now(UTC) + timedelta(hours=24)).isoformat() if grant_max_uses else None
-        )
+        grant_max_uses = -1 if requested_scope == "run" and status == "approved" else 0
+        grant_expires_at = None
         decision_json = json.dumps(
             decision or ({"type": "approve"} if status == "approved" else {"type": "reject"}),
             ensure_ascii=False,
@@ -6665,7 +6659,7 @@ class LocalStore:
         tool_version: str = "",
         risk: str,
     ) -> bool:
-        """Atomically consume one bounded tool-level run grant use.
+        """Atomically apply one tool-level grant for the rest of this run.
 
         Every invocation still passes schema, capability, workspace, version,
         and risk checks before reaching this grant.
@@ -6686,9 +6680,8 @@ class LocalStore:
                     "WHERE run_id = ? AND tool_name = ? AND tool_version = ? "
                     "AND risk = ? "
                     "AND status = 'approved' AND scope = 'run' "
-                    "AND grant_use_count < grant_max_uses AND grant_expires_at > ? "
                     "ORDER BY resolved_at DESC LIMIT 1",
-                    (run_id, tool_name, tool_version, risk, _now()),
+                    (run_id, tool_name, tool_version, risk),
                 )
             ).fetchone()
             if grant is None:
@@ -6700,12 +6693,11 @@ class LocalStore:
                 (permission_id, run_id, operation_id, _now()),
             )
             cursor = await conn.execute(
-                "UPDATE local_permissions SET grant_use_count = grant_use_count + 1 "
-                "WHERE id = ? AND grant_use_count < grant_max_uses",
+                "UPDATE local_permissions SET grant_use_count = grant_use_count + 1 WHERE id = ?",
                 (permission_id,),
             )
             if cursor.rowcount != 1:
-                raise PermissionDecisionConflictError("permission grant was exhausted concurrently")
+                raise PermissionDecisionConflictError("permission grant changed concurrently")
             return True
 
     async def wait_cycle_resume_payload(

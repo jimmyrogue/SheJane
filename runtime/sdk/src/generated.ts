@@ -235,8 +235,9 @@ export interface paths {
          *     resumes only after every permission in the current pause batch is
          *     resolved, preserving the original `permission.required` order.
          *
-         *     `scope=run` is a bounded durable grant for the same tool, exact
-         *     argument fingerprint, and risk class; it never widens by tool name.
+         *     `scope=run` is a durable grant for an eligible ordinary tool for the
+         *     rest of the run, with the same version and risk class. Irreversible
+         *     and unknown actions cannot receive this scope.
          */
         post: operations["resolve_permission_v1_permissions__permission_id__post"];
         delete?: never;

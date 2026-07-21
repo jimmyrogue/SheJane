@@ -357,6 +357,8 @@ describe('desktop shell', () => {
 
     await screen.findByText('Test Model')
     fireEvent.click((await screen.findAllByText('保存 HTML'))[0])
+    expect(await screen.findByText('你想要什么风格？')).toBeInTheDocument()
+    expect(await screen.findByText('经典数字/符号')).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: '选择保存位置' }))
 
     await waitFor(() => expect(runBodies.length).toBeGreaterThan(0))
@@ -367,6 +369,8 @@ describe('desktop shell', () => {
     })
     expect(runBodies[0]).not.toHaveProperty('replace_from_client_id')
     expect(screen.getAllByText('把这个 HTML 保存下来')).toHaveLength(1)
+    expect(await screen.findByText('你想要什么风格？')).toBeInTheDocument()
+    expect(await screen.findByText('经典数字/符号')).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '选择保存位置' })).not.toBeInTheDocument()
     })

@@ -40,6 +40,13 @@ describe('ThinkingIndicator', () => {
     expect(indicator).toHaveTextContent('正在思考…')
   })
 
+  it('renders nothing once answer text starts streaming', () => {
+    const { container } = renderIndicator(
+      <ThinkingIndicator message={message({ status: 'streaming', content: '回答已经开始' })} />,
+    )
+    expect(container).toBeEmptyDOMElement()
+  })
+
   it('renders the pulsing icon for the pending status as well', () => {
     const { container } = renderIndicator(<ThinkingIndicator message={message({ status: 'pending' })} />)
     expect(container.querySelector('.thinking-pulse')).toBeInTheDocument()

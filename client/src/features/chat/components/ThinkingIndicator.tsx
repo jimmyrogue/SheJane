@@ -16,7 +16,10 @@ const THINKING_STATUSES = new Set<ChatMessage['status']>(['pending', 'streaming'
 export function ThinkingIndicator({ message }: { message: ChatMessage }) {
   const { t } = useI18n()
   const isAssistant = message.role === 'assistant'
-  const active = isAssistant && THINKING_STATUSES.has(message.status) && !message.reasoning?.trim()
+  const active = isAssistant
+    && THINKING_STATUSES.has(message.status)
+    && !message.reasoning?.trim()
+    && !message.content.trim()
   if (!active) {
     return null
   }

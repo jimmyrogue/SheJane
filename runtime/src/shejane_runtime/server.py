@@ -2131,9 +2131,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resumes only after every permission in the current pause batch is
         resolved, preserving the original `permission.required` order.
 
-        `scope=run` is a bounded durable grant for an eligible ordinary tool
-        with the same version and risk class. Irreversible and unknown actions
-        cannot receive this scope.
+        `scope=run` is a durable grant for an eligible ordinary tool for the
+        rest of the run, with the same version and risk class. Irreversible
+        and unknown actions cannot receive this scope.
         """
         decision_text = body.decision
         scope = body.scope

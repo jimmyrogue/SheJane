@@ -1,7 +1,7 @@
 """Explicit, workspace-scoped durable memory tools.
 
-Memory is not written as a hidden end-of-run side effect. The model must call
-``memory.write`` after the user explicitly asks it to remember a fact; every
+Memory is not written as a hidden end-of-run side effect. A direct name fact or
+an explicit memory request authorizes the model to call ``memory.write``; every
 write therefore crosses the normal tool review and durable receipt path.
 
 Implementation notes
@@ -83,10 +83,11 @@ def extract_memory_write_facts(
     capability. The tool must later submit the exact extracted fact.
     """
     current = str(user_input or "").strip()
-    for pattern in _MEMORY_NAME_FACT_PATTERNS:
-        match = pattern.fullmatch(current)
-        if match:
-            return (match.group(0).strip(),)
+    if _MEMORY_NEGATIVE.search(current):
+        return ()
+    direct_name = _extract_direct_name_fact(current)
+    if direct_name:
+        return (direct_name,)
     if _MEMORY_CONFIRMATION.fullmatch(current):
         for message in reversed(history or []):
             if str(message.get("role") or "").lower() != "user":
@@ -96,12 +97,6 @@ def extract_memory_write_facts(
         return ()
 
     facts: list[str] = []
-    negative = re.compile(
-        r"^\s*(?:(?:请|请你|麻烦你?)\s*)?(?:不要|别|无需|不必|禁止).{0,8}"
-        r"(?:记住|保存|写入)|^\s*(?:please\s+)?(?:do\s+not|don't|never)\s+"
-        r"(?:remember|save|store)\b",
-        re.IGNORECASE,
-    )
     directives = (
         re.compile(
             r"^\s*(?:(?:请|请你|帮我|麻烦你?)\s*)?"
@@ -120,14 +115,17 @@ def extract_memory_write_facts(
     if not lines or any(line.lstrip().startswith((">", "```", "~~~")) for line in lines):
         return ()
     for line in lines:
-        if negative.search(line):
+        if _MEMORY_NEGATIVE.search(line):
             return ()
         matched = False
         for pattern in directives:
             match = pattern.match(line)
             if match:
                 fact = " ".join(match.group(1).split())
-                if _MEMORY_NAME_REFERENCE.fullmatch(fact):
+                direct_name = _extract_direct_name_fact(fact)
+                if direct_name:
+                    fact = direct_name
+                elif _MEMORY_NAME_REFERENCE.fullmatch(fact):
                     fact = _resolve_name_reference(history)
                     if not fact:
                         return ()
@@ -150,28 +148,45 @@ _MEMORY_CONFIRMATION = re.compile(
     r"(?:remember|save|record)\s+(?:it|that)[.!\s]*",
     re.IGNORECASE,
 )
+_MEMORY_NEGATIVE = re.compile(
+    r"(?:不要|别|无需|不必|禁止).{0,12}(?:记住|保存|写入)|"
+    r"(?:do\s+not|don't|never).{0,12}(?:remember|save|store)\b",
+    re.IGNORECASE,
+)
 _MEMORY_NAME_REFERENCE = re.compile(
     r"(?:我的)?(?:名字|姓名|称呼)|my\s+name",
     re.IGNORECASE,
 )
 _MEMORY_NAME_FACT_PATTERNS = (
     re.compile(
-        r"(?:我的(?:名字|姓名|称呼)\s*(?:是|叫|为|[:：])|我叫)\s*[^，。！？,;；\n]+",
+        r"我的(?:名字|姓名|称呼)\s*(?:是|叫|为|[:：])\s*[^，。！？,;；\n]+",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"我叫\s*(?!(?:你|他|她|它|大家|我们|助手|模型))"
+        r"(?:[\u3400-\u9fff·]{1,8}|[A-Za-z0-9][A-Za-z0-9 .'\-]{0,79})",
         re.IGNORECASE,
     ),
     re.compile(r"my\s+name\s+(?:is|[:])\s*[^,.!?;\n]+", re.IGNORECASE),
 )
 
 
+def _extract_direct_name_fact(text: str) -> str:
+    candidate = " ".join(str(text or "").split()).rstrip("。.!！")
+    for pattern in _MEMORY_NAME_FACT_PATTERNS:
+        match = pattern.fullmatch(candidate)
+        if match:
+            return " ".join(match.group(0).split())
+    return ""
+
+
 def _resolve_name_reference(history: list[dict[str, str]] | None) -> str:
     for message in reversed(history or []):
         if str(message.get("role") or "").lower() != "user":
             continue
-        content = " ".join(str(message.get("content") or "").split())
-        for pattern in _MEMORY_NAME_FACT_PATTERNS:
-            match = pattern.search(content)
-            if match:
-                return match.group(0).strip()
+        fact = _extract_direct_name_fact(str(message.get("content") or ""))
+        if fact:
+            return fact
     return ""
 
 

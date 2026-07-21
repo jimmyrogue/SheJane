@@ -552,6 +552,50 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
     ]))
   })
 
+  it('resolves remember-my-name against the previous user turn over HTTP/SSE', async () => {
+    const suffix = Date.now().toString(36)
+    const fact = `我的名字是 Reference-${suffix}`
+    const threadID = `thread_e2e_memory_reference_${suffix}`
+    const factRun = await createLocalRun({
+      commandId: `cmd_e2e_memory_reference_fact_${suffix}`,
+      clientMessageId: `msg_e2e_memory_reference_fact_${suffix}`,
+      threadId: threadID,
+      userInput: fact,
+      goal: fact,
+      mode: RUN_MODEL,
+      settings: DEFAULT_SETTINGS,
+    }, config)
+    const factEvents: RuntimeEvent[] = []
+    await collectRunEvents(factRun.id, config, factEvents)
+    expect(factEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'run.completed' }),
+    ]))
+
+    const rememberRun = await createLocalRun({
+      commandId: `cmd_e2e_memory_reference_save_${suffix}`,
+      clientMessageId: `msg_e2e_memory_reference_save_${suffix}`,
+      threadId: threadID,
+      userInput: '记住我的名字',
+      goal: REAL_LLM_MODEL
+        ? '记住我的名字'
+        : encodedToolGoal('memory.write', { fact }),
+      mode: RUN_MODEL,
+      settings: MEMORY_SETTINGS,
+    }, config)
+    const rememberEvents: RuntimeEvent[] = []
+    await collectRunEvents(rememberRun.id, config, rememberEvents)
+    expect(rememberEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'tool.completed',
+        payload: expect.objectContaining({
+          name: 'memory.write',
+          content: expect.stringContaining('"saved": true'),
+        }),
+      }),
+      expect.objectContaining({ type: 'run.completed' }),
+    ]))
+  })
+
   it.each(CATEGORIZED_TOOL_CASES)(
     'tool:$name > family:$category > effect:$effect > risk:$risk > traits:$traits > outcome:$expectedOutcome',
     async (toolCase) => {

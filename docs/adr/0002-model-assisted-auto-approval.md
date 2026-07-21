@@ -41,7 +41,7 @@
 完整工具批次
   → 参数、版本、撤销状态和硬边界检查
   → 生成稳定 operation_id 并准备 Tool Receipt
-  → 读取已持久化审批或有界 Run grant
+  → 读取已持久化审批或当前 Run 的工具级 grant
   → 确定性规则
       allow  → 持久化决定 → 执行
       ask    → 持久化决定 → 整批执行前暂停

@@ -6217,7 +6217,7 @@
     },
     "/v1/permissions/{permission_id}": {
       "post": {
-        "description": "Approve, edit, or deny a parameter-bound tool review.\n\nTranslates the client's `{decision, scope}` body into the\n`{\"decisions\": [{\"type\": \"approve\"|\"edit\"|\"reject\", ...}]}` shape\nthat `ToolReviewMiddleware` verifies on resume. One LangGraph\ninterrupt can contain multiple action requests, so the run\nresumes only after every permission in the current pause batch is\nresolved, preserving the original `permission.required` order.\n\n`scope=run` is a bounded durable grant for the same tool, exact\nargument fingerprint, and risk class; it never widens by tool name.",
+        "description": "Approve, edit, or deny a parameter-bound tool review.\n\nTranslates the client's `{decision, scope}` body into the\n`{\"decisions\": [{\"type\": \"approve\"|\"edit\"|\"reject\", ...}]}` shape\nthat `ToolReviewMiddleware` verifies on resume. One LangGraph\ninterrupt can contain multiple action requests, so the run\nresumes only after every permission in the current pause batch is\nresolved, preserving the original `permission.required` order.\n\n`scope=run` is a durable grant for an eligible ordinary tool for the\nrest of the run, with the same version and risk class. Irreversible\nand unknown actions cannot receive this scope.",
         "operationId": "resolve_permission_v1_permissions__permission_id__post",
         "parameters": [
           {

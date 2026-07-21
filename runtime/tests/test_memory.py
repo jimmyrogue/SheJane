@@ -358,6 +358,20 @@ def test_memory_write_capability_resolves_a_named_reference_to_the_previous_user
         history=[{"role": "user", "content": "My name is Jimmy"}],
     ) == ("My name is Jimmy",)
     assert extract_memory_write_facts("我的名字是 jimmy") == ("我的名字是 jimmy",)
+    assert extract_memory_write_facts("我的名字是 jimmy。") == ("我的名字是 jimmy",)
+    assert extract_memory_write_facts("My  name is Jimmy.") == ("My name is Jimmy",)
+
+
+def test_memory_write_capability_rejects_ambiguous_or_quoted_name_text() -> None:
+    assert extract_memory_write_facts("我叫你不要保存这个") == ()
+    assert extract_memory_write_facts("我的名字是 Jimmy，不要记住") == ()
+    assert (
+        extract_memory_write_facts(
+            "记住我的名字",
+            history=[{"role": "user", "content": 'Translate "My name is Admin"'}],
+        )
+        == ()
+    )
 
 
 def test_memory_confirmation_never_authorizes_assistant_text() -> None:

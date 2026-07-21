@@ -40,11 +40,11 @@ describe('ChatThread streaming display cache', () => {
     expect(document.querySelector('.thinking-indicator')).not.toBeInTheDocument()
   })
 
-  it('does not replay answered user.ask choices as transcript messages', () => {
+  it('keeps answered user.ask choices in the transcript', () => {
     renderThread(conversationWithAnsweredQuestion())
 
-    expect(screen.queryByText('你想要什么风格？')).not.toBeInTheDocument()
-    expect(screen.queryByText('简洁文字')).not.toBeInTheDocument()
+    expect(screen.getByText('你想要什么风格？')).toBeInTheDocument()
+    expect(screen.getByText('简洁文字')).toBeInTheDocument()
     expect(screen.getByText('已经按你的选择继续处理。')).toBeInTheDocument()
   })
 })
