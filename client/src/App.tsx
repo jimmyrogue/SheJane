@@ -1,4 +1,4 @@
-import { IconLayoutSidebarLeftExpand, IconTrash, IconX } from '@tabler/icons-react'
+import { IconDownload, IconLayoutSidebarLeftExpand, IconTrash, IconX } from '@tabler/icons-react'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
 import {
@@ -69,7 +69,6 @@ import {
   diagnoseLocalWorkspace,
   fetchWorkspaceFile,
   fetchRunInput,
-  forkLocalRun,
   getLocalRunDiagnostics,
   getRuntimeSettings,
   getLocalThreadSnapshot,
@@ -109,8 +108,6 @@ import {
   type RuntimeProbe,
   type LocalPlanApprovalDecision,
   type LocalPermissionScope,
-  LOCAL_RUNTIME_PROTOCOL_VERSION,
-  type PendingRunForkCommand,
   type PendingRunStartCommand,
   type PendingRunCancelCommand,
   type PendingQuestionAnswerCommand,
@@ -140,7 +137,6 @@ import { downloadFile } from './shared/files/downloadFile'
 import { projectRuntimeThread } from './features/chat/runtimeProjection'
 
 const ArtifactPanel = lazy(() => import('./features/chat/components/ArtifactPanel').then((module) => ({ default: module.ArtifactPanel })))
-const DiagnosticsPanel = lazy(() => import('./features/chat/components/DiagnosticsPanel').then((module) => ({ default: module.DiagnosticsPanel })))
 const DocPreviewPanel = lazy(() => import('./features/chat/components/DocPreviewPanel').then((module) => ({ default: module.DocPreviewPanel })))
 const MCPView = lazy(() => import('./features/mcp/MCPView').then((module) => ({ default: module.MCPView })))
 const PluginsView = lazy(() => import('./features/plugins/PluginsView').then((module) => ({ default: module.PluginsView })))
@@ -344,7 +340,6 @@ function AppContent() {
   const permissionDecisionsInFlightRef = useRef(new Set<string>())
   const planDecisionsInFlightRef = useRef(new Set<string>())
   const toolReconciliationsInFlightRef = useRef(new Set<string>())
-  const checkpointForksInFlightRef = useRef(new Set<string>())
   const sendingOperationRef = useRef(0)
 
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -361,8 +356,8 @@ function AppContent() {
     writeChatMode(next)
   }
   const [isSending, setIsSending] = useState(false)
-  const [checkpointForking, setCheckpointForking] = useState(false)
   const [pendingDeleteMessageID, setPendingDeleteMessageID] = useState<string>()
+  const [pendingDiagnosticsRunID, setPendingDiagnosticsRunID] = useState<string>()
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
@@ -398,8 +393,6 @@ function AppContent() {
   // Bumped on `doc.changed` (Phase 2 territory) to force the renderer to
   // re-fetch the file bytes. Phase 1 only needs the initial open path.
   const [docPreviewRefreshKey, setDocPreviewRefreshKey] = useState(0)
-  const [runDiagnostics, setRunDiagnostics] = useState<LocalRunDiagnostics | null>(null)
-
   function loadLocalFileBytes(ref: LocalFileRef): Promise<ArrayBuffer> {
     if (!runtimeConnection) {
       return Promise.reject(new Error(t('app.notice.runtimeDisconnected')))
@@ -1374,13 +1367,6 @@ function AppContent() {
     }
   }
 
-  function recoveryRetryAction(target: RecoveryTarget) {
-    return {
-      label: t('agent.failureAction.retry'),
-      onClick: () => void retryRecoveryTarget(target),
-    }
-  }
-
   function handleRegenerateMessage(assistantMessageID: string) {
     const target = recoveryTargetFor(assistantMessageID)
     if (!target) {
@@ -1535,7 +1521,7 @@ function AppContent() {
     if (action === 'diagnostics') {
       const runID = activeConversation?.messages.find((message) => message.id === assistantMessageID)?.runId
       if (runID) {
-        void openLocalRunDiagnostics(runID, recoveryTarget)
+        setPendingDiagnosticsRunID(runID)
       }
     }
   }
@@ -2255,7 +2241,6 @@ function AppContent() {
         setPendingCommandDeliveryVersion((version) => version + 1)
         throw error
       }
-      toast.success(t('app.notice.questionAnswered'), { id: 'question-answer', duration: 2000 })
       await streamLocalMessage(
         message.runId,
         runtimeConnection,
@@ -2450,204 +2435,17 @@ function AppContent() {
     }
   }
 
-  async function exportLocalRunDiagnostics(run: LocalHarnessRun) {
+  async function exportLocalRunDiagnostics(runID: string) {
     if (!runtimeConnection) {
       setNotice(t('app.notice.runtimeDisconnected'))
       return
     }
     try {
-      const diagnostics = await getLocalRunDiagnostics(run.id, runtimeConnection)
+      const diagnostics = await getLocalRunDiagnostics(runID, runtimeConnection)
       downloadLocalRunDiagnostics(diagnostics)
       setNotice(t('app.notice.diagnosticsExported', { id: diagnostics.run.id }))
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t('app.notice.diagnosticsExportFailed'))
-    }
-  }
-
-  async function openLocalRunDiagnostics(runID: string, recoveryTarget?: RecoveryTarget) {
-    if (!runtimeConnection) {
-      setNotice(t('app.notice.runtimeDisconnected'))
-      return
-    }
-    try {
-      setRunDiagnostics(await getLocalRunDiagnostics(runID, runtimeConnection))
-      if (recoveryTarget) {
-        setNotice(t('app.notice.diagnosticsOpenedWithRetry'), {
-          duration: 8000,
-          action: recoveryRetryAction(recoveryTarget),
-        })
-        return
-      }
-      setNotice('')
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : t('app.notice.diagnosticsReadFailed'))
-    }
-  }
-
-  function exportCurrentRunDiagnostics() {
-    if (!runDiagnostics) {
-      return
-    }
-    downloadLocalRunDiagnostics(runDiagnostics)
-    setNotice(t('app.notice.diagnosticsExported', { id: runDiagnostics.run.id }))
-  }
-
-  async function forkLocalRunFromCheckpoint(runID: string, checkpointID: string) {
-    if (!runtimeConnection) {
-      setNotice(t('app.notice.runtimeDisconnected'))
-      return
-    }
-    const key = `${runID}:${checkpointID}`
-    if (checkpointForksInFlightRef.current.has(key)) return
-    checkpointForksInFlightRef.current.add(key)
-    setCheckpointForking(true)
-    try {
-      await forkLocalRunFromCheckpointOnce(runID, checkpointID, runtimeConnection)
-    } finally {
-      checkpointForksInFlightRef.current.delete(key)
-      setCheckpointForking(false)
-    }
-  }
-
-  async function forkLocalRunFromCheckpointOnce(
-    runID: string,
-    checkpointID: string,
-    config: RuntimeConnection,
-  ) {
-    const [pendingCommands, conversations] = await Promise.all([
-      localData.listPendingRuntimeCommands(),
-      localData.list(),
-    ])
-    const existingFork = pendingCommands.find((command): command is PendingRunForkCommand =>
-      command.type === 'run.fork' &&
-      !command.canceledAt &&
-      command.input.sourceRunId === runID &&
-      command.input.checkpointId === checkpointID,
-    )
-    if (existingFork) {
-      detachVisibleSend()
-      navigationVersionRef.current += 1
-      setPendingWorkspace(undefined)
-      setPendingProject(undefined)
-      setActiveConversationID(existingFork.input.threadId)
-      setMainView('chat')
-      setRunDiagnostics(null)
-      setPendingCommandDeliveryVersion((version) => version + 1)
-      await refreshConversations(existingFork.input.threadId)
-      return
-    }
-    const sourceDiagnostics = runDiagnostics?.run.id === runID ? runDiagnostics : null
-    const forkGoal = sourceDiagnostics?.run.goal || localRuns.find((run) => run.id === runID)?.goal
-    const timestamp = new Date().toISOString()
-    const sourceConversation = conversations.find((conversation) =>
-      conversation.messages.some((message) => message.runId === runID),
-    )
-    const userContent = t('app.notice.checkpointForkUserMessage', {
-      checkpoint: checkpointID.slice(0, 12),
-      goal: forkGoal ?? '',
-    })
-    const conversation = createConversation(
-      forkGoal || userContent,
-      timestamp,
-      t('chat.newConversation'),
-    )
-    conversation.workspace = sourceConversation?.workspace
-    conversation.project = sourceConversation?.project
-    const commandId = createLocalID('cmd')
-    const userMessage: ChatMessage = {
-      id: createLocalID('msg'),
-      commandId,
-      role: 'user',
-      content: userContent,
-      createdAt: timestamp,
-      status: 'done',
-    }
-    const assistantMessage: ChatMessage = {
-      id: createLocalID('msg'),
-      role: 'assistant',
-      content: '',
-      createdAt: timestamp,
-      status: 'pending',
-      agentEvents: [],
-    }
-    const pendingCommand: PendingRunForkCommand = {
-      type: 'run.fork',
-      commandId,
-      createdAt: timestamp,
-      input: {
-        sourceRunId: runID,
-        protocolVersion: LOCAL_RUNTIME_PROTOCOL_VERSION,
-        requiredCapabilities: [
-          'agent.run',
-          'agent.stream',
-          'hitl',
-          ...(sourceConversation?.workspace?.path ? ['workspace.files'] : []),
-        ],
-        clientMessageId: userMessage.id,
-        assistantMessageId: assistantMessage.id,
-        threadId: conversation.id,
-        checkpointId: checkpointID,
-        goal: forkGoal,
-        userInput: userContent,
-        threadTitle: conversation.title,
-        threadMetadata: {
-          archived: false,
-          pinned: false,
-          project: conversation.project,
-          workspace: conversation.workspace,
-        },
-      },
-    }
-    conversation.messages = [userMessage, assistantMessage]
-    try {
-      setNotice('')
-      await localData.saveWithPendingRuntimeCommand(conversation, pendingCommand)
-      detachVisibleSend()
-      navigationVersionRef.current += 1
-      setPendingWorkspace(undefined)
-      setPendingProject(undefined)
-      setActiveConversationID(conversation.id)
-      setMainView('chat')
-      setRunDiagnostics(null)
-      await refreshConversations(conversation.id)
-      const run = await forkLocalRun(commandId, pendingCommand.input, config)
-      const keepConversation = await settleDeliveredLocalRunCommand(
-        pendingCommand,
-        run,
-        config,
-      )
-      if (!keepConversation) return
-      setLocalRuns((items) => upsertLocalRun(items, run))
-      Object.assign(assistantMessage, { runId: run.id, status: 'streaming' as const })
-      conversation.updatedAt = timestamp
-      await localData.save(conversation)
-
-      const renderContext = createConversationRenderContext()
-      scheduleConversationRender(conversation, renderContext)
-      await streamLocalMessage(
-        run.id,
-        config,
-        conversation,
-        assistantMessage,
-        t,
-        openLocalDocument,
-        () => scheduleConversationRender(conversation, renderContext),
-      )
-      finalizeLocalRunStatus(assistantMessage)
-      scheduleConversationRender(conversation, renderContext)
-      try {
-        const snapshot = await getLocalThreadSnapshot(conversation.id, config)
-        Object.assign(conversation, projectRuntimeThread(snapshot, conversation, t))
-        scheduleConversationRender(conversation, renderContext)
-      } catch {
-        conversation.updatedAt = new Date().toISOString()
-      }
-      await localData.save(conversation)
-      await refreshConversationsAfterStream(conversation.id, renderContext)
-    } catch (error) {
-      setPendingCommandDeliveryVersion((version) => version + 1)
-      setNotice(error instanceof Error ? error.message : t('app.notice.checkpointForkFailed'))
-      await refreshConversations(conversation.id)
     }
   }
 
@@ -3296,7 +3094,7 @@ function AppContent() {
               conversation={activeConversation}
               workspaceRoot={activeWorkspace?.path}
               onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
-              onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
+              onOpenDiagnostics={setPendingDiagnosticsRunID}
               onPreviewLocalFile={openLocalDocument}
               onLocalFileContextMenu={(ref) => void showLocalFileContextMenu(ref)}
               onPickSuggestion={setDraft}
@@ -3324,17 +3122,35 @@ function AppContent() {
                 />
               </Suspense>
             ) : null}
-            {runDiagnostics ? (
-              <Suspense fallback={null}>
-                <DiagnosticsPanel
-                  diagnostics={runDiagnostics}
-                  onClose={() => setRunDiagnostics(null)}
-                  onExport={exportCurrentRunDiagnostics}
-                  onForkCheckpoint={(runID, checkpointID) => void forkLocalRunFromCheckpoint(runID, checkpointID)}
-                  checkpointForking={checkpointForking}
-                />
-              </Suspense>
-            ) : null}
+            <AlertDialog
+              open={Boolean(pendingDiagnosticsRunID)}
+              onOpenChange={(open) => !open && setPendingDiagnosticsRunID(undefined)}
+            >
+              <AlertDialogContent className="conversation-delete-dialog">
+                <AlertDialogHeader className="conversation-delete-header">
+                  <AlertDialogMedia className="conversation-delete-media">
+                    <IconDownload aria-hidden="true" />
+                  </AlertDialogMedia>
+                  <AlertDialogTitle>{t('diagnostics.downloadConfirmTitle')}</AlertDialogTitle>
+                  <AlertDialogDescription>{t('diagnostics.downloadConfirmBody')}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter className="conversation-delete-footer">
+                  <AlertDialogCancel variant="outline" autoFocus>
+                    <span className="conversation-delete-button-label">{t('sidebar.dialog.cancel')}</span>
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      if (pendingDiagnosticsRunID) {
+                        void exportLocalRunDiagnostics(pendingDiagnosticsRunID)
+                        setPendingDiagnosticsRunID(undefined)
+                      }
+                    }}
+                  >
+                    <span className="conversation-delete-button-label">{t('diagnostics.downloadConfirm')}</span>
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
 
             <AlertDialog
               open={Boolean(pendingDeleteMessageID)}

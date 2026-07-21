@@ -995,14 +995,8 @@ select {
 }
 
 .artifact-preview,
-.diagnostics-preview,
 .doc-preview-panel {
   color: var(--foreground);
-}
-
-.diagnostics-preview {
-  background: var(--sj-paper-raised, #FFFFFF);
-  box-shadow: var(--sj-shadow-2, 0 2px 8px rgba(43, 42, 40, 0.06));
 }
 
 .artifact-preview {
@@ -1814,235 +1808,6 @@ select {
   font-size: 12px;
   color: var(--destructive, #b91c1c);
   margin: 0;
-}
-
-.diagnostics-actions {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 8px;
-}
-
-.diagnostics-body {
-  padding: 0 24px 28px;
-}
-
-.diagnostics-outcome {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  border-bottom: 1px solid var(--sj-line, #E8E5DE);
-  padding: 28px 0 24px;
-}
-
-.diagnostics-outcome-mark {
-  width: 9px;
-  height: 9px;
-  flex: 0 0 auto;
-  margin-top: 8px;
-  border-radius: 50%;
-  background: var(--sj-seal, #B3532F);
-}
-
-.diagnostics-outcome.is-completed .diagnostics-outcome-mark {
-  background: var(--sj-moss, #5E7A6E);
-}
-
-.diagnostics-outcome.is-canceled .diagnostics-outcome-mark {
-  background: var(--sj-ink-faint, #A8A39A);
-}
-
-.diagnostics-outcome h3 {
-  margin: 0;
-  color: var(--sj-ink, #2B2A28);
-  font-weight: 600;
-  font-size: 20px;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-}
-
-.diagnostics-outcome p {
-  margin: 5px 0 0;
-  color: var(--sj-moss, #5E7A6E);
-  font-size: 12px;
-}
-
-.diagnostics-primary-section {
-  border-bottom: 1px solid var(--sj-line, #E8E5DE);
-  padding: 22px 0 24px;
-}
-
-.diagnostics-primary-section > h3,
-.diagnostics-events-section > h4 {
-  margin: 0 0 10px;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.diagnostics-attention > h3 {
-  color: var(--sj-seal, #B3532F);
-}
-
-.diagnostics-problem + .diagnostics-problem,
-.diagnostics-problem + .diagnostics-list-group {
-  margin-top: 14px;
-}
-
-.diagnostics-problem strong {
-  display: inline;
-  margin: 0 8px 0 0;
-  color: var(--sj-ink, #2B2A28);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.diagnostics-problem > span {
-  color: var(--sj-seal, #B3532F);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.diagnostics-problem p {
-  max-width: 62ch;
-  margin: 6px 0 0;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 13px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.diagnostics-list-group ul {
-  margin: 0;
-  padding-left: 17px;
-}
-
-.diagnostics-list-group li {
-  margin-top: 6px;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 13px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.diagnostics-list-group li:first-child {
-  margin-top: 0;
-}
-
-.diagnostics-technical {
-  border-bottom: 1px solid var(--sj-line, #E8E5DE);
-}
-
-.diagnostics-technical > summary {
-  display: flex;
-  cursor: pointer;
-  list-style: none;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px 0;
-  color: var(--sj-ink, #2B2A28);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.diagnostics-technical > summary::-webkit-details-marker {
-  display: none;
-}
-
-.diagnostics-technical > summary::after {
-  content: '›';
-  flex: 0 0 auto;
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 18px;
-  font-weight: 400;
-  transform: rotate(90deg);
-  transition: transform 160ms ease;
-}
-
-.diagnostics-technical[open] > summary::after {
-  transform: rotate(-90deg);
-}
-
-.diagnostics-technical > summary:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 4px;
-}
-
-.diagnostics-technical > summary small {
-  min-width: 0;
-  margin-left: auto;
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 11.5px;
-  font-weight: 400;
-}
-
-.diagnostics-technical-body {
-  border-top: 1px solid var(--sj-line, #E8E5DE);
-  padding: 16px 0 22px;
-}
-
-.diagnostics-run-id {
-  display: grid;
-  grid-template-columns: 84px minmax(0, 1fr);
-  gap: 12px;
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 11.5px;
-}
-
-.diagnostics-run-id code {
-  overflow: hidden;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-family: var(--sj-font-mono, "SF Mono", ui-monospace, monospace);
-  text-overflow: ellipsis;
-}
-
-.diagnostics-section-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 16px;
-  margin-top: 16px;
-  color: var(--sj-ink-soft, #6F6B63);
-}
-
-.diagnostics-events-section {
-  margin-top: 20px;
-}
-
-.diagnostics-events {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.diagnostics-event {
-  display: grid;
-  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
-  gap: 16px;
-  border-top: 1px solid var(--sj-line, #E8E5DE);
-  padding: 9px 0;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.diagnostics-event:first-child {
-  border-top: 0;
-}
-
-.diagnostics-event code {
-  color: var(--sj-ink-soft, #6F6B63);
-  font-family: var(--sj-font-mono, "SF Mono", ui-monospace, monospace);
-  font-size: 11px;
-}
-
-.diagnostics-event span {
-  min-width: 0;
-  color: var(--sj-ink-soft, #6F6B63);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Approval bar: the single place all permission prompts are surfaced —
@@ -3227,8 +2992,7 @@ select {
   color: var(--muted-foreground);
 }
 
-.composer-plugin-stale,
-.composer-plugin-run-note {
+.composer-plugin-stale {
   margin: 0 14px 6px;
   color: var(--sj-ink-muted, var(--muted-foreground));
   font-size: 11px;
@@ -3472,23 +3236,6 @@ label {
 
   .message {
     padding: 12px;
-  }
-
-  .diagnostics-actions {
-    width: 100%;
-  }
-
-  .diagnostics-actions > * {
-    flex: 1;
-  }
-
-  .diagnostics-body {
-    padding-inline: 16px;
-  }
-
-  .diagnostics-event {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 3px;
   }
 
   .empty-state {
@@ -9539,8 +9286,8 @@ button.settings-row-button:focus-visible,
 }
 
 .chat-surface::before {
-  height: 54px;
-  background: linear-gradient(to bottom, var(--sj-paper, #FAF9F6) 18%, transparent);
+  height: 72px;
+  background: linear-gradient(to bottom, var(--sj-paper, #FAF9F6) 60%, transparent);
 }
 
 /* Bottom fade — symmetric counterpart to .chat-surface::before, spanning the
@@ -9616,6 +9363,8 @@ button.settings-row-button:focus-visible,
   color: var(--sj-ink, #2B2A28);
   font-size: 14px;
   line-height: 1.76;
+  -webkit-user-select: text;
+  user-select: text;
   /* Unbroken runs (pasted IDs, URLs, file paths) wrap instead of
      overflowing the column — applies to user bubbles and assistant
      prose alike; <pre> blocks keep their own overflow handling. */

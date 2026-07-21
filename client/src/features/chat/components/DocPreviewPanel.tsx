@@ -65,7 +65,7 @@ function clamp(value: number, lo: number, hi: number): number {
 /**
  * Right-side document preview. The Sheet stays non-modal so the main
  * chat stays usable while the panel is open (same UX as ArtifactPanel
- * and DiagnosticsPanel).
+ * and other right-side panels).
  *
  * Two interactive affordances the user controls:
  *  1. Panel width — drag the left edge. Persisted across reloads.

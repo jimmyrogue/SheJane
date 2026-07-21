@@ -1,6 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef } from 'react'
 import { AgentProgress, type AgentFailureAction } from './AgentProgress'
-import { AnsweredQuestions } from './AnsweredQuestions'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { IconCalendar, IconFileText, IconMessage } from '@tabler/icons-react'
@@ -117,7 +116,6 @@ export function ChatThread({
               {message.role === 'assistant' && conversation.messages[index - 1]?.role === 'user' ? (
                 <StoneDots />
               ) : null}
-              <AnsweredQuestions message={message} />
               <MessageBubble
                 message={message}
                 initialStreamText={message.status === 'streaming' ? streamDisplayCacheRef.current.get(message.id) : undefined}

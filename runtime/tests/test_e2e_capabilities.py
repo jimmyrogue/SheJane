@@ -56,10 +56,11 @@ class RecordingHandler:
         self.scripts = list(scripts)
         self.requests: list[dict[str, Any]] = []
         self.completion_review_requests = 0
+        self.title_generation_requests = 0
 
     @property
     def agent_requests(self) -> int:
-        return len(self.requests) - self.completion_review_requests
+        return len(self.requests) - self.completion_review_requests - self.title_generation_requests
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body_bytes = request.read()
@@ -85,6 +86,14 @@ class RecordingHandler:
                         },
                     ),
                     ("llm.done", {"request_id": "completion-review", "finish_reason": "stop"}),
+                ]
+            )
+        if "conversation title generator" in str(body):
+            self.title_generation_requests += 1
+            return _sse(
+                [
+                    ("llm.delta", {"content_delta": "香港账户给美国 LLC 注资"}),
+                    ("llm.done", {"request_id": "title", "finish_reason": "stop"}),
                 ]
             )
         if self.scripts:
@@ -186,6 +195,36 @@ def _post_run_and_stream(
     ) as resp:
         body_text = resp.read().decode("utf-8")
     return _parse_sse(body_text)
+
+
+def test_first_completed_turn_generates_runtime_owned_thread_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = RecordingHandler(
+        scripts=[
+            [
+                ("llm.delta", {"content_delta": "香港账户可以作为中转，但仍需合规申报。"}),
+                ("llm.done", {"request_id": "answer", "finish_reason": "stop"}),
+            ]
+        ]
+    )
+    with _make_client(monkeypatch, handler) as client:
+        events = _post_run_and_stream(
+            client,
+            "odi 听上去好复杂，还是香港比较好？帮我搜一下别人是怎么处理的",
+            thread_id="thread_generated_title",
+            assistant_message_id="msg_generated_title",
+            thread_title="odi 听上去好复杂，还是香港比较好？",
+        )
+        snapshot = client.get(
+            "/v1/threads/thread_generated_title",
+            headers={"Authorization": "Bearer tok"},
+        )
+
+    assert any(name == "run.completed" for name, _payload in events)
+    assert snapshot.status_code == 200
+    assert snapshot.json()["thread"]["title"] == "香港账户给美国 LLC 注资"
+    assert handler.title_generation_requests == 1
 
 
 def test_run_reads_a_docx_snapshot_after_the_original_is_deleted(

@@ -81,6 +81,109 @@ describe('desktop shell', () => {
     expect(screen.queryByText('消费记录')).not.toBeInTheDocument()
   })
 
+  it('asks before downloading diagnostics instead of opening the diagnostics panel', async () => {
+    const store = new LocalConversationStore('shejane-local:runtime:local-owner')
+    await store.save({
+      id: 'conversation-diagnostics',
+      title: '诊断测试',
+      archived: false,
+      createdAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+      messages: [{
+        id: 'assistant-diagnostics',
+        role: 'assistant',
+        content: '任务完成',
+        createdAt: '2026-07-21T00:00:00.000Z',
+        status: 'done',
+        runId: 'run-diagnostics',
+      }],
+    })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '诊断' }))
+
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '下载诊断信息？' })).toBeInTheDocument()
+    expect(screen.getByText('诊断信息可发送给开发者，用于排查问题。')).toBeInTheDocument()
+    expect(document.querySelector('.diagnostics-preview')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('submits a user.ask choice without showing a success toast', async () => {
+    const store = new LocalConversationStore('shejane-local:runtime:local-owner')
+    window.localStorage.setItem('shejane.chatMode.v2', 'local:test:model')
+    await store.save({
+      id: 'conversation-question',
+      title: '选择风格',
+      archived: false,
+      createdAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:00:00.000Z',
+      messages: [{
+        id: 'assistant-question',
+        role: 'assistant',
+        content: '',
+        createdAt: '2026-07-21T00:00:00.000Z',
+        status: 'waiting_input',
+        runId: 'run-question',
+        agentEvents: [{
+          type: 'question.asked',
+          label: '需要选择',
+          questionRequestId: 'question-style',
+          questions: [{
+            question: '你想要什么风格？',
+            header: '风格',
+            options: [{ label: '简洁文字' }],
+          }],
+        }],
+      }],
+    })
+    Object.defineProperty(window, 'shejaneClient', {
+      configurable: true,
+      value: {
+        platform: 'darwin',
+        runtime: { baseURL: 'http://127.0.0.1:17371', session: 'client', ready: true },
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ models: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/v1/commands') && init?.method === 'POST') {
+        return new Response(JSON.stringify({
+          type: 'question.answer',
+          command_id: 'answer_question-style',
+          question_id: 'question-style',
+          run_id: 'run-question',
+          answered: true,
+          resumed: true,
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.includes('/v1/runs/run-question/stream')) {
+        return new Response('data: [DONE]\n\n', {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+    render(<App />)
+
+    fireEvent.click((await screen.findAllByText('选择风格'))[0])
+    fireEvent.click(await screen.findByText('简洁文字'))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/v1/commands',
+      expect.objectContaining({ method: 'POST' }),
+    ))
+    expect(screen.queryByText('答案已提交')).not.toBeInTheDocument()
+  })
+
   it('keeps the sidebar expand control available outside the chat view', async () => {
     render(<App />)
 
@@ -254,8 +357,6 @@ describe('desktop shell', () => {
 
     await screen.findByText('Test Model')
     fireEvent.click((await screen.findAllByText('保存 HTML'))[0])
-    expect(await screen.findByText('你想要什么风格？')).toBeInTheDocument()
-    expect(await screen.findByText('经典数字/符号')).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: '选择保存位置' }))
 
     await waitFor(() => expect(runBodies.length).toBeGreaterThan(0))
@@ -266,8 +367,6 @@ describe('desktop shell', () => {
     })
     expect(runBodies[0]).not.toHaveProperty('replace_from_client_id')
     expect(screen.getAllByText('把这个 HTML 保存下来')).toHaveLength(1)
-    expect(await screen.findByText('你想要什么风格？')).toBeInTheDocument()
-    expect(await screen.findByText('经典数字/符号')).toBeInTheDocument()
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '选择保存位置' })).not.toBeInTheDocument()
     })

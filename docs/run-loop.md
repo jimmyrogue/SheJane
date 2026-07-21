@@ -238,7 +238,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │ 不执行隐藏的 after_agent 业务：                                           │     │
   │     │  • 不调用反思模型                                                         │     │
   │     │  • 不自动写入长期记忆                                                     │     │
-  │     │  • memory.write 只能由主任务使用本轮真实用户输入授予的事实能力调用         │     │
+  │     │  • memory.write 只能写本轮明确指令，或“记录一下”确认的上一条真实用户原文  │     │
   │     │  • 统计、最终回答和用量从助手草稿、模型账本和工具回执读取                  │     │
   │     └─────────────────────────────────────────────────────────────────────────┘     │
   │                                                                                     │
@@ -382,9 +382,10 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 编辑重跑 | 复用持久 `run.start`，以当前未替换的用户消息为前置条件；Runtime 原子隐藏旧投影并创建新 Run，旧记录不删除 | `test_run_result_commit` / `App.test` |
 | 检查点分叉 | 客户端持久保存 `run.fork`；Runtime 从公开检查点创建新产品对话和明确分支头，同编号重放返回原 Run | `test_runs_http` / `client.test` / `App.test` |
 | 用户触发 repair workflow | `metadata.intent=repair` → `<state>` 修复上下文 + `repair.workflow` started/completed/failed/rejected/canceled；client 按 `{conversation_id, assistant_message_id}` 给 repair action 加 in-flight guard，避免同一失败消息被连续点击创建重复替换 run；attempt 超过 `SHEJANE_RUNTIME_REPAIR_WORKFLOW_MAX` 时 fail-fast，不调用模型 | `test_runs_http` / `test_context_builder` / `test_run_recovery` / `App.test` |
-| 复杂任务小步执行 | `PlanFirstMiddleware` 按当前 Run 的 `task_input` 写入 `incremental_execution` 状态，不注入 Plan-First 文案；`CompletionRouter` 在 P9 强制先写 2–8 个 todos、只保留一个 `in_progress`、每次最多完成一个任务，并阻止未全部完成时提交最终答案。默认 `auto`，可显式关闭 | `test_plan_first` / `test_middleware` / `test_e2e_capabilities` |
+| 复杂任务小步执行 | `PlanFirstMiddleware` 按当前 Run 的 `task_input` 写入 `incremental_execution` 状态，不注入 Plan-First 文案；`CompletionRouter` 在 P9 强制先写 2–8 个 todos、只保留一个 `in_progress`、已完成任务不可回退，并阻止未全部完成时提交最终答案；并行研究任务可以在同一次状态更新中共同完成。默认 `auto`，可显式关闭 | `test_plan_first` / `test_middleware` / `test_e2e_capabilities` |
+| 首轮对话标题 | 首个 Runtime thread 的回答通过 P9 后，使用当前冻结模型做一次独立 `title_generation` 账本调用；生成标题仅在原始种子标题未被用户改名时随 P11 `run.completed` 原子写入，失败则保留种子标题且不影响回答 | `test_e2e_capabilities` / `test_model_ledger` / `test_run_result_commit` |
 | 执行结算与资源清理 | 所有结束方式先关闭执行级 `AsyncExitStack`，再从助手草稿、模型账本、工具回执和验证记录生成结构化结果；清理不明时进入不可自动重试的隔离态 | `test_run_jobs` / `test_model_ledger` |
-| 显式长期记忆 | 主任务入口从真实用户输入提取精确记忆事实；`memory.write` 只能写入该能力允许的原文，子 Agent 不拥有写权限；读写按所有者与工作区双重隔离 | `test_memory` / `test_memory_http` / `test_subagents` |
+| 显式长期记忆 | 主任务入口从本轮明确指令，或“记录一下”确认的上一条真实用户消息提取精确事实；`memory.write` 只能写入该能力允许的原文，子 Agent 不拥有写权限；工作区检索继承同一所有者的全局事实；旧 `notes.global` 只兼容读取其中的 `user_fact`，清空接口会删除全部旧记录 | `test_memory` / `test_memory_http` / `test_subagents` / `runtime-tools.contract.test.ts` |
 | Skills 渐进披露 | `SkillsMiddleware` | `test_agent_builder` / `runtime-agent.contract.test.ts` |
 | MCP 目录与调用 | `MCPToolCatalog` 固定目录快照；达到阈值后先用 `mcp.search_tools` | `test_mcp` / `runtime-tools.contract.test.ts` |
 | 文件系统沙箱 | `FilesystemMiddleware` + backend；项目目录是可写根目录，本次附件仅通过 `/attachments/` 暴露被选中的单个文件并保持只读；PDF 在读取边界转换为 UTF-8 文本，不把 Base64 二进制交给模型 | `test_agent_builder` / `test_memory` / `test_runs_http` |

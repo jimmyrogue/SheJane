@@ -170,6 +170,7 @@ class RuntimeContext:
     approval_model: object | None = None
     clarification_model: object | None = None
     completion_model: object | None = None
+    title_model: object | None = None
     dynamic_tools: dict[str, object] = field(default_factory=dict)
     tool_registry: dict[str, object] = field(default_factory=dict)
     memory_enabled: bool = True

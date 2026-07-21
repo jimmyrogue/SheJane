@@ -95,7 +95,7 @@ def test_clear_memory_deletes_all_notes_namespaces(client: TestClient) -> None:
     from langgraph.store.memory import InMemoryStore
 
     from shejane_runtime.auth import LOCAL_OWNER_PRINCIPAL_ID
-    from shejane_runtime.tools.memory import memory_namespace_for_workspace
+    from shejane_runtime.tools.memory import NAMESPACE, memory_namespace_for_workspace
 
     mem_store = InMemoryStore()
     client.app.state.agent_store = mem_store
@@ -107,17 +107,18 @@ def test_clear_memory_deletes_all_notes_namespaces(client: TestClient) -> None:
         await mem_store.aput(global_ns, "global", {"goal": "global", "answer": "one"})
         await mem_store.aput(workspace_ns, "w1", {"goal": "workspace", "answer": "one"})
         await mem_store.aput(workspace_ns, "w2", {"goal": "workspace", "answer": "two"})
+        await mem_store.aput(NAMESPACE, "legacy", {"goal": "legacy", "answer": "remove"})
         await mem_store.aput(other_owner_ns, "private", {"goal": "other", "answer": "keep"})
 
     asyncio.run(_seed())
 
     resp = client.delete("/v1/memory", headers=HEADERS)
     assert resp.status_code == 200
-    assert resp.json()["deleted_count"] == 3
+    assert resp.json()["deleted_count"] == 4
 
     async def _remaining() -> list:
         out = []
-        for namespace in await mem_store.alist_namespaces(prefix=("notes", "principal")):
+        for namespace in await mem_store.alist_namespaces(prefix=("notes",)):
             out.extend(await mem_store.asearch(namespace))
         return out
 

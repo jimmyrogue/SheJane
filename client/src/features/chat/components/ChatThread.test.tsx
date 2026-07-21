@@ -39,6 +39,14 @@ describe('ChatThread streaming display cache', () => {
     expect(document.querySelector('.message-reasoning')).not.toHaveAttribute('open')
     expect(document.querySelector('.thinking-indicator')).not.toBeInTheDocument()
   })
+
+  it('does not replay answered user.ask choices as transcript messages', () => {
+    renderThread(conversationWithAnsweredQuestion())
+
+    expect(screen.queryByText('你想要什么风格？')).not.toBeInTheDocument()
+    expect(screen.queryByText('简洁文字')).not.toBeInTheDocument()
+    expect(screen.getByText('已经按你的选择继续处理。')).toBeInTheDocument()
+  })
 })
 
 function renderThread(conversation: Conversation) {
@@ -118,5 +126,28 @@ function conversationWithReasoningAnswer(): Conversation {
         status: 'streaming',
       },
     ],
+  }
+}
+
+function conversationWithAnsweredQuestion(): Conversation {
+  return {
+    id: 'conv-answered-question',
+    title: '已回答问题',
+    archived: false,
+    createdAt: '2026-05-10T00:00:00Z',
+    updatedAt: '2026-05-10T00:00:00Z',
+    messages: [{
+      id: 'msg-assistant',
+      role: 'assistant',
+      content: '已经按你的选择继续处理。',
+      createdAt: '2026-05-10T00:00:01Z',
+      status: 'done',
+      agentEvents: [{
+        type: 'question.answered',
+        label: '已回答',
+        questionRequestId: 'q1',
+        questionAnswers: { '你想要什么风格？': ['简洁文字'] },
+      }],
+    }],
   }
 }

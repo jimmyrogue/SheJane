@@ -37,6 +37,8 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedStore
 from langgraph.store.base import BaseStore
 
+from ..auth import LOCAL_OWNER_PRINCIPAL_ID
+
 NAMESPACE = ("notes", "global")
 NOTES_NAMESPACE_PREFIX = ("notes",)
 
@@ -69,13 +71,26 @@ def memory_namespace_prefix(principal_id: str) -> tuple[str, ...]:
     return ("notes", "principal", principal_hash)
 
 
-def extract_memory_write_facts(user_input: str) -> tuple[str, ...]:
+def extract_memory_write_facts(
+    user_input: str,
+    *,
+    history: list[dict[str, str]] | None = None,
+) -> tuple[str, ...]:
     """Extract explicit positive memory directives from trusted user input.
 
     Directives must begin a line (optionally with a polite prefix). This keeps
     quoted/model-generated text and negative instructions from minting a write
     capability. The tool must later submit the exact extracted fact.
     """
+    current = str(user_input or "").strip()
+    if _MEMORY_CONFIRMATION.fullmatch(current):
+        for message in reversed(history or []):
+            if str(message.get("role") or "").lower() != "user":
+                continue
+            fact = " ".join(str(message.get("content") or "").split())
+            return (fact,) if fact and len(fact) <= 2_000 else ()
+        return ()
+
     facts: list[str] = []
     negative = re.compile(
         r"^\s*(?:(?:请|请你|麻烦你?)\s*)?(?:不要|别|无需|不必|禁止).{0,8}"
@@ -120,6 +135,15 @@ def extract_memory_write_facts(user_input: str) -> tuple[str, ...]:
     return tuple(facts)
 
 
+_MEMORY_CONFIRMATION = re.compile(
+    r"\s*(?:(?:是的|好的?|可以|对)[，,。.!！\s]*)?"
+    r"(?:记录(?:一下|下来)?|记住(?:吧|这个|它)?|保存(?:一下|吧|这个|它)?|存一下)"
+    r"[。.!！\s]*|\s*(?:(?:yes|ok(?:ay)?)[,\s]*)?"
+    r"(?:remember|save|record)\s+(?:it|that)[.!\s]*",
+    re.IGNORECASE,
+)
+
+
 def make_memory_search_tool(namespace: tuple[str, ...] | None = None):
     @tool("memory.search")
     async def memory_search(
@@ -151,14 +175,42 @@ def make_memory_search_tool(namespace: tuple[str, ...] | None = None):
             return {"ok": "false", "error": str(exc)}
         requested_limit = _clamp_limit(limit)
         try:
-            items = await store.asearch(
-                active_namespace, query=query, limit=_candidate_limit(requested_limit)
-            )
+            search_namespaces = [active_namespace]
+            if namespace is None:
+                principal_id = getattr(context, "principal_id", None)
+                global_namespace = memory_namespace_for_workspace(
+                    None,
+                    principal_id,
+                )
+                if global_namespace not in search_namespaces:
+                    search_namespaces.append(global_namespace)
+                if principal_id == LOCAL_OWNER_PRINCIPAL_ID:
+                    search_namespaces.append(NAMESPACE)
+            items = []
+            for search_namespace in search_namespaces:
+                found = await store.asearch(
+                    search_namespace,
+                    query=query,
+                    limit=_candidate_limit(requested_limit),
+                )
+                items.extend(
+                    item
+                    for item in found
+                    if search_namespace != NAMESPACE
+                    or (isinstance(item.value, dict) and item.value.get("kind") == "user_fact")
+                )
         except Exception as exc:
             return {"ok": "false", "error": f"{type(exc).__name__}: {exc}"}
 
         results: list[dict[str, Any]] = []
-        for item in sorted(items, key=_memory_result_sort_key)[:requested_limit]:
+        seen_facts: set[str] = set()
+        for item in sorted(items, key=_memory_result_sort_key):
+            value = item.value if isinstance(item.value, dict) else {}
+            fact = value.get("fact") if value.get("kind") == "user_fact" else None
+            if isinstance(fact, str):
+                if fact in seen_facts:
+                    continue
+                seen_facts.add(fact)
             results.append(
                 {
                     "key": item.key,
@@ -167,6 +219,8 @@ def make_memory_search_tool(namespace: tuple[str, ...] | None = None):
                     "updated_at": item.updated_at.isoformat() if item.updated_at else "",
                 }
             )
+            if len(results) >= requested_limit:
+                break
         return {"ok": "true", "count": str(len(results)), "results": results}
 
     return memory_search
@@ -182,6 +236,7 @@ async def memory_write(
 
     Copy the authorized fact text from the user's memory directive exactly.
     Do not rephrase it, change its point of view, or add punctuation.
+    Do not claim the fact was saved unless this tool returns ok=true.
 
     Args:
         fact: The exact authorized fact text from the user's memory directive.
@@ -197,7 +252,13 @@ async def memory_write(
     context = getattr(runtime, "context", None)
     allowed_facts = tuple(getattr(context, "memory_write_facts", ()) or ())
     if normalized not in allowed_facts:
-        return {"ok": False, "error": "fact was not authorized by the current user input"}
+        return {
+            "ok": False,
+            "error_code": "memory_fact_not_authorized",
+            "error": "fact was not authorized by the current user input",
+            "recoverable": True,
+            "retryable": False,
+        }
     try:
         namespace = memory_namespace_for_workspace(
             getattr(context, "workspace_root", None),

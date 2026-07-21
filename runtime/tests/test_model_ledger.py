@@ -330,6 +330,7 @@ async def test_review_budgets_are_separate_but_use_the_same_ledger(tmp_path: Pat
             update={"call_purpose": "clarification_review", "max_calls": 1}
         )
         completion = agent.model_copy(update={"call_purpose": "completion_review", "max_calls": 1})
+        title = agent.model_copy(update={"call_purpose": "title_generation", "max_calls": 1})
 
         _ = [chunk async for chunk in agent.astream([HumanMessage(content="agent")])]
         _ = [chunk async for chunk in approval.astream([HumanMessage(content="approval")])]
@@ -337,6 +338,7 @@ async def test_review_budgets_are_separate_but_use_the_same_ledger(tmp_path: Pat
             chunk async for chunk in clarification.astream([HumanMessage(content="clarification")])
         ]
         _ = [chunk async for chunk in completion.astream([HumanMessage(content="completion")])]
+        _ = [chunk async for chunk in title.astream([HumanMessage(content="title")])]
 
         rows = await store.list_model_calls_for_run(str(run["id"]))
         assert [row["purpose"] for row in rows] == [
@@ -344,6 +346,7 @@ async def test_review_budgets_are_separate_but_use_the_same_ledger(tmp_path: Pat
             "approval_review",
             "clarification_review",
             "completion_review",
+            "title_generation",
         ]
     finally:
         await store.close()

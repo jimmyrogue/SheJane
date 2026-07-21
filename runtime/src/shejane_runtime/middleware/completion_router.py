@@ -10,6 +10,7 @@ from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
 from langchain_core.messages import ToolMessage
 
 from ..failure_policy import classify_failure_payload
+from ..tool_outcomes import tool_result_envelope, tool_result_envelope_failed
 from .clarification_reviewer import (
     ClarificationReviewUnavailable,
     review_clarification_batch,
@@ -349,6 +350,27 @@ class CompletionRouterMiddleware(AgentMiddleware):
     ) -> dict[str, Any]:
         messages = list(state.get("messages") or [])
         run_id = _current_run_id(runtime, messages)
+        if _latest_memory_write_failed(messages, run_id):
+            context = getattr(runtime, "context", None)
+            task_goal = str(getattr(context, "task_goal", None) or "")
+            final_candidate = _assistant_text(getattr(messages[-1], "content", None))
+            if re.search(r"[\u3400-\u9fff]", task_goal + final_candidate):
+                corrected = "这次没有保存到长期记忆。请明确告诉我要记录的完整内容。"
+            else:
+                corrected = (
+                    "This was not saved to long-term memory. "
+                    "Please tell me the complete fact you want me to record."
+                )
+            return {
+                **deterministic,
+                "messages": [messages[-1].model_copy(update={"content": corrected})],
+                "completion_review_state": {
+                    "run_id": run_id,
+                    "attempts": 0,
+                    "decision": "allow",
+                    "source": "memory_write_receipt",
+                },
+            }
         if not _has_current_tool_evidence(messages, run_id):
             return deterministic
 
@@ -505,8 +527,8 @@ def _incremental_tool_route(state: Any, last: Any, run_id: str) -> dict[str, Any
                 reason="incremental_plan_invalid",
                 message=error,
                 instruction=(
-                    "Update one task boundary at a time: preserve completed tasks, complete at "
-                    "most one new task, and keep exactly one task in_progress until all finish."
+                    "Preserve completed tasks and keep exactly one task in_progress until all "
+                    "tasks finish."
                 ),
                 calls=calls,
             )
@@ -627,8 +649,6 @@ def _todo_transition_error(
     next_completed = {item["content"] for item in proposed if item["status"] == "completed"}
     if not prior_completed.issubset(next_completed):
         return "Previously completed tasks cannot be removed or reopened."
-    if len(next_completed - prior_completed) > 1:
-        return "Complete at most one new task per todo transition."
     return None
 
 
@@ -888,6 +908,29 @@ def _has_current_tool_evidence(messages: list[Any], run_id: str) -> bool:
             start = index
             break
     return any(getattr(message, "type", None) == "tool" for message in messages[start:-1])
+
+
+def _latest_memory_write_failed(messages: list[Any], run_id: str) -> bool:
+    """Trust the latest memory.write receipt, never the model's success claim."""
+    start = 0
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        kwargs = getattr(message, "additional_kwargs", None)
+        if not isinstance(kwargs, dict) or kwargs.get("runtime_kind") != "task_input":
+            continue
+        message_run_id = str(kwargs.get("runtime_run_id") or "")
+        if not run_id or not message_run_id or message_run_id == run_id:
+            start = index
+            break
+    for message in reversed(messages[start:-1]):
+        if getattr(message, "type", None) != "tool":
+            continue
+        if str(getattr(message, "name", "") or "") != "memory.write":
+            continue
+        status = str(getattr(message, "status", "") or "").lower()
+        envelope = tool_result_envelope(getattr(message, "content", None))
+        return status == "error" or tool_result_envelope_failed(envelope)
+    return False
 
 
 def _current_run_id(runtime: Any, messages: list[Any]) -> str:

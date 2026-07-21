@@ -152,6 +152,23 @@ def test_workspace_failures_take_precedence_over_generic_permission_words() -> N
     assert permission["category"] == "permission"
 
 
+def test_memory_confirmation_failure_requires_user_action_without_retry() -> None:
+    failure = classify_failure_payload(
+        "tool.failed",
+        {
+            "error_code": "memory_fact_not_authorized",
+            "message": "fact was not authorized by the current user input",
+            "recoverable": True,
+            "retryable": False,
+        },
+    )
+
+    assert failure["category"] == "permission"
+    assert failure["action_kind"] == "user_action"
+    assert failure["retryable"] is False
+    assert "memory" in failure["suggested_action"].lower()
+
+
 def test_retry_decision_applies_bounded_backoff_for_retry_action() -> None:
     decision = build_retry_decision(
         "run.failed",

@@ -156,9 +156,6 @@ export function Composer({
           pluginReferencesEnabled={!steeringMode}
           placeholder={steeringMode ? t('composer.steeringPlaceholder') : t('composer.placeholder')}
         />
-        {steeringMode ? (
-          <p className="composer-plugin-run-note">{t('composer.pluginMenu.newRunRequired')}</p>
-        ) : null}
       </div>
 
       <div className="composer-toolbar">

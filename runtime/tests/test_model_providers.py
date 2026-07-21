@@ -57,8 +57,30 @@ class _OpenAICompatibleHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length", "0"))
         payload = json.loads(self.rfile.read(length) or b"{}")
         is_completion_review = "P9 final-answer reviewer" in str(payload)
+        is_title_generation = "conversation title generator" in str(payload)
         has_tool_result = any(message.get("role") == "tool" for message in payload["messages"])
-        if is_completion_review:
+        if is_title_generation:
+            chunks = [
+                {
+                    "id": "chatcmpl-title",
+                    "object": "chat.completion.chunk",
+                    "model": "qwen3:8b",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": "Current time"},
+                            "finish_reason": None,
+                        }
+                    ],
+                },
+                {
+                    "id": "chatcmpl-title",
+                    "object": "chat.completion.chunk",
+                    "model": "qwen3:8b",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+            ]
+        elif is_completion_review:
             chunks = [
                 {
                     "id": "chatcmpl-review",
@@ -1126,7 +1148,7 @@ def test_openai_compatible_provider_completes_model_tool_model_loop(
             assert "tool.completed" in stream
             assert "run.completed" in stream
             assert "Direct model done." in stream
-            assert _OpenAICompatibleHandler.request_count == 3
+            assert _OpenAICompatibleHandler.request_count == 4
     finally:
         upstream.shutdown()
         thread.join(timeout=2)

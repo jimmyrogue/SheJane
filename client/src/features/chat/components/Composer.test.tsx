@@ -311,7 +311,6 @@ describe('Composer (Lexical skill editor)', () => {
   it('disables new plugin references and commands while steering an active run', async () => {
     prepareTypeaheadLayout()
     render(<Harness hasActiveRun onAppendInstruction={vi.fn()} />)
-    expect(screen.getByText(/新增插件需要新建一次任务/)).toBeInTheDocument()
     const editor = screen.getByRole('textbox')
     editor.textContent = '@archive'
     fireEvent.input(editor, { inputType: 'insertText', data: '@archive' })
@@ -497,7 +496,7 @@ describe('Composer (Lexical skill editor)', () => {
     )
 
     expect(screen.getByText('追加指示到当前任务')).toBeInTheDocument()
-    expect(screen.getByText('当前任务运行中；新增插件需要新建一次任务。')).toBeInTheDocument()
+    expect(screen.queryByText('当前任务运行中；新增插件需要新建一次任务。')).not.toBeInTheDocument()
   })
 
   it('shows the send button (not stop) when neither isSending nor hasActiveRun is set', () => {

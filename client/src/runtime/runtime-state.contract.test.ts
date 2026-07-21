@@ -93,7 +93,7 @@ describe.skipIf(!BASE_URL)('flow:P1/P4/P12 > contract: Runtime-owned state (live
     )
 
     const snapshot = await getLocalThreadSnapshot(threadID, config)
-    expect(snapshot.thread).toMatchObject({ id: threadID, title: 'E2E Thread' })
+    expect(snapshot.thread).toMatchObject({ id: threadID, title: 'State round trip' })
     expect(snapshot.runs).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: run.id, status: 'completed' }),
     ]))

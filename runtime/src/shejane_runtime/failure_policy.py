@@ -39,7 +39,11 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
     retryable = False
     suggested_action = "Inspect the diagnostic events and logs before retrying."
 
-    if _contains_any(haystack, "model_call_budget_exhausted"):
+    if _contains_any(haystack, "memory_fact_not_authorized"):
+        category = "permission"
+        recoverable = True
+        suggested_action = "Confirm the exact fact to save to memory, then try again."
+    elif _contains_any(haystack, "model_call_budget_exhausted"):
         category = "fatal"
         suggested_action = (
             "Inspect repeated agent steps or increase the model-call budget only when the task "

@@ -438,7 +438,6 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
     await expect(
       page.locator('.message.user .message-content').getByText(prompt, { exact: true }),
     ).toHaveCount(1)
-    await expect(page.getByText(/修复完成：第 1\/3 次|Repair completed: attempt 1\/3/)).toBeVisible()
     expect(harness.rendererErrors).toEqual([])
   })
 
@@ -511,6 +510,14 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
     const reply = page.locator('.message.assistant').filter({
       hasText: 'Fake runtime reply for the SSE contract test.',
     })
+    const replyContent = reply.locator('.message-content')
+    await expect(replyContent).toHaveCSS('user-select', 'text')
+    await replyContent.selectText()
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+C' : 'Control+C')
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(
+      'Fake runtime reply for the SSE contract test.',
+    )
+
     await reply.getByRole('button', { name: /^复制$|^Copy$/ }).click()
     await expect(reply.getByRole('button', { name: /已复制|Copied/ })).toBeVisible()
     expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(
@@ -651,10 +658,11 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
         }
         state.__shejaneE2EOriginalMenuBuilder = Menu.buildFromTemplate
         Menu.buildFromTemplate = ((template) => ({
-          popup() {
+          popup(options?: { callback?: () => void }) {
             state.__shejaneE2EFileMenuLabels = template
               .map(item => 'label' in item ? item.label : undefined)
               .filter((label): label is string => Boolean(label))
+            options?.callback?.()
           },
         })) as typeof Menu.buildFromTemplate
       })
@@ -728,14 +736,6 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
         name: /选择保存位置|Choose save location/,
       })
       await expect(chooseWorkspace).toBeVisible()
-      const answeredQuestion = page
-        .locator('.message.assistant .message-content')
-        .getByText('Choose a recovery option', { exact: true })
-      const answeredChoice = page
-        .locator('.message.user .message-content')
-        .getByText('Option B', { exact: true })
-      await expect(answeredQuestion).toBeVisible()
-      await expect(answeredChoice).toBeVisible()
       expect(fs.existsSync(path.join(workspace, 'approved.txt'))).toBe(false)
 
       await app.evaluate(({ dialog }, selectedPath) => {
@@ -743,8 +743,6 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
       }, workspace)
       await chooseWorkspace.click()
       await expect(page.getByText(path.basename(workspace), { exact: true })).toBeVisible()
-      await expect(answeredQuestion).toBeVisible()
-      await expect(answeredChoice).toBeVisible()
 
       const retryApproval = page.locator('.approval-bar')
       await expect(retryApproval).toBeVisible()
@@ -912,12 +910,13 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
     await expect(cleanupMessage).toBeVisible({ timeout: 10_000 })
     await cleanupMessage.getByRole('button', { name: /诊断|Diagnostics/ }).click()
 
-    const diagnosticsPanel = harness.page.locator('.diagnostics-preview')
-    await expect(diagnosticsPanel).toBeVisible()
-    await expect(diagnosticsPanel.getByText(/需要清理|Cleanup required/, { exact: true }))
+    const diagnosticsDialog = harness.page.getByRole('alertdialog')
+    await expect(diagnosticsDialog).toBeVisible()
+    await expect(diagnosticsDialog.getByRole('heading', {
+      name: /下载诊断信息|Download diagnostics/,
+    })).toBeVisible()
+    await expect(diagnosticsDialog.getByText(/发送给开发者|send this file to the developer/))
       .toBeVisible()
-    await diagnosticsPanel.getByText(/运行记录|Run details/, { exact: true }).click()
-    await expect(diagnosticsPanel.getByText(interruptedRun!.id, { exact: true })).toBeVisible()
 
     const diagnosticsPath = path.join(harness.root, 'cleanup-diagnostics.json')
     const downloadPromise = harness.app.evaluate(async ({ session }, savePath) => (
@@ -935,9 +934,7 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
         session.defaultSession.once('will-download', onDownload)
       })
     ), diagnosticsPath)
-    await diagnosticsPanel.getByRole('button', {
-      name: /导出当前诊断|Export diagnostics/,
-    }).click()
+    await diagnosticsDialog.getByRole('button', { name: /下载|Download/ }).click()
     const download = await downloadPromise
     expect(download).toEqual({
       state: 'completed',
@@ -948,8 +945,7 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
       schema_version: 1,
       run: { id: interruptedRun!.id, status: 'cleanup_required' },
     })
-    await diagnosticsPanel.getByRole('button', { name: /关闭诊断|Close diagnostics/ }).click()
-    await expect(diagnosticsPanel).toHaveCount(0)
+    await expect(diagnosticsDialog).toHaveCount(0)
 
     await harness.page.getByRole('button', { name: /新对话|New chat/ }).click()
     const composer = harness.page.getByRole('textbox', {

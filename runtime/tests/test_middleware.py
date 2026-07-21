@@ -410,6 +410,89 @@ async def test_completion_router_does_not_review_a_plain_chat_answer() -> None:
     assert reviewer.calls == 0
 
 
+async def test_completion_router_does_not_repair_a_truthfully_reported_tool_failure() -> None:
+    from shejane_runtime.middleware.completion_router import CompletionRouterMiddleware
+
+    class Reviewer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def ainvoke(self, _messages: list[Any], **_kwargs: Any) -> AIMessage:
+            self.calls += 1
+            return AIMessage(content='{"decision":"repair","reason":"not used"}')
+
+    reviewer = Reviewer()
+    state = {
+        "messages": [
+            HumanMessage(
+                content="记录一下",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-memory"},
+            ),
+            ToolMessage(
+                content=(
+                    '{"ok":false,"error_code":"memory_fact_not_authorized",'
+                    '"error":"fact was not authorized by the current user input"}'
+                ),
+                name="memory.write",
+                tool_call_id="memory-write",
+                status="error",
+            ),
+            AIMessage(content="这次没有保存成功，请明确告诉我要记录的内容。"),
+        ]
+    }
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(completion_model=reviewer, task_goal="记录一下")
+    )
+
+    result = await CompletionRouterMiddleware().aafter_model(state, runtime)
+
+    assert result["completion_route"]["decision"] == "final"
+    assert reviewer.calls == 0
+    assert "没有保存" in result["messages"][0].content
+
+
+async def test_completion_router_replaces_a_false_memory_write_success_claim() -> None:
+    from shejane_runtime.middleware.completion_router import CompletionRouterMiddleware
+
+    class Reviewer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def ainvoke(self, _messages: list[Any], **_kwargs: Any) -> AIMessage:
+            self.calls += 1
+            return AIMessage(content='{"decision":"allow","reason":"not used"}')
+
+    reviewer = Reviewer()
+    state = {
+        "messages": [
+            HumanMessage(
+                content="记录一下",
+                additional_kwargs={"runtime_kind": "task_input", "runtime_run_id": "run-memory"},
+            ),
+            ToolMessage(
+                content=(
+                    '{"ok":false,"error_code":"memory_fact_not_authorized",'
+                    '"error":"fact was not authorized by the current user input"}'
+                ),
+                name="memory.write",
+                tool_call_id="memory-write",
+                status="error",
+            ),
+            AIMessage(id="false-success", content="已经保存成功，我会记住。"),
+        ]
+    }
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(completion_model=reviewer, task_goal="记录一下")
+    )
+
+    result = await CompletionRouterMiddleware().aafter_model(state, runtime)
+
+    assert result["completion_route"]["decision"] == "final"
+    assert result["messages"][0].id == "false-success"
+    assert result["messages"][0].content == "这次没有保存到长期记忆。请明确告诉我要记录的完整内容。"
+    assert reviewer.calls == 0
+
+
 async def test_completion_router_requires_a_small_plan_before_complex_tool_work() -> None:
     from shejane_runtime.middleware.completion_router import CompletionRouterMiddleware
 
@@ -499,6 +582,47 @@ async def test_completion_router_accepts_one_active_small_task_and_rejects_paral
     assert accepted is None
     assert rejected["completion_route"]["reason"] == "incremental_plan_invalid"
     assert rejected["jump_to"] == "model"
+
+
+async def test_completion_router_accepts_parallel_research_todos_finishing_together() -> None:
+    from shejane_runtime.middleware.completion_router import CompletionRouterMiddleware
+
+    state = {
+        "incremental_execution": {
+            "required": True,
+            "mode": "auto",
+            "run_id": "run-plan",
+            "repairs": {},
+        },
+        "todos": [
+            {"content": "Research user reports", "status": "in_progress"},
+            {"content": "Research costs", "status": "pending"},
+            {"content": "Summarize findings", "status": "pending"},
+        ],
+        "messages": [
+            HumanMessage(content="research the options"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "plan-after-research",
+                        "name": "write_todos",
+                        "args": {
+                            "todos": [
+                                {"content": "Research user reports", "status": "completed"},
+                                {"content": "Research costs", "status": "completed"},
+                                {"content": "Summarize findings", "status": "in_progress"},
+                            ]
+                        },
+                    }
+                ],
+            ),
+        ],
+    }
+
+    result = await CompletionRouterMiddleware().aafter_model(state, runtime=None)
+
+    assert result is None
 
 
 def test_completion_router_cannot_finalize_with_unfinished_small_tasks() -> None:

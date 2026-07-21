@@ -45,6 +45,8 @@ class FakeBackendChatModel(BaseChatModel):
 
     def _response(self, messages: list[BaseMessage]) -> AIMessage:
         prompt = "\n".join(str(message.content) for message in messages)
+        if "conversation title generator" in prompt:
+            return AIMessage(content="State round trip")
         if "P9 final-answer reviewer" in prompt:
             payload = _last_json_object(messages)
             task_goal = str(payload.get("task_goal") or "")

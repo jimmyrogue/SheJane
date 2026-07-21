@@ -312,9 +312,14 @@ async def test_memory_write_validates_input_and_store() -> None:
     assert (await memory_write.coroutine("", runtime=explicit, store=None))["ok"] is False
     assert (await memory_write.coroutine("x" * 2_001, runtime=explicit, store=None))["ok"] is False
     assert (await memory_write.coroutine("valid", runtime=explicit, store=None))["ok"] is False
-    assert (await memory_write.coroutine("Postgres", runtime=implicit, store=InMemoryStore()))[
-        "error"
-    ].startswith("fact was not authorized")
+    denied = await memory_write.coroutine("Postgres", runtime=implicit, store=InMemoryStore())
+    assert denied == {
+        "ok": False,
+        "error_code": "memory_fact_not_authorized",
+        "error": "fact was not authorized by the current user input",
+        "recoverable": True,
+        "retryable": False,
+    }
 
 
 def test_memory_write_capability_rejects_negation_and_quoted_text() -> None:
@@ -329,6 +334,21 @@ def test_memory_write_capability_rejects_negation_and_quoted_text() -> None:
     assert extract_memory_write_facts("Please remember that my database is Postgres") == (
         "my database is Postgres",
     )
+
+
+def test_memory_write_capability_accepts_confirmation_of_previous_user_fact() -> None:
+    history = [
+        {"role": "user", "content": "我叫 jimmy"},
+        {"role": "assistant", "content": "要把名字保存到长期记忆吗？"},
+    ]
+
+    assert extract_memory_write_facts("记录一下", history=history) == ("我叫 jimmy",)
+
+
+def test_memory_confirmation_never_authorizes_assistant_text() -> None:
+    history = [{"role": "assistant", "content": "请保存这条模型生成的内容"}]
+
+    assert extract_memory_write_facts("记录一下", history=history) == ()
 
 
 async def test_memory_search_returns_bounded_ranked_results() -> None:
@@ -346,6 +366,104 @@ async def test_memory_search_returns_bounded_ranked_results() -> None:
 
     assert result["ok"] == "true"
     assert [item["key"] for item in result["results"]] == ["user-fact"]
+
+
+async def test_memory_search_reads_legacy_user_facts_without_exposing_legacy_run_notes() -> None:
+    store = InMemoryStore()
+    await store.aput(NAMESPACE, "legacy-fact", {"kind": "user_fact", "fact": "我叫 jimmy"})
+    await store.aput(
+        NAMESPACE,
+        "legacy-run-note",
+        {"kind": "run_note", "goal": "我叫 jimmy", "answer": "irrelevant old answer"},
+    )
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            workspace_root=None,
+        )
+    )
+
+    result = await make_memory_search_tool().coroutine(
+        "jimmy",
+        5,
+        runtime=runtime,
+        store=store,
+    )
+
+    assert [item["key"] for item in result["results"]] == ["legacy-fact"]
+
+
+async def test_memory_search_does_not_expose_legacy_facts_to_another_principal() -> None:
+    store = InMemoryStore()
+    await store.aput(NAMESPACE, "legacy-fact", {"kind": "user_fact", "fact": "我叫 jimmy"})
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            principal_id="other-principal",
+            workspace_root=None,
+        )
+    )
+
+    result = await make_memory_search_tool().coroutine(
+        "jimmy",
+        5,
+        runtime=runtime,
+        store=store,
+    )
+
+    assert result["results"] == []
+
+
+async def test_workspace_memory_search_inherits_global_user_facts() -> None:
+    store = InMemoryStore()
+    global_namespace = memory_namespace_for_workspace(None, LOCAL_OWNER_PRINCIPAL_ID)
+    workspace_namespace = memory_namespace_for_workspace("/workspace", LOCAL_OWNER_PRINCIPAL_ID)
+    await store.aput(global_namespace, "global-name", {"kind": "user_fact", "fact": "我叫 jimmy"})
+    await store.aput(
+        workspace_namespace,
+        "workspace-database",
+        {"kind": "user_fact", "fact": "这个项目使用 Postgres"},
+    )
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            workspace_root="/workspace",
+        )
+    )
+
+    result = await make_memory_search_tool().coroutine(
+        "项目和用户信息",
+        5,
+        runtime=runtime,
+        store=store,
+    )
+
+    assert {item["key"] for item in result["results"]} == {
+        "global-name",
+        "workspace-database",
+    }
+
+
+async def test_memory_search_deduplicates_legacy_and_current_copies_of_the_same_fact() -> None:
+    store = InMemoryStore()
+    global_namespace = memory_namespace_for_workspace(None, LOCAL_OWNER_PRINCIPAL_ID)
+    value = {"kind": "user_fact", "fact": "我叫 jimmy"}
+    await store.aput(global_namespace, "current", value)
+    await store.aput(NAMESPACE, "legacy", value)
+    runtime = SimpleNamespace(
+        context=SimpleNamespace(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            workspace_root=None,
+        )
+    )
+
+    result = await make_memory_search_tool().coroutine(
+        "jimmy",
+        5,
+        runtime=runtime,
+        store=store,
+    )
+
+    assert len(result["results"]) == 1
 
 
 def test_memory_namespace_is_workspace_scoped_without_exposing_path() -> None:

@@ -1480,6 +1480,7 @@ class LocalStore:
             "approval_review",
             "clarification_review",
             "completion_review",
+            "title_generation",
         }:
             raise ValueError("model call purpose is invalid")
         async with self.run_write_transaction(run_id) as conn:
@@ -3681,9 +3682,13 @@ class LocalStore:
                 seed_history: list[dict[str, str]] = []
                 if thread is not None and require_new_thread:
                     raise ThreadAdmissionError("fork target thread already exists")
+                initial_thread_title: str | None = None
                 if thread is None:
                     if replace_from_client_id is not None:
                         raise ThreadAdmissionError("thread not found")
+                    initial_thread_title = " ".join((thread_title or user_input or goal).split())[
+                        :80
+                    ]
                     await transaction_conn.execute(
                         "INSERT INTO local_threads "
                         "(id, principal_id, title, metadata_json, version, created_at, updated_at) "
@@ -3691,7 +3696,7 @@ class LocalStore:
                         (
                             product_thread_id,
                             principal_id,
-                            " ".join((thread_title or user_input or goal).split())[:80],
+                            initial_thread_title,
                             _encode_payload(thread_metadata or {}),
                             now,
                             now,
@@ -3975,6 +3980,26 @@ class LocalStore:
             except BaseException:
                 await transaction_conn.rollback()
                 raise
+
+    async def run_initial_thread_title_seed(self, run_id: str) -> str | None:
+        row = await (
+            await self._conn.execute(
+                "SELECT c.payload_json, r.user_input, r.goal FROM local_runs r "
+                "LEFT JOIN local_commands c ON c.run_id = r.id "
+                "AND c.command_type IN ('run.start', 'run.fork') WHERE r.id = ? "
+                "ORDER BY c.created_at LIMIT 1",
+                (run_id,),
+            )
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            envelope = json.loads(row["payload_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            envelope = {}
+        payload = envelope.get("payload") if isinstance(envelope, dict) else None
+        requested = payload.get("thread_title") if isinstance(payload, dict) else None
+        return " ".join(str(requested or row["user_input"] or row["goal"] or "").split())[:80]
 
     async def enqueue_run_job(
         self,
@@ -5901,16 +5926,23 @@ class LocalStore:
             raise RunResultConflictError(f"run {run_id} is missing its assistant projection")
         thread = await (
             await conn.execute(
-                "SELECT version FROM local_threads WHERE id = ? AND principal_id = ?",
+                "SELECT version, title FROM local_threads WHERE id = ? AND principal_id = ?",
                 (run["thread_id"], run["principal_id"]),
             )
         ).fetchone()
         if thread is None:
             raise RunResultConflictError(f"run {run_id} is missing its thread projection")
         thread_version = int(thread["version"]) + 1
+        generated_title = " ".join(str(payload.get("thread_title") or "").split())[:80]
+        title_seed = " ".join(str(payload.get("thread_title_seed") or "").split())[:80]
+        next_title = (
+            generated_title
+            if generated_title and title_seed and str(thread["title"]) == title_seed
+            else str(thread["title"])
+        )
         await conn.execute(
-            "UPDATE local_threads SET version = ?, updated_at = ? WHERE id = ?",
-            (thread_version, changed_at, run["thread_id"]),
+            "UPDATE local_threads SET version = ?, title = ?, updated_at = ? WHERE id = ?",
+            (thread_version, next_title, changed_at, run["thread_id"]),
         )
         await conn.execute(
             "INSERT INTO local_thread_changes "

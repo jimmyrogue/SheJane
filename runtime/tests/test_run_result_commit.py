@@ -82,7 +82,11 @@ async def test_result_transaction_finalizes_runtime_thread_projection(tmp_path: 
                 run["id"],
                 status="completed",
                 event_type="run.completed",
-                payload={"final_text": "authoritative answer"},
+                payload={
+                    "final_text": "authoritative answer",
+                    "thread_title": "Generated title",
+                    "thread_title_seed": "Visible thread",
+                },
             )
 
         thread = await store._conn.execute_fetchall(
@@ -99,7 +103,7 @@ async def test_result_transaction_finalizes_runtime_thread_projection(tmp_path: 
             "WHERE thread_id = 'thread_projection' ORDER BY cursor"
         )
         assert [tuple(row) for row in thread] == [
-            (LOCAL_OWNER_PRINCIPAL_ID, "Visible thread", '{"pinned":true}', 2)
+            (LOCAL_OWNER_PRINCIPAL_ID, "Generated title", '{"pinned":true}', 2)
         ]
         assert [tuple(item) for item in items] == [
             ("user_message", "completed", "visible question", "msg_user_projection", 1),

@@ -117,7 +117,7 @@ from .api_schemas import (
     UpdateRuntimeSettingsRequest,
     UpsertLocalModelProviderRequest,
 )
-from .auth import PairingTokenAuthMiddleware
+from .auth import LOCAL_OWNER_PRINCIPAL_ID, PairingTokenAuthMiddleware
 from .config import Settings, get_settings
 from .failure_policy import classify_failure_payload
 from .middleware.tool_execution import serialize_tool_result
@@ -2757,7 +2757,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Idempotent: calling it on an empty store returns
         `deleted_count: 0` without error.
         """
-        from .tools.memory import memory_namespace_prefix
+        from .tools.memory import NAMESPACE, memory_namespace_prefix
 
         agent_store = getattr(app.state, "agent_store", None)
         if agent_store is None:
@@ -2770,8 +2770,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page_size = 200
         principal_prefix = memory_namespace_prefix(request.state.principal_id)
         namespaces = [principal_prefix]
+        if request.state.principal_id == LOCAL_OWNER_PRINCIPAL_ID:
+            namespaces.insert(0, NAMESPACE)
         if hasattr(agent_store, "alist_namespaces"):
-            namespaces = []
+            namespaces = (
+                [NAMESPACE] if request.state.principal_id == LOCAL_OWNER_PRINCIPAL_ID else []
+            )
             offset = 0
             while True:
                 page = await agent_store.alist_namespaces(

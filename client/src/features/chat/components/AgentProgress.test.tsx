@@ -74,11 +74,7 @@ describe('AgentProgress', () => {
     expect(screen.queryByText('本会话始终允许')).not.toBeInTheDocument()
   })
 
-  it('uses the compact notice-card style without duplicating footer diagnostics', () => {
-    // The expanded body used to dump a per-step list + source/artifact
-    // tallies + a "view artifact" button. Users found it noisy and
-    // mostly irrelevant — leaks internal events like graph.node /
-    // llm.tool_call_chunk. Diagnostics now live in the message footer.
+  it('does not render completed progress', () => {
     const current = message({
       status: 'done',
       agentEvents: [
@@ -90,7 +86,7 @@ describe('AgentProgress', () => {
       ],
     })
 
-    renderAgentProgress(
+    const { container } = renderAgentProgress(
       <AgentProgress
         message={current}
         onOpenArtifact={vi.fn()}
@@ -98,28 +94,7 @@ describe('AgentProgress', () => {
       />,
     )
 
-    // Finished: the headline carries the terminal state and aggregate tally;
-    // the activity history stays collapsed behind the same compact card.
-    expect(screen.getByText('执行成功')).toBeInTheDocument()
-    expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
-    expect(screen.queryByText('任务完成')).not.toBeInTheDocument()
-    expect(document.querySelector('.agent-progress-notice-card')).toBeInTheDocument()
-    expect(document.querySelectorAll('.agent-progress-stage')).toHaveLength(1)
-    // None of the removed UI should be present anywhere — even collapsed.
-    expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
-    expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
-    expect(screen.queryByTitle('查看诊断 run-local')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
-
-    // Source/artifact tallies and the old diagnostics action remain absent.
-    expect(screen.getByText('读取 1 个文件')).toBeInTheDocument()
-    expect(screen.queryByText('已收集 2 个来源')).not.toBeInTheDocument()
-    expect(screen.queryByText('生成 1 个 Artifact')).not.toBeInTheDocument()
-    expect(screen.queryByText('查看 artifact')).not.toBeInTheDocument()
-    expect(screen.queryByText('下载诊断')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '下载诊断' })).not.toBeInTheDocument()
-    expect(screen.queryByTitle('查看诊断 run-local')).not.toBeInTheDocument()
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('renders nothing for a tool-less direct answer (skill.selected is not an operation)', () => {
@@ -223,82 +198,6 @@ describe('AgentProgress', () => {
     expect(screen.getByText('https://example.com/news')).toBeInTheDocument()
   })
 
-  it('keeps a resolved file-name conflict as a neutral expandable stage', () => {
-    const { container } = renderAgentProgress(
-      <AgentProgress
-        message={message({
-          status: 'done',
-          agentEvents: [
-            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'snake.html' },
-            { type: 'tool.failed', label: '发现文件名冲突：snake.html', tool: 'write_file', toolCallId: 'write-1', errorCode: 'file_exists', target: 'snake.html' },
-            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-2', target: 'snake-2.html' },
-            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-2', target: 'snake-2.html' },
-            { type: 'run.completed', label: '任务完成' },
-          ],
-        })}
-        onOpenArtifact={vi.fn()}
-        onOpenDiagnostics={vi.fn()}
-      />,
-    )
-
-    expect(screen.queryByText('发现文件名冲突：snake.html')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
-    expect(screen.getAllByText('发现文件名冲突：snake.html')).toHaveLength(2)
-    expect(container.querySelector('[data-state="conflict"]')).toBeInTheDocument()
-    expect(screen.queryByText('任务失败')).not.toBeInTheDocument()
-  })
-
-  it('coalesces replayed Tool requests with the same call ID into one stage', () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const { container } = renderAgentProgress(
-      <AgentProgress
-        message={message({
-          status: 'done',
-          agentEvents: [
-            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'approved.txt' },
-            { type: 'permission.required', label: '需要权限：写入文件', permissionRequestId: 'perm-1', permissionTool: '写入文件' },
-            { type: 'permission.resolved', label: '已允许一次', permissionRequestId: 'perm-1' },
-            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'approved.txt' },
-            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'approved.txt' },
-            { type: 'run.completed', label: '任务完成' },
-          ],
-        })}
-      />,
-    )
-
-    expect(container.querySelectorAll('.agent-progress-stage')).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
-    expect(container.querySelectorAll('.agent-progress-history-group')).toHaveLength(1)
-    expect(consoleError).not.toHaveBeenCalled()
-    consoleError.mockRestore()
-  })
-
-  it('collapses repeated completed Tool activity into one expandable summary', () => {
-    const { container } = renderAgentProgress(
-      <AgentProgress
-        message={message({
-          status: 'done',
-          agentEvents: [
-            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'snake.html' },
-            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-1', target: 'snake.html' },
-            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-2', target: 'snake.html' },
-            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-2', target: 'snake.html' },
-            { type: 'tool.requested', label: '调用工具：写入文件', tool: 'write_file', toolCallId: 'write-3', target: 'snake.html' },
-            { type: 'tool.completed', label: '工具完成：写入文件', tool: 'write_file', toolCallId: 'write-3', target: 'snake.html' },
-            { type: 'run.completed', label: '任务完成' },
-          ],
-        })}
-      />,
-    )
-
-    expect(container.querySelectorAll('.agent-progress-stage')).toHaveLength(1)
-    expect(screen.getByText('写入 3 个文件')).toBeInTheDocument()
-    expect(screen.queryByText('已完成写入文件 × 3')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
-    expect(screen.getByText('已完成写入文件 × 3')).toBeInTheDocument()
-  })
-
   it('keeps an active tool failure in the working progress state', () => {
     expect(
       deriveAgentProgress(
@@ -333,28 +232,6 @@ describe('AgentProgress', () => {
     expect(screen.getByText('读取文件')).toBeInTheDocument()
     expect(screen.getByText('README.md')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '展开步骤' }))
-    expect(screen.getByText('已完成搜索网页')).toBeInTheDocument()
-  })
-
-  it('shows the completed-work tally on the compact success summary', () => {
-    renderAgentProgress(
-      <AgentProgress
-        message={message({
-          status: 'done',
-          agentEvents: [
-            { type: 'tool.requested', label: '调用工具：搜索网页', tool: 'web.search' },
-            { type: 'tool.completed', label: '工具完成：搜索网页', tool: 'web.search', target: '普吉岛' },
-            { type: 'run.completed', label: '任务完成' },
-          ],
-        })}
-        onOpenArtifact={vi.fn()}
-        onOpenDiagnostics={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByText('执行成功')).toBeInTheDocument()
-    expect(screen.getByText('搜索 1 次')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '展开详情' }))
     expect(screen.getByText('已完成搜索网页')).toBeInTheDocument()
   })
 
@@ -762,6 +639,35 @@ describe('AgentProgress', () => {
     expect(screen.getByText('搜索成都5月底天气')).toBeInTheDocument()
     expect(screen.getByText('搜索成都核心景点')).toBeInTheDocument()
     expect(screen.getByText('搜索成都必吃美食')).toBeInTheDocument()
+  })
+
+  it('hides active task progress once the assistant answer appears', () => {
+    const { container } = renderAgentProgress(
+      <AgentProgress
+        message={message({
+          content: '正式回答已经出现。',
+          status: 'streaming',
+          agentEvents: [
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_1',
+              toolDetail: { kind: 'text', text: '搜索真实经验' },
+            },
+            {
+              type: 'tool.requested',
+              label: '调用工具：派发子任务',
+              tool: 'task',
+              toolCallId: 'call_2',
+              toolDetail: { kind: 'text', text: '搜索实践案例' },
+            },
+          ],
+        })}
+      />,
+    )
+
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('drops a task from the list once its tool.completed lands', () => {

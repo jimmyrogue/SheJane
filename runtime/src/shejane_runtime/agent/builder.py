@@ -113,6 +113,7 @@ _PARENT_MODEL_CALL_RESERVE = 5
 _APPROVAL_REVIEW_MAX_CALLS = 20
 _CLARIFICATION_REVIEW_MAX_CALLS = 4
 _COMPLETION_REVIEW_MAX_CALLS = 4
+_TITLE_GENERATION_MAX_CALLS = 1
 _VISION_MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
 _VISION_MAX_IMAGE_PIXELS = 40_000_000
 _VISION_MEDIA_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
@@ -1117,6 +1118,13 @@ async def build_agent(
         if isinstance(model, LedgerChatModel)
         else model
     )
+    title_model = (
+        model.model_copy(
+            update={"call_purpose": "title_generation", "max_calls": _TITLE_GENERATION_MAX_CALLS}
+        )
+        if isinstance(model, LedgerChatModel)
+        else model
+    )
     definition_model = RuntimeModelProxy(profile=getattr(model, "profile", None))
     subagent_model = RuntimeModelProxy(
         profile=getattr(model, "profile", None),
@@ -1184,6 +1192,7 @@ async def build_agent(
             approval_model=approval_model,
             clarification_model=clarification_model,
             completion_model=completion_model,
+            title_model=title_model,
             dynamic_tools=dynamic_tool_map,
             execution_attempt_id=execution_attempt_id,
             subagents_enabled=settings.enable_subagents,
@@ -1229,6 +1238,7 @@ async def build_agent(
         runtime_context.approval_model = approval_model
         runtime_context.clarification_model = clarification_model
         runtime_context.completion_model = completion_model
+        runtime_context.title_model = title_model
         runtime_context.execution_attempt_id = execution_attempt_id
         if not isinstance(runtime_context.tool_mutation_lock, AsyncToolExecutionGate):
             runtime_context.tool_mutation_lock = AsyncToolExecutionGate()

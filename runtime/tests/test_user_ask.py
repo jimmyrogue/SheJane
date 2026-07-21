@@ -30,6 +30,7 @@ class RecordingHandler:
         self.requests: list[dict] = []
         self.review_requests = 0
         self.completion_review_requests = 0
+        self.title_generation_requests = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body_bytes = request.read()
@@ -84,6 +85,14 @@ class RecordingHandler:
                         },
                     ),
                     ("llm.done", {"request_id": "completion-review", "finish_reason": "stop"}),
+                ]
+            )
+        if "conversation title generator" in str(body):
+            self.title_generation_requests += 1
+            return _sse(
+                [
+                    ("llm.delta", {"content_delta": "Test conversation"}),
+                    ("llm.done", {"request_id": "title", "finish_reason": "stop"}),
                 ]
             )
         if self.scripts:
@@ -612,7 +621,13 @@ def test_user_ask_stops_interrupting_after_four_questions(monkeypatch) -> None:
 
     assert asked == 4
     assert stored_run is not None and stored_run["status"] == "completed", event_summary[-5:]
-    assert len(handler.requests) - handler.review_requests - handler.completion_review_requests == 6
+    assert (
+        len(handler.requests)
+        - handler.review_requests
+        - handler.completion_review_requests
+        - handler.title_generation_requests
+        == 6
+    )
     # Reviewer owns a separate four-call budget; the fifth proposed question
     # fails open to the tool's own clarification limit without provider I/O.
     assert handler.review_requests == 4

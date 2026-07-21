@@ -61,7 +61,12 @@ export function AgentProgress({
   const progress = deriveAgentProgress(message, t)
   // Permission prompts are surfaced once in the approval bar above the
   // composer. Other work stays available in one expandable activity history.
-  if (!progress || progress.tone === 'permission') {
+  if (
+    !progress ||
+    progress.tone === 'permission' ||
+    progress.tone === 'done' ||
+    (progress.tone === 'working' && message.content.trim())
+  ) {
     return null
   }
 
@@ -74,12 +79,8 @@ export function AgentProgress({
   const stageHistory = historicalProgressStages(events, message, t)
   const bodyId = `agent-progress-body-${message.id}`
   // While the run is active: the current action + its concrete target
-  // ("正在打开 weather.com"). Once finished: the card headline carries the
-  // terminal state and aggregate work tally; details hold the activity history.
-  const successSummary = progress.tone === 'done'
-    ? summaryHeadline(events, message, t).label
-    : undefined
-  const headline = progress.tone === 'failed' || progress.tone === 'done'
+  // ("正在打开 weather.com"). Failures keep their terminal headline.
+  const headline = progress.tone === 'failed'
     ? { label: progress.label }
     : summaryHeadline(events, message, t)
   // Prefer the rich `toolDetail` shape when present (set by
@@ -102,17 +103,15 @@ export function AgentProgress({
   const showTaskList = inFlightTasks.length >= 2
   const failureAction = progress.failureAction?.action === 'diagnostics' ? undefined : progress.failureAction
   const isHandoffWarning = Boolean(latestHandoffWarningEvent(events) && ACTIVE_RUN_STATUSES.has(message.status))
-  const isNoticeCard = isHandoffWarning || progress.tone === 'failed' || progress.tone === 'done'
+  const isNoticeCard = isHandoffWarning || progress.tone === 'failed'
   const hasNoticeBody = isNoticeCard && Boolean(
     detail?.text ||
     progress.failureMessage ||
     progress.detail,
   )
   const headerCanToggle = hasNoticeBody || stageHistory.length > 0
-  const headerDetail = progress.tone === 'done' && successSummary
-    ? { kind: 'text' as const, text: successSummary }
-    : detail
-  const NoticeTitleIcon = isNoticeCard && progress.tone !== 'done'
+  const headerDetail = detail
+  const NoticeTitleIcon = isNoticeCard
     ? progress.tone === 'failed' ? IconAlertCircle : IconInfoCircle
     : undefined
 
@@ -129,14 +128,14 @@ export function AgentProgress({
   // target text doesn't visually shake.
   const summaryInner = (
     <>
-      {!isNoticeCard || progress.tone === 'done' ? <span className="agent-progress-status-dot" aria-hidden="true" /> : null}
+      {!isNoticeCard ? <span className="agent-progress-status-dot" aria-hidden="true" /> : null}
       {NoticeTitleIcon ? (
         <NoticeTitleIcon className="agent-progress-notice-title-icon" size={14} aria-hidden="true" />
       ) : null}
       <span className="name" key={headline.label}>{headline.label}</span>
       {headerDetail ? (
         <>
-          {!isNoticeCard || progress.tone === 'done' ? <span className="agent-progress-sep" aria-hidden="true">·</span> : null}
+          {!isNoticeCard ? <span className="agent-progress-sep" aria-hidden="true">·</span> : null}
           {headerDetail.showWebIcon ? (
             <IconWorld className="agent-progress-target-icon" size={12} aria-hidden="true" />
           ) : null}
