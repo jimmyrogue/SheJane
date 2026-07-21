@@ -90,6 +90,72 @@ def test_researcher_pulls_only_research_relevant_tools_from_main() -> None:
     assert "shell.run" not in res_tool_names, "shell must not leak to researcher"
 
 
+def test_subagents_have_code_enforced_model_and_research_limits() -> None:
+    from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
+    from langchain_core.tools import tool
+
+    from shejane_runtime.agent.subagents import build_subagents
+    from shejane_runtime.middleware.tool_review import ToolReviewMiddleware
+
+    @tool("web.fetch")
+    def web_fetch(url: str) -> str:
+        """Fetch a URL."""
+        return url
+
+    @tool("web.search")
+    def web_search(query: str) -> str:
+        """Search the web."""
+        return query
+
+    subs = build_subagents(
+        main_tools=[web_fetch, web_search],
+        main_model="x",
+        agent_roots=[],
+    )
+
+    assert all(
+        any(
+            isinstance(item, ModelCallLimitMiddleware)
+            and item.run_limit == 50
+            and item.exit_behavior == "end"
+            for item in subagent["middleware"]
+        )
+        for subagent in subs
+    )
+    researcher = next(item for item in subs if item["name"] == "researcher")
+    fetch_limit = next(
+        item
+        for item in researcher["middleware"]
+        if isinstance(item, ToolCallLimitMiddleware) and item.tool_name == "web.fetch"
+    )
+    assert fetch_limit.run_limit == 10
+    search_limit = next(
+        item
+        for item in researcher["middleware"]
+        if isinstance(item, ToolCallLimitMiddleware) and item.tool_name == "web.search"
+    )
+    assert search_limit.run_limit == 10
+
+    middleware = researcher["middleware"]
+    review_index = next(
+        index for index, item in enumerate(middleware) if isinstance(item, ToolReviewMiddleware)
+    )
+    assert all(
+        review_index < index
+        for index, item in enumerate(middleware)
+        if isinstance(item, ToolCallLimitMiddleware)
+    )
+
+    from shejane_runtime.middleware.tool_visibility import ToolVisibilityMiddleware
+
+    visibility = next(
+        item
+        for item in researcher["middleware"]
+        if isinstance(item, ToolVisibilityMiddleware) and item.blocked_tool_names
+    )
+    assert visibility.blocked_tool_names == {"edit_file", "execute", "write_file"}
+
+
 def test_writer_has_no_tools() -> None:
     from shejane_runtime.agent.subagents import build_subagents
 
@@ -223,6 +289,19 @@ def test_backend_factory_uses_workspace_root(tmp_path: Path) -> None:
     backend = build_subagent_backend(str(tmp_path))
     assert isinstance(backend, FilesystemBackend)
     assert backend.virtual_mode is True
+
+
+def test_subagent_workspace_read_keeps_the_20_mib_limit(tmp_path: Path) -> None:
+    from shejane_runtime.agent.subagents import build_subagent_backend
+
+    large_file = tmp_path / "large.txt"
+    with large_file.open("wb") as stream:
+        stream.truncate(20 * 1024 * 1024 + 1)
+
+    selected = build_subagent_backend(str(tmp_path)).read("/large.txt")
+    assert selected.file_data is None
+    assert selected.error is not None
+    assert "limit 20971520 bytes / 20 MB" in selected.error
 
 
 def test_backend_factory_falls_back_to_virtual_when_no_workspace() -> None:

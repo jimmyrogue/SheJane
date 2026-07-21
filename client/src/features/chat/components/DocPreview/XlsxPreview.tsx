@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { CellValue } from 'read-excel-file/browser'
 
 interface Props {
   sourceKey: string
@@ -34,18 +33,30 @@ export function XlsxPreview({ sourceKey, loadBytes, refreshKey = 0, onStatus }: 
     setError(null)
     setSheets(null)
     onStatus?.('loading')
-    Promise.all([loadBytes(), import('read-excel-file/browser')])
-      .then(async ([buf, { default: readExcelFile }]) => {
-        if (cancelled) return
-        const workbook = await readExcelFile(buf)
-        const out = workbook.map(({ sheet, data }) => ({
-          name: sheet,
-          rows: data.slice(0, 1000).map((row) => row.slice(0, 50).map(cellToString)),
-        }))
+    const worker = new Worker(new URL('./xlsxPreview.worker.ts', import.meta.url), { type: 'module' })
+    worker.onmessage = (event: MessageEvent<{ sheets?: SheetView[], error?: string }>) => {
+      if (cancelled) return
+      if (event.data.error) {
+        const next = new Error(event.data.error)
+        setError(next)
+        onStatus?.('error', next)
+        return
+      }
+      const out = event.data.sheets ?? []
         if (cancelled) return
         setSheets(out)
         setActiveIndex(0)
         onStatus?.('ready')
+    }
+    worker.onerror = (event) => {
+      if (cancelled) return
+      const next = new Error(event.message || 'Unable to parse workbook')
+      setError(next)
+      onStatus?.('error', next)
+    }
+    void loadBytes()
+      .then((buf) => {
+        if (!cancelled) worker.postMessage(buf, [buf])
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -55,6 +66,7 @@ export function XlsxPreview({ sourceKey, loadBytes, refreshKey = 0, onStatus }: 
       })
     return () => {
       cancelled = true
+      worker.terminate()
     }
   }, [sourceKey, refreshKey, loadBytes, onStatus])
 
@@ -115,13 +127,4 @@ function SheetTable({ rows }: { rows: string[][] }) {
       </table>
     </div>
   )
-}
-
-function cellToString(value: CellValue | null): string {
-  if (value == null) return ''
-  if (typeof value === 'string') return value
-  if (typeof value === 'number') return String(value)
-  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE'
-  if (value instanceof Date) return value.toISOString().slice(0, 10)
-  return String(value)
 }

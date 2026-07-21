@@ -34,6 +34,7 @@ from deepagents.middleware.subagents import (
     DEFAULT_SUBAGENT_PROMPT,
     SubAgent,
 )
+from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
@@ -42,12 +43,14 @@ from ..middleware.tool_execution import ToolExecutionMiddleware
 from ..middleware.tool_review import ToolReviewMiddleware
 from ..middleware.tool_visibility import ToolVisibilityMiddleware
 from ..tools.mcp import MCP_TOOL_SEARCH_NAME
-from .backends import RuntimeFilesystemBackend
+from .backends import MODEL_FILE_READ_MAX_MB, RuntimeFilesystemBackend
 from .context_builder import identity_safety_prompt
 
 log = logging.getLogger("shejane_runtime.agent.subagents")
 
 SUBAGENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+SUBAGENT_MODEL_CALL_LIMIT = 50
+RESEARCHER_WEB_TOOL_LIMIT = 10
 
 
 def _fenced_prompt(prompt: str) -> str:
@@ -70,7 +73,7 @@ Style:
 Constraints:
 - You have no memory between tasks. Treat each invocation as a fresh slate.
 - Don't fabricate citations. If a search returns nothing, say so plainly.
-- Hard cap: 5 tool calls. If you can't answer in 5, return what you have.
+- Hard cap: 10 web tool calls. If you can't answer in 10, return what you have.
 """
 
 WRITER_PROMPT = """You are a focused writing subagent.
@@ -143,6 +146,7 @@ def _builtin_subagents(
 ) -> list[SubAgent]:
     research_tool_names = {
         "web.fetch",
+        "web.search",
         "browser.task",
         "task.verify",
         "time.now",
@@ -163,6 +167,10 @@ def _builtin_subagents(
             "model": main_model,
             "tools": main_tools,
             "middleware": [
+                ModelCallLimitMiddleware(
+                    run_limit=SUBAGENT_MODEL_CALL_LIMIT,
+                    exit_behavior="end",
+                ),
                 ToolReviewMiddleware(),
                 ToolExecutionMiddleware(),
                 FileWriteConflictMiddleware(),
@@ -185,7 +193,26 @@ def _builtin_subagents(
             "model": main_model,
             "tools": research_tools,
             "middleware": [
+                # Deep Agents injects filesystem tools (including execute)
+                # into every subagent independently of the explicit tool
+                # list. Research must stay on the SSRF-guarded web tools so a
+                # failed fetch cannot silently fall back to shell + curl.
+                ToolVisibilityMiddleware(
+                    blocked_tool_names={"edit_file", "execute", "write_file"},
+                ),
+                ModelCallLimitMiddleware(
+                    run_limit=SUBAGENT_MODEL_CALL_LIMIT,
+                    exit_behavior="end",
+                ),
                 ToolReviewMiddleware(),
+                ToolCallLimitMiddleware(
+                    tool_name="web.fetch",
+                    run_limit=RESEARCHER_WEB_TOOL_LIMIT,
+                ),
+                ToolCallLimitMiddleware(
+                    tool_name="web.search",
+                    run_limit=RESEARCHER_WEB_TOOL_LIMIT,
+                ),
                 ToolExecutionMiddleware(),
                 FileWriteConflictMiddleware(),
             ],
@@ -201,6 +228,10 @@ def _builtin_subagents(
             "model": main_model,
             "tools": [],
             "middleware": [
+                ModelCallLimitMiddleware(
+                    run_limit=SUBAGENT_MODEL_CALL_LIMIT,
+                    exit_behavior="end",
+                ),
                 ToolReviewMiddleware(),
                 ToolExecutionMiddleware(),
                 FileWriteConflictMiddleware(),
@@ -276,6 +307,10 @@ def _load_subagent_file(
         "model": main_model,
         "tools": selected_tools,
         "middleware": [
+            ModelCallLimitMiddleware(
+                run_limit=SUBAGENT_MODEL_CALL_LIMIT,
+                exit_behavior="end",
+            ),
             ToolReviewMiddleware(),
             ToolExecutionMiddleware(),
             FileWriteConflictMiddleware(),
@@ -336,8 +371,11 @@ def build_subagent_backend(workspace_root: str | None) -> FilesystemBackend:
         return RuntimeFilesystemBackend(
             root_dir=workspace_root,
             virtual_mode=True,
-            max_file_size_mb=10,
+            max_file_size_mb=MODEL_FILE_READ_MAX_MB,
         )
     # No authorized workspace — subagents get a virtual in-memory FS so
     # they can't accidentally touch real disk paths.
-    return RuntimeFilesystemBackend(virtual_mode=True, max_file_size_mb=10)
+    return RuntimeFilesystemBackend(
+        virtual_mode=True,
+        max_file_size_mb=MODEL_FILE_READ_MAX_MB,
+    )

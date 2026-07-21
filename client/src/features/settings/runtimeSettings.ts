@@ -5,9 +5,9 @@ import type {
 } from '@/runtime/client'
 
 const runtimeDefaults = {
-  maxModelCalls: 20,
+  maxModelCalls: 100,
   maxToolRetries: 2,
-  researchSearchLimit: 3,
+  researchSearchLimit: 10,
   subagents: true,
   browserHeadless: true,
   inputGuard: 'observe' as const,

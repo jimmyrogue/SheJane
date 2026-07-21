@@ -34,7 +34,7 @@ describe('Runtime settings projection', () => {
       { maxModelCalls: 9, planFirst: 'always', subagents: true },
       { planFirst: 'auto', subagents: true },
     )).toEqual({
-      max_model_calls: 20,
+      max_model_calls: 100,
       plan_first: 'auto',
     })
   })

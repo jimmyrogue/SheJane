@@ -237,6 +237,50 @@ def test_web_fetch_rejects_loopback_ssrf() -> None:
     assert "private" in out["error"] or "loopback" in out["error"]
 
 
+def test_web_fetch_accepts_https_fake_ip_proxy_address(monkeypatch: Any) -> None:
+    """RFC 2544 fake-IP DNS must work for HTTPS without opening private ranges."""
+    import socket
+
+    from shejane_runtime.tools.web import _resolve_pinned
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("198.18.1.23", 0))
+        ],
+    )
+
+    assert _resolve_pinned("public.example", allow_fake_ip=True) == (
+        True,
+        "",
+        "198.18.1.23",
+    )
+    ok, reason, address = _resolve_pinned("public.example", allow_fake_ip=False)
+    assert ok is False
+    assert "private/loopback" in reason
+    assert address is None
+
+
+def test_web_fetch_fake_ip_exception_does_not_allow_private_networks(monkeypatch: Any) -> None:
+    import socket
+
+    from shejane_runtime.tools.web import _resolve_pinned
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.7", 0))
+        ],
+    )
+
+    ok, reason, address = _resolve_pinned("public.example", allow_fake_ip=True)
+    assert ok is False
+    assert "private/loopback" in reason
+    assert address is None
+
+
 def test_web_fetch_rejects_redirect_to_loopback(monkeypatch: Any) -> None:
     import asyncio
 

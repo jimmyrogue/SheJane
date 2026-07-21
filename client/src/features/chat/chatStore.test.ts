@@ -18,7 +18,7 @@ describe('runtime timeline', () => {
     })
 
     expect(content).toBe('这是附件摘要。')
-    expect(projectTransientAssistantText(content, { event_type: 'run.failed' })).toBe('')
+    expect(projectTransientAssistantText(content, { event_type: 'run.failed' })).toBe('这是附件摘要。')
   })
 
   it('replaces the transient draft when LangGraph starts another model round', () => {

@@ -80,12 +80,24 @@ class ToolReviewMiddleware(AgentMiddleware):
         runtime: Runtime[Any],
     ) -> dict[str, Any] | None:
         messages = state.get("messages") or []
-        last_ai = next(
-            (message for message in reversed(messages) if isinstance(message, AIMessage)),
+        last_ai_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if isinstance(messages[index], AIMessage)
+            ),
             None,
         )
-        if last_ai is None or not last_ai.tool_calls:
+        if last_ai_index is None:
             return None
+        last_ai = messages[last_ai_index]
+        if not last_ai.tool_calls:
+            return None
+        answered_call_ids = {
+            str(message.tool_call_id)
+            for message in messages[last_ai_index + 1 :]
+            if isinstance(message, ToolMessage) and message.tool_call_id
+        }
         call_ids = [str(call.get("id") or "") for call in last_ai.tool_calls]
         if any(not call_id for call_id in call_ids) or len(call_ids) != len(set(call_ids)):
             raise ToolReviewStateError("tool review requires unique non-empty call ids per batch")
@@ -110,6 +122,8 @@ class ToolReviewMiddleware(AgentMiddleware):
             raise ToolReviewStateError("tool review is missing its frozen tool registry")
         for index, call in enumerate(last_ai.tool_calls):
             tool_call_id = str(call.get("id") or "")
+            if tool_call_id in answered_call_ids:
+                continue
             tool_name = str(call.get("name") or "")
             if not tool_name:
                 raise ToolReviewStateError("tool review requires stable call ids and names")

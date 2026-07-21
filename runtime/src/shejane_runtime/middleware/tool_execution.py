@@ -74,6 +74,17 @@ class WorkspaceRequiredError(RuntimeError):
     retryable = False
 
 
+def _failed_tool_status(*, risk: str, tool_name: str, error: BaseException) -> str:
+    # A task only orchestrates Runtime-owned child work. Any real child side
+    # effect has its own durable receipt and remains independently reconcilable.
+    known = (
+        risk in {"read_only", "plugin_action"}
+        or tool_name == "task"
+        or isinstance(error, WorkspaceRequiredError)
+    )
+    return "failed" if known else "outcome_unknown"
+
+
 def tool_execution_namespace(request: ToolCallRequest) -> str:
     config = getattr(getattr(request, "runtime", None), "config", None)
     return execution_namespace_from_config(config)
@@ -449,11 +460,31 @@ class ToolExecutionMiddleware(AgentMiddleware):
             )
             raise
         except BaseException as exc:
-            status = (
-                "failed"
-                if risk in {"read_only", "plugin_action"} or isinstance(exc, WorkspaceRequiredError)
-                else "outcome_unknown"
+            tool_name = str(request.tool_call.get("name") or "")
+            status = _failed_tool_status(
+                risk=risk,
+                tool_name=tool_name,
+                error=exc,
             )
+            if tool_name == "task" and not isinstance(exc, asyncio.CancelledError):
+                result = ToolMessage(
+                    content=f"Subagent failed: {type(exc).__name__}: {str(exc)[:2000]}",
+                    name=tool_name,
+                    tool_call_id=str(request.tool_call.get("id") or ""),
+                    status="error",
+                )
+                result_json = serialize_tool_result(result)
+                await asyncio.shield(
+                    store.settle_tool_receipt(
+                        operation_id=operation_id,
+                        run_id=run_id,
+                        status="failed",
+                        result_json=result_json,
+                        result_hash=hashlib.sha256(result_json.encode("utf-8")).hexdigest(),
+                        error_type=type(exc).__name__,
+                    )
+                )
+                return result
             await asyncio.shield(
                 store.settle_tool_receipt(
                     operation_id=operation_id,
@@ -465,7 +496,7 @@ class ToolExecutionMiddleware(AgentMiddleware):
             if status == "outcome_unknown" and not isinstance(exc, asyncio.CancelledError):
                 _request_tool_reconciliation(
                     operation_id=operation_id,
-                    tool_name=str(request.tool_call.get("name") or ""),
+                    tool_name=tool_name,
                     arguments_hash=str(receipt.get("arguments_hash") or ""),
                     risk=risk,
                 )
@@ -490,7 +521,11 @@ class ToolExecutionMiddleware(AgentMiddleware):
             if len(result_json.encode("utf-8")) > MAX_MODEL_TOOL_RESULT_BYTES:
                 raise ToolReceiptStateError("bounded tool result still exceeds model limit")
         except BaseException as exc:
-            status = "failed" if risk in {"read_only", "plugin_action"} else "outcome_unknown"
+            status = _failed_tool_status(
+                risk=risk,
+                tool_name=str(request.tool_call.get("name") or ""),
+                error=exc,
+            )
             await asyncio.shield(
                 store.settle_tool_receipt(
                     operation_id=operation_id,

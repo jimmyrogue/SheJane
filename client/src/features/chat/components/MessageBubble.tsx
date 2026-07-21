@@ -3,13 +3,15 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import remarkNormalizeHeadings from 'remark-normalize-headings'
-import { IconBox, IconCheck, IconCommand, IconCopy, IconFile, IconPencil, IconRefresh, IconSparkles, IconStethoscope, IconTrash } from '@tabler/icons-react'
+import { IconBox, IconCheck, IconCommand, IconCopy, IconPencil, IconRefresh, IconSparkles, IconStethoscope, IconTrash } from '@tabler/icons-react'
 import { ChatImage } from './ChatImage'
 import { CodeBlock } from './CodeBlock'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { formatMessageTime, useI18n, type Translator } from '@/shared/i18n/i18n'
-import type { AgentTimelineItem, ChatMessage, LocalOfficeFileRef } from '@/shared/local-data/types'
+import { FileTypeIcon } from '@/shared/files/FileTypeIcon'
+import { filePreviewKind } from '@/shared/files/filePreview'
+import type { AgentTimelineItem, ChatMessage, LocalFileRef } from '@/shared/local-data/types'
 import { useSmoothTextStream } from '@/shared/streaming/useSmoothTextStream'
 import { completePartialMarkdown } from '@/shared/streaming/completePartialMarkdown'
 
@@ -20,6 +22,7 @@ export function MessageBubble({
   onStreamTextCommit,
   workspaceRoot,
   onPreviewLocalFile,
+  onLocalFileContextMenu,
   onRegenerate,
   onEditResend,
   onDelete,
@@ -45,12 +48,14 @@ export function MessageBubble({
    *  retry/edit/delete actions so the user can't mutate mid-run. */
   runActive?: boolean
   /** Absolute path of the active conversation's workspace, used to
-   *  resolve relative office-file refs in agent text. Undefined for
+   *  resolve relative local-file refs in agent text. Undefined for
    *  chats without a project. */
   workspaceRoot?: string
-  /** Callback fired when the user clicks a recognized office filename
+  /** Callback fired when the user clicks a recognized local filename
    *  rendered inside agent markdown. Undefined disables the click. */
-  onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
+  onPreviewLocalFile?: (ref: LocalFileRef) => void
+  /** Show the native attachment menu (preview/open/save/reveal). */
+  onLocalFileContextMenu?: (ref: LocalFileRef) => void
 }) {
   const { locale, t } = useI18n()
   const previousMessageIDRef = useRef(message.id)
@@ -160,7 +165,7 @@ export function MessageBubble({
       ? t('message.waitingInput')
       : ''
   const content = message.content || waitingText
-  const hideFailedAssistantContent = isAssistant && hasDurableFailure(message)
+  const hideFailedAssistantContent = isFailureOnlyAssistantContent(message)
   // Action affordances appear on settled turns only (not mid-stream).
   const settled = message.status === 'done' || message.status === 'error'
   const latestCleanupState = [...(message.agentEvents ?? [])].reverse().find(
@@ -177,9 +182,46 @@ export function MessageBubble({
   const showUsage = isAssistant && settled && usageParts.length > 0
   const showStream = isAssistant && !hideFailedAssistantContent && (message.status === 'streaming' || stream.isStreaming)
   const messageTime = formatMessageTime(message.createdAt, locale, t)
+  const attachmentCards = message.attachments?.length ? (
+    <div className={cn('message-attachments', !isAssistant && 'message-attachments-detached')}>
+      {message.attachments.map((attachment) => {
+        const ref: LocalFileRef = {
+          ...attachment,
+          kind: filePreviewKind(attachment.name),
+        }
+        return onPreviewLocalFile ? (
+          <button
+            type="button"
+            className="message-attachment"
+            key={`${attachment.runId ?? ''}:${attachment.inputId ?? attachment.path}`}
+            title={attachment.path}
+            onClick={() => onPreviewLocalFile(ref)}
+            onContextMenu={(event) => {
+              if (!onLocalFileContextMenu) return
+              event.preventDefault()
+              onLocalFileContextMenu(ref)
+            }}
+          >
+            <span className="message-attachment-glyph" aria-hidden="true">
+              <FileTypeIcon name={attachment.name} />
+            </span>
+            <span className="message-attachment-name">{attachment.name}</span>
+          </button>
+        ) : (
+          <span className="message-attachment" key={attachment.path} title={attachment.path}>
+            <span className="message-attachment-glyph" aria-hidden="true">
+              <FileTypeIcon name={attachment.name} />
+            </span>
+            <span className="message-attachment-name">{attachment.name}</span>
+          </span>
+        )
+      })}
+    </div>
+  ) : null
 
   return (
     <article className={cn('message', message.role)}>
+      {!isAssistant ? attachmentCards : null}
       <div className="message-bubble-inner">
         {isAssistant && message.reasoning?.trim() ? (
           <ReasoningDisclosure reasoning={message.reasoning} active={message.status === 'streaming'} />
@@ -201,16 +243,7 @@ export function MessageBubble({
               ) : null}
             </div>
           ) : null}
-          {message.attachments?.length ? (
-            <div className="message-attachments">
-              {message.attachments.map((attachment) => (
-                <span key={attachment.path} title={attachment.path}>
-                  <IconFile size={14} aria-hidden="true" />
-                  {attachment.name}
-                </span>
-              ))}
-            </div>
-          ) : null}
+          {isAssistant ? attachmentCards : null}
           {editing ? (
             <div className="message-edit">
               <textarea
@@ -245,6 +278,7 @@ export function MessageBubble({
                 content={completePartialMarkdown(stream.text)}
                 workspaceRoot={workspaceRoot}
                 onPreviewLocalFile={onPreviewLocalFile}
+                onLocalFileContextMenu={onLocalFileContextMenu}
               />
             ) : waitingText ? (
               <p className="whitespace-pre-wrap break-words">{waitingText}</p>
@@ -255,6 +289,7 @@ export function MessageBubble({
               normalizeHeadings
               workspaceRoot={workspaceRoot}
               onPreviewLocalFile={onPreviewLocalFile}
+              onLocalFileContextMenu={onLocalFileContextMenu}
             />
           )}
         </div>
@@ -265,74 +300,74 @@ export function MessageBubble({
          *  worse, the model's hallucinated `![](imgbb.com/…)` URL). */}
         {isAssistant ? <CodeExecutionImages events={message.agentEvents} /> : null}
         {children}
-        <div className="message-meta">
-          {message.content.trim() && !hideFailedAssistantContent ? (
-            <button
-              type="button"
-              className="message-meta-action"
-              onClick={() => void handleCopy()}
-              title={copyFailed ? t('message.copyFailed') : copied ? t('message.copied') : t('message.copy')}
-              aria-label={copyFailed ? t('message.copyFailed') : copied ? t('message.copied') : t('message.copy')}
-            >
-              {copied ? <IconCheck size={13} aria-hidden="true" /> : <IconCopy size={13} aria-hidden="true" />}
-            </button>
-          ) : null}
-          {!editing && canRegenerate ? (
-            <button
-              type="button"
-              className="message-meta-action"
-              onClick={() => onRegenerate?.(message.id)}
-              disabled={runActive}
-              title={t('message.regenerate')}
-              aria-label={t('message.regenerate')}
-            >
-              <IconRefresh size={13} aria-hidden="true" />
-            </button>
-          ) : null}
-          {!editing && canEdit ? (
-            <button
-              type="button"
-              className="message-meta-action"
-              onClick={startEdit}
-              disabled={runActive}
-              title={t('message.edit')}
-              aria-label={t('message.edit')}
-            >
-              <IconPencil size={13} aria-hidden="true" />
-            </button>
-          ) : null}
-          {!editing && canDelete ? (
-            <button
-              type="button"
-              className="message-meta-action message-meta-action-danger"
-              onClick={() => onDelete?.(message.id)}
-              disabled={runActive}
-              title={t('message.delete')}
-              aria-label={t('message.delete')}
-            >
-              <IconTrash size={13} aria-hidden="true" />
-            </button>
-          ) : null}
-          {isAssistant ? <ModelModeBadge runMode={message.runMode} /> : null}
-          {showUsage ? (
-            <span className="message-meta-usage" title={t('agent.usageTooltip')}>
-              {usageParts.join(' · ')}
-            </span>
-          ) : null}
-          {showUsage && messageTime ? <span className="message-meta-dot" aria-hidden="true">·</span> : null}
-          {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
-          {isAssistant && message.runId && onOpenDiagnostics ? (
-            <button
-              type="button"
-              className="message-meta-action"
-              onClick={() => onOpenDiagnostics(message.runId!)}
-              title={t('agent.viewDiagnostics', { id: message.runId })}
-              aria-label={t('agent.diagnostics')}
-            >
-              <IconStethoscope size={13} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
+      </div>
+      <div className="message-meta">
+        {message.content.trim() && !hideFailedAssistantContent ? (
+          <button
+            type="button"
+            className="message-meta-action"
+            onClick={() => void handleCopy()}
+            title={copyFailed ? t('message.copyFailed') : copied ? t('message.copied') : t('message.copy')}
+            aria-label={copyFailed ? t('message.copyFailed') : copied ? t('message.copied') : t('message.copy')}
+          >
+            {copied ? <IconCheck size={13} aria-hidden="true" /> : <IconCopy size={13} aria-hidden="true" />}
+          </button>
+        ) : null}
+        {!editing && canRegenerate ? (
+          <button
+            type="button"
+            className="message-meta-action"
+            onClick={() => onRegenerate?.(message.id)}
+            disabled={runActive}
+            title={t('message.regenerate')}
+            aria-label={t('message.regenerate')}
+          >
+            <IconRefresh size={13} aria-hidden="true" />
+          </button>
+        ) : null}
+        {!editing && canEdit ? (
+          <button
+            type="button"
+            className="message-meta-action"
+            onClick={startEdit}
+            disabled={runActive}
+            title={t('message.edit')}
+            aria-label={t('message.edit')}
+          >
+            <IconPencil size={13} aria-hidden="true" />
+          </button>
+        ) : null}
+        {!editing && canDelete ? (
+          <button
+            type="button"
+            className="message-meta-action message-meta-action-danger"
+            onClick={() => onDelete?.(message.id)}
+            disabled={runActive}
+            title={t('message.delete')}
+            aria-label={t('message.delete')}
+          >
+            <IconTrash size={13} aria-hidden="true" />
+          </button>
+        ) : null}
+        {isAssistant ? <ModelModeBadge runMode={message.runMode} /> : null}
+        {showUsage ? (
+          <span className="message-meta-usage" title={t('agent.usageTooltip')}>
+            {usageParts.join(' · ')}
+          </span>
+        ) : null}
+        {showUsage && messageTime ? <span className="message-meta-dot" aria-hidden="true">·</span> : null}
+        {messageTime ? <span className="message-meta-time">{messageTime}</span> : null}
+        {isAssistant && message.runId && onOpenDiagnostics ? (
+          <button
+            type="button"
+            className="message-meta-action"
+            onClick={() => onOpenDiagnostics(message.runId!)}
+            title={t('agent.viewDiagnostics', { id: message.runId })}
+            aria-label={t('agent.diagnostics')}
+          >
+            <IconStethoscope size={13} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
     </article>
   )
@@ -375,13 +410,17 @@ function ModelModeBadge({ runMode }: { runMode?: ChatMessage['runMode'] }) {
   )
 }
 
-function hasDurableFailure(message: ChatMessage): boolean {
+function isFailureOnlyAssistantContent(message: ChatMessage): boolean {
   if (message.role !== 'assistant' || message.status !== 'error') {
     return false
   }
-  return (message.agentEvents ?? []).some(
+  const content = message.content.trim()
+  if (!content) return false
+  const failure = [...(message.agentEvents ?? [])].reverse().find(
     (event) => event.type === 'run.failed' || event.type === 'run.cleanup_required',
   )
+  const label = failure?.label.trim() ?? ''
+  return label === content || (content.length <= 200 && label.startsWith(`${content} ·`))
 }
 
 function buildUsageParts(
@@ -411,11 +450,13 @@ function MarkdownContent({
   normalizeHeadings = false,
   workspaceRoot,
   onPreviewLocalFile,
+  onLocalFileContextMenu,
 }: {
   content: string
   normalizeHeadings?: boolean
   workspaceRoot?: string
-  onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
+  onPreviewLocalFile?: (ref: LocalFileRef) => void
+  onLocalFileContextMenu?: (ref: LocalFileRef) => void
 }) {
   if (!content) {
     return null
@@ -441,7 +482,7 @@ function MarkdownContent({
   // needing a custom remark/rehype plugin.
   const renderChildren = (children: React.ReactNode): React.ReactNode => {
     if (!previewEnabled || !previewClick) return children
-    return processChildren(children, workspaceRoot, previewClick)
+    return processChildren(children, workspaceRoot, previewClick, onLocalFileContextMenu)
   }
   return (
     <ReactMarkdown
@@ -469,6 +510,23 @@ function MarkdownContent({
           const match = /language-(\w+)/.exec(className || '')
           if (match || text.includes('\n')) {
             return <CodeBlock language={match?.[1]} code={text.replace(/\n$/, '')} />
+          }
+          const display = text.trim()
+          const kind = filePreviewKind(display)
+          const path = resolveLocalPath(display, workspaceRoot)
+          if (previewClick && kind && path) {
+            return (
+              <code className={className} {...rest}>
+                <LocalFileLink
+                  path={path}
+                  kind={kind}
+                  name={pathBasename(display) || display}
+                  display={display}
+                  onClick={previewClick}
+                  onContextMenu={onLocalFileContextMenu}
+                />
+              </code>
+            )
           }
           return (
             <code className={className} {...rest}>
@@ -506,12 +564,12 @@ function childrenToText(node: React.ReactNode): string {
 
 /** Element types we deliberately don't crack open. `a` and `button`
  *  would produce invalid nested-interactive markup if we put an
- *  OfficeFileLink (button) inside them; OfficeFileLink itself never
- *  contains office refs to find. */
-const NON_RECURSIVE_INLINE_TYPES = new Set<unknown>(['a', 'button'])
+ *  LocalFileLink (button) inside them; LocalFileLink itself never
+ *  contains file refs to find. */
+const NON_RECURSIVE_INLINE_TYPES = new Set<unknown>(['a', 'button', 'code'])
 
 /** Walk a ReactNode tree, replacing any string descendants with a
- *  fragment that has recognized office filenames wrapped in clickable
+ *  fragment that has recognized local filenames wrapped in clickable
  *  buttons. Non-string nodes recurse into their `children` prop so
  *  refs nested inside `<code>` / `<strong>` / `<em>` / etc. get
  *  picked up too (LLMs commonly format filenames as bold inline code,
@@ -519,10 +577,11 @@ const NON_RECURSIVE_INLINE_TYPES = new Set<unknown>(['a', 'button'])
 function processChildren(
   children: React.ReactNode,
   workspaceRoot: string | undefined,
-  onPreviewLocalFile: (ref: LocalOfficeFileRef) => void,
+  onPreviewLocalFile: (ref: LocalFileRef) => void,
+  onLocalFileContextMenu?: (ref: LocalFileRef) => void,
 ): React.ReactNode {
   if (typeof children === 'string') {
-    return renderTextWithOfficeLinks(children, workspaceRoot, onPreviewLocalFile)
+    return renderTextWithLocalFileLinks(children, workspaceRoot, onPreviewLocalFile, onLocalFileContextMenu)
   }
   if (Array.isArray(children)) {
     return children.map((child, i) => (
@@ -530,50 +589,46 @@ function processChildren(
       // text matching (whereas a wrapping `<span>` introduces an
       // extra element with the same textContent and confuses
       // `findByText`).
-      <Fragment key={i}>{processChildren(child, workspaceRoot, onPreviewLocalFile)}</Fragment>
+      <Fragment key={i}>{processChildren(child, workspaceRoot, onPreviewLocalFile, onLocalFileContextMenu)}</Fragment>
     ))
   }
   if (isValidElement(children)) {
+    const props = (children.props ?? {}) as {
+      children?: React.ReactNode
+      node?: { tagName?: string }
+    }
     if (
       NON_RECURSIVE_INLINE_TYPES.has(children.type) ||
-      children.type === OfficeFileLink
+      props.node?.tagName === 'code' ||
+      children.type === LocalFileLink
     ) {
       return children
     }
-    const props = (children.props ?? {}) as { children?: React.ReactNode }
     if (props.children === undefined) {
       return children
     }
     return cloneElement(
       children,
       undefined,
-      processChildren(props.children, workspaceRoot, onPreviewLocalFile),
+      processChildren(props.children, workspaceRoot, onPreviewLocalFile, onLocalFileContextMenu),
     )
   }
   // null / boolean / number — leave alone.
   return children
 }
 
-/** Office-file extension → kind mapping. Lowercase keys; the regex
- *  also uses lowercase so case-insensitive matches work in one pass.
- */
-const OFFICE_EXTENSION_KIND: Record<string, LocalOfficeFileRef['kind']> = {
-  docx: 'word',
-  xlsx: 'excel',
-  pptx: 'powerpoint',
-}
-
 /** Regex that captures a chunk of "looks like a path" text ending in
- *  `.docx` / `.xlsx` / `.pptx`. Matches:
+ *  a short extension. The deterministic extension map decides whether
+ *  the result is actually previewable. Matches:
  *    foo.docx
  *    sub/foo.docx
  *    /Users/me/project/foo.docx
- *    ~/Documents/foo.xlsx
+ *    "my report.pdf"
  *  Doesn't try to be exhaustive — we stop at whitespace, quotes, or
  *  common markdown delimiters (backticks, parens) so we don't swallow
  *  surrounding punctuation. Case-insensitive on the extension only.
  */
-const OFFICE_FILE_RE = /([^\s"'`(){}\[\]<>]+\.(?:docx|xlsx|pptx))/gi
+const LOCAL_FILE_RE = /(["'])([^"'`\n]+?\.[A-Za-z0-9]{1,12})\1|([^\s"'`(){}\[\]<>]+\.[A-Za-z0-9]{1,12})/g
 
 /** Cross-platform basename. Mirror of the helper in App.tsx. */
 function pathBasename(path: string): string {
@@ -585,7 +640,7 @@ function pathBasename(path: string): string {
 /** Returns true if `path` looks absolute (POSIX or Windows). Used to
  *  decide whether we need to prepend `workspaceRoot`. */
 function isAbsolutePath(path: string): boolean {
-  return path.startsWith('/') || path.startsWith('~') || /^[A-Za-z]:[\\/]/.test(path)
+  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
 }
 
 /** Join two path segments with the system's preferred separator. We
@@ -597,21 +652,30 @@ function joinPath(root: string, rel: string): string {
   return `${cleanedRoot}/${cleanedRel}`
 }
 
+function resolveLocalPath(path: string, workspaceRoot: string | undefined): string | null {
+  // The renderer cannot deterministically expand HOME. Keeping a tilde path
+  // clickable only guarantees a Runtime 404, so leave it as honest prose.
+  if (path.startsWith('~')) return null
+  if (isAbsolutePath(path)) return path
+  return workspaceRoot ? joinPath(workspaceRoot, path) : null
+}
+
 /** Scan a text node for office file references, returning a React
  *  fragment with the recognized refs replaced by clickable buttons.
  *  Non-match characters pass through verbatim, so this is safe to use
  *  on arbitrary agent prose.
  */
-function renderTextWithOfficeLinks(
+function renderTextWithLocalFileLinks(
   text: string,
   workspaceRoot: string | undefined,
-  onPreviewLocalFile: (ref: LocalOfficeFileRef) => void,
+  onPreviewLocalFile: (ref: LocalFileRef) => void,
+  onLocalFileContextMenu?: (ref: LocalFileRef) => void,
 ): React.ReactNode {
   const parts: React.ReactNode[] = []
   let lastIndex = 0
   // The regex has `g` flag; we reset `lastIndex` to 0 on entry by using
   // `matchAll` (which constructs a fresh internal cursor each call).
-  const matches = Array.from(text.matchAll(OFFICE_FILE_RE))
+  const matches = Array.from(text.matchAll(LOCAL_FILE_RE))
   if (matches.length === 0) {
     // Return the bare string — fragment-wrapping is invisible to React
     // but causes Testing Library's `findByText` to occasionally fail
@@ -619,41 +683,43 @@ function renderTextWithOfficeLinks(
     return text
   }
   for (const match of matches) {
-    const matchedText = match[0]
-    const start = match.index ?? 0
+    const matchedText = match[2] ?? match[3]
+    const fullMatch = match[0]
+    const quoted = Boolean(match[2])
+    const fullStart = match.index ?? 0
+    const start = fullStart + (quoted ? 1 : 0)
     if (start > lastIndex) {
       parts.push(text.slice(lastIndex, start))
     }
-    const ext = matchedText.slice(matchedText.lastIndexOf('.') + 1).toLowerCase()
-    const kind = OFFICE_EXTENSION_KIND[ext]
-    const absolutePath = isAbsolutePath(matchedText)
-      ? matchedText.replace(/^~/, () => {
-          // Best-effort: we don't know HOME on the renderer side, so
-          // leave the tilde — the runtime doesn't expand it either,
-          // and clicking such a path will just 404. Reasonable
-          // degradation for an edge case.
-          return '~'
-        })
-      : workspaceRoot
-        ? joinPath(workspaceRoot, matchedText)
-        : null
-    if (!kind || !absolutePath) {
+    const kind = filePreviewKind(matchedText)
+    const absolutePath = resolveLocalPath(matchedText, workspaceRoot)
+    const prefix = text.slice(0, start)
+    const truncatedAbsolutePath = !quoted && /(?:^|\s)[^\s]*[/\\][^\s]*\s$/.test(prefix)
+    const ambiguousRelativePath = !quoted
+      && !isAbsolutePath(matchedText)
+      && /[/\\]/.test(matchedText)
+      // One leading prose token ("Open docs/report.pdf") is unambiguous;
+      // two or more may be a truncated space-containing path, so require
+      // quotes/inline code rather than inventing a boundary.
+      && prefix.trim().split(/\s+/).filter(Boolean).length >= 2
+    if (!kind || !absolutePath || truncatedAbsolutePath || ambiguousRelativePath) {
       // Either the extension isn't one we preview, or we have no
       // workspace root to resolve against — render as plain text.
       parts.push(matchedText)
     } else {
       parts.push(
-        <OfficeFileLink
+        <LocalFileLink
           key={`${start}-${matchedText}`}
           path={absolutePath}
           kind={kind}
           name={pathBasename(matchedText) || matchedText}
           display={matchedText}
           onClick={onPreviewLocalFile}
+          onContextMenu={onLocalFileContextMenu}
         />,
       )
     }
-    lastIndex = start + matchedText.length
+    lastIndex = fullStart + fullMatch.length - (quoted ? 1 : 0)
   }
   if (lastIndex < text.length) {
     parts.push(text.slice(lastIndex))
@@ -661,19 +727,22 @@ function renderTextWithOfficeLinks(
   return <>{parts}</>
 }
 
-function OfficeFileLink({
+function LocalFileLink({
   path,
   kind,
   name,
   display,
   onClick,
+  onContextMenu,
 }: {
   path: string
-  kind: LocalOfficeFileRef['kind']
+  kind: NonNullable<LocalFileRef['kind']>
   name: string
   display: string
-  onClick: (ref: LocalOfficeFileRef) => void
+  onClick: (ref: LocalFileRef) => void
+  onContextMenu?: (ref: LocalFileRef) => void
 }) {
+  const ref = { path, kind, name }
   return (
     <button
       type="button"
@@ -681,7 +750,12 @@ function OfficeFileLink({
       title={path}
       onClick={(event) => {
         event.preventDefault()
-        onClick({ path, kind, name })
+        onClick(ref)
+      }}
+      onContextMenu={(event) => {
+        if (!onContextMenu) return
+        event.preventDefault()
+        onContextMenu(ref)
       }}
     >
       {display}

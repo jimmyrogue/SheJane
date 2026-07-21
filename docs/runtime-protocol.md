@@ -177,7 +177,7 @@ EventSource API 也能用，但不能传 Authorization 头；fetch + ReadableStr
 
 | 方法 + 路径 | body | 触发的 SSE |
 |---|---|---|
-| `POST /v1/runs` | `{command_id, client_message_id, goal, permission_mode?, attachment_paths?, history?, settings?, ...}` | `permission_mode` 为 `ask`、`auto` 或 `full_access`，省略时使用 `ask`；附件必须是本机现有文件，最多 10 个，接纳时流式导入 Runtime 的不可变内容寻址输入存储（单个及单 Run 合计上限 1 TiB）；后续执行不再依赖原始主机路径。通用模型文件读取仍限制为 10 MiB，大文件必须由兼容插件处理；创建后开 stream → `run.started` |
+| `POST /v1/runs` | `{command_id, client_message_id, goal, permission_mode?, attachment_paths?, history?, settings?, ...}` | `permission_mode` 为 `ask`、`auto` 或 `full_access`，省略时使用 `ask`；附件必须是本机现有文件，最多 10 个，接纳时流式导入 Runtime 的不可变内容寻址输入存储（单个及单 Run 合计上限 200 MiB）；后续执行不再依赖原始主机路径。任务附件和 PDF 文件的模型读取上限为 200 MiB，其他 workspace、Skill、Memory 与子任务文件读取上限为 20 MiB；更大的文件必须由兼容插件流式处理；创建后开 stream → `run.started` |
 | `POST /v1/runs/:id/fork` | `{command_id, client_message_id, assistant_message_id, thread_id, protocol_version, required_capabilities, checkpoint_id, ...}` | 创建分支后开 stream → `run.started` |
 | `GET /v1/runs/:id/stream` | — | （本协议） |
 | `POST /v1/commands` | Run/HITL 命令，以及 `plugin.install`、`plugin.runtime_asset.install`、`plugin.enable/disable/update/rollback/remove`、`plugin.model.bind` 的严格联合类型 | Run 命令产生对应状态事件；插件命令写入幂等 Command 日志并返回收据 |

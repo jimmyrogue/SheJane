@@ -25,6 +25,16 @@ vi.mock('./DocPreview/PdfPreview', () => ({
     <div data-testid="pdf-preview-stub">pdf:{sourceKey}</div>
   ),
 }))
+vi.mock('./DocPreview/TextPreview', () => ({
+  TextPreview: ({ sourceKey }: { sourceKey: string }) => (
+    <div data-testid="text-preview-stub">text:{sourceKey}</div>
+  ),
+}))
+vi.mock('./DocPreview/ImagePreview', () => ({
+  ImagePreview: ({ sourceKey }: { sourceKey: string }) => (
+    <div data-testid="image-preview-stub">image:{sourceKey}</div>
+  ),
+}))
 
 function makeDoc(overrides: Partial<OpenDocument> = {}): OpenDocument {
   return {
@@ -137,6 +147,23 @@ describe('DocPreviewPanel', () => {
     // Subtitle = kind label · pages · author (proves Layer A
     // metadata threaded all the way to the header).
     expect(screen.getByText('PDF 文档 · 15 页 · Vaswani et al.')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['code', 'local:/tmp/server.ts', '代码文件', 'text-preview-stub'],
+    ['text', 'local:/tmp/notes.txt', '文本文件', 'text-preview-stub'],
+    ['image', 'local:/tmp/photo.png', '图片', 'image-preview-stub'],
+  ] as const)('mounts the %s renderer', (kind, sourceKey, label, testId) => {
+    render(
+      <I18nProvider>
+        <DocPreviewPanel
+          doc={makeDoc({ kind, sourceKey, name: sourceKey.split('/').at(-1) ?? sourceKey })}
+          onClose={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+    expect(screen.getByTestId(testId)).toHaveTextContent(sourceKey)
+    expect(screen.getByText(label)).toBeInTheDocument()
   })
 
   it('omits the metadata badge for a PDF with no metadata', () => {

@@ -13,6 +13,9 @@ export interface ClientBridge {
     ready?: boolean
   }
   openFileWithDefaultApp?: (filePath: string) => Promise<string>
+  openFileSnapshot?: (input: { name: string, bytes: Uint8Array, action: 'open' | 'reveal' }) => Promise<string>
+  revealFileInFolder?: (filePath: string) => Promise<boolean>
+  showFileContextMenu?: (input: { canPreview: boolean }) => Promise<'preview' | 'open' | 'save' | 'reveal' | undefined>
 }
 
 export interface RuntimeConnection extends RuntimeClientConfig {

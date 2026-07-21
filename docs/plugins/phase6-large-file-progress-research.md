@@ -65,7 +65,9 @@ id, /input/<id>/<name>, media_type, size_bytes, sha256
 
 Hashing is incremental, which is correct. However:
 
-- the common attachment admission cap is currently 10 MiB;
+- attachment admission is streamed into Runtime-owned storage with a 200 MiB
+  per-file/per-Run ceiling, while direct model reads are capped at 200 MiB for
+  task attachments and PDF files and 20 MiB for other files;
 - the descriptor retains the original host `source_path` until Action execution;
 - [`plugins/tools.py`](../../runtime/src/shejane_runtime/plugins/tools.py) copies every selected input into a new execution directory;
 - [`plugins/executor.py`](../../runtime/src/shejane_runtime/plugins/executor.py) reads every authorized WASI input with `read_bytes()`.

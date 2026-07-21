@@ -68,7 +68,7 @@ function projectRuntimeItem(
   const id = item.client_id || item.id
   const existing = existingByID.get(id)
   if (item.item_type === 'user_message') {
-    const attachments = attachmentValues(item.metadata)
+    const attachments = attachmentValues(item.metadata, run)
     const pluginSelection = pluginSelectionValue(item.metadata)
     return {
       ...(existing ?? {}),
@@ -77,6 +77,7 @@ function projectRuntimeItem(
       content: item.content,
       createdAt: item.created_at,
       status: 'done',
+      ...(item.run_id ? { runId: item.run_id } : {}),
       ...(attachments.length ? { attachments } : {}),
       pluginReferences: pluginSelection.references.length ? pluginSelection.references : undefined,
       pluginCommand: pluginSelection.command,
@@ -139,15 +140,38 @@ function pluginSelectionValue(value: unknown): {
   return { references, ...(command ? { command } : {}) }
 }
 
-function attachmentValues(value: unknown): NonNullable<ChatMessage['attachments']> {
+function attachmentValues(
+  value: unknown,
+  run?: LocalRun,
+): NonNullable<ChatMessage['attachments']> {
   const attachments = objectValue(value).attachments
   if (!Array.isArray(attachments)) return []
-  return attachments.flatMap((value) => {
+  const inputsByIndex = new Map((run?.inputs ?? []).map((input) => [input.client_index, input]))
+  const valid = attachments.flatMap((value, index) => {
     const item = objectValue(value)
+    const input = inputsByIndex.get(index)
     return typeof item.path === 'string' && item.path && typeof item.name === 'string' && item.name
-      ? [{ path: item.path, name: item.name }]
+      ? [{
+        path: item.path,
+        name: item.name,
+        ...(input
+          ? { inputId: input.input_id, mediaType: input.media_type, bytes: input.bytes }
+          : typeof item.input_id === 'string' && item.input_id
+            ? {
+              inputId: item.input_id,
+              ...(typeof item.media_type === 'string' && item.media_type ? { mediaType: item.media_type } : {}),
+              ...(typeof item.bytes === 'number' && item.bytes >= 0 ? { bytes: item.bytes } : {}),
+            }
+            : {}),
+      }]
       : []
   }).slice(0, 10)
+  return valid.map((attachment) => ({
+    ...attachment,
+    ...(run?.id && attachment.inputId ? {
+      runId: run.id,
+    } : {}),
+  }))
 }
 
 function assistantStatus(itemStatus: string, runStatus?: LocalRun['status']): MessageStatus {

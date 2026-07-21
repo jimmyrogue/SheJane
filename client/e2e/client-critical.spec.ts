@@ -14,6 +14,7 @@ import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  cancelLocalRunCommand,
   getLocalRunDiagnostics,
   getRuntimeSettings,
   listLocalRuns,
@@ -584,6 +585,113 @@ test.describe.serial('flow:P2-P12 > Electron critical path', () => {
       expect(harness.rendererErrors).toEqual([])
     } finally {
       fs.rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  test('previews an immutable sent attachment and exposes its native file menu', async ({}, testInfo) => {
+    const attachmentDir = fs.mkdtempSync(
+      path.join(process.env.SHEJANE_E2E_TMP_DIR ?? os.tmpdir(), 'client-attachment-'),
+    )
+    const attachmentName = 'immutable-result-with-a-very-long-name-for-truncation.txt'
+    const attachmentPath = path.join(attachmentDir, attachmentName)
+    const marker = 'E2E immutable attachment preview'
+    fs.writeFileSync(attachmentPath, marker)
+    try {
+      const { app, page } = harness
+      await page.getByRole('button', { name: /新对话|New chat/ }).click()
+      await app.evaluate(({ dialog }, selectedPath) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+      }, attachmentPath)
+      await page.getByRole('button', { name: /添加附件|Attach/ }).click()
+      await expect(page.getByText(attachmentName, { exact: true })).toBeVisible()
+
+      const composer = page.getByRole('textbox', {
+        name: /交给石间|Hand it to SheJane|Describe a task/,
+      })
+      await composer.fill('[[e2e:slow]] exercise the immutable attachment preview boundary')
+      await page.getByRole('button', { name: /发送|Send/ }).click()
+      const runtimeConnection = {
+        baseURL: requiredEnv('SHEJANE_E2E_RUNTIME_URL'),
+        token: requiredEnv('SHEJANE_E2E_RUNTIME_TOKEN'),
+      }
+      await expect.poll(async () => {
+        const run = (await listLocalRuns(runtimeConnection)).find(
+          item => item.goal.includes('immutable attachment preview boundary'),
+        )
+        return run?.status === 'running' && run.inputs[0]?.input_id === 'source'
+      }).toBe(true)
+      await expect(page.getByRole('button', { name: /停止生成|Stop/ })).toBeVisible()
+
+      // The preview must now be backed by Runtime-owned bytes. Removing the
+      // originally selected path proves the Client is not silently reopening it.
+      fs.unlinkSync(attachmentPath)
+      const card = page.locator('.message.user').getByRole('button', {
+        name: attachmentName,
+      })
+      await expect(page.locator('.message.user > .message-attachments-detached').getByRole('button', {
+        name: attachmentName,
+      })).toBeVisible()
+      await expect(page.locator('.message.user .message-bubble-inner').getByRole('button', {
+        name: attachmentName,
+      })).toHaveCount(0)
+      await expect(card.locator('.tabler-icon-file-text')).toBeVisible()
+      const fileName = card.locator('.message-attachment-name')
+      await expect(fileName).toHaveCSS('text-overflow', 'ellipsis')
+      expect(await fileName.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+
+      await app.evaluate(({ Menu }) => {
+        const state = globalThis as typeof globalThis & {
+          __shejaneE2EOriginalMenuBuilder?: typeof Menu.buildFromTemplate
+          __shejaneE2EFileMenuLabels?: string[]
+        }
+        state.__shejaneE2EOriginalMenuBuilder = Menu.buildFromTemplate
+        Menu.buildFromTemplate = ((template) => ({
+          popup() {
+            state.__shejaneE2EFileMenuLabels = template
+              .map(item => 'label' in item ? item.label : undefined)
+              .filter((label): label is string => Boolean(label))
+          },
+        })) as typeof Menu.buildFromTemplate
+      })
+      await card.click({ button: 'right' })
+      await expect.poll(() => app.evaluate(() => {
+        const state = globalThis as typeof globalThis & { __shejaneE2EFileMenuLabels?: string[] }
+        return state.__shejaneE2EFileMenuLabels ?? []
+      })).toEqual(expect.arrayContaining([
+        expect.stringMatching(/预览|Preview/),
+        expect.stringMatching(/打开|Open/),
+        expect.stringMatching(/保存副本|Save a Copy/),
+        expect.stringMatching(/访达|文件夹|Finder|Folder/),
+      ]))
+      await card.click()
+      await expect(page.getByText(marker, { exact: true })).toBeVisible()
+
+      const screenshotPath = process.env.SHEJANE_VISUAL_SCREENSHOT ?? testInfo.outputPath('attachment-preview.png')
+      await page.screenshot({ path: screenshotPath })
+      expect(harness.rendererErrors).toEqual([])
+      const currentRun = (await listLocalRuns(runtimeConnection)).find(
+        item => item.goal.includes('immutable attachment preview boundary'),
+      )
+      if (currentRun?.status === 'running') {
+        await cancelLocalRunCommand(
+          `cmd_e2e_cancel_attachment_preview_${Date.now()}`,
+          currentRun.id,
+          runtimeConnection,
+        )
+      }
+    } finally {
+      await harness.app.evaluate(({ Menu }) => {
+        const state = globalThis as typeof globalThis & {
+          __shejaneE2EOriginalMenuBuilder?: typeof Menu.buildFromTemplate
+          __shejaneE2EFileMenuLabels?: string[]
+        }
+        if (state.__shejaneE2EOriginalMenuBuilder) {
+          Menu.buildFromTemplate = state.__shejaneE2EOriginalMenuBuilder
+        }
+        delete state.__shejaneE2EOriginalMenuBuilder
+        delete state.__shejaneE2EFileMenuLabels
+      }).catch(() => undefined)
+      fs.rmSync(attachmentDir, { recursive: true, force: true })
     }
   })
 

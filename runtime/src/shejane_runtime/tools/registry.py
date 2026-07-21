@@ -15,6 +15,7 @@ from deepagents.backends import FilesystemBackend
 from deepagents.middleware import FilesystemMiddleware
 from langchain_core.tools import BaseTool
 
+from ..agent.backends import MODEL_FILE_READ_MAX_MB
 from ..store.sqlite import LocalStore
 from ..tool_schemas import tool_input_schema
 from .browser import make_browser_tool_if_configured
@@ -119,7 +120,11 @@ def _deepagents_filesystem_tools(workspace_root: str | None = None) -> list[Base
     without adding duplicate tools to build_tools().
     """
     root = workspace_root or str(Path.home() / ".shejane" / "workspace")
-    backend = FilesystemBackend(root_dir=root, virtual_mode=True, max_file_size_mb=10)
+    backend = FilesystemBackend(
+        root_dir=root,
+        virtual_mode=True,
+        max_file_size_mb=MODEL_FILE_READ_MAX_MB,
+    )
     return list(FilesystemMiddleware(backend=backend).tools)
 
 

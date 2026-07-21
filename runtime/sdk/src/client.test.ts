@@ -4,6 +4,7 @@ import {
   createLocalRun,
   deliverPendingRuntimeCommands,
   discoverLocalModels,
+  fetchRunInput,
   getLocalArtifactContent,
   parseAgentSSEBuffer,
   parseRuntimeModelSpec,
@@ -12,6 +13,51 @@ import {
   streamLocalRun,
   updateRuntimeSettings,
 } from './index'
+
+describe('fetchRunInput', () => {
+  it('downloads immutable Runtime-owned input bytes with encoded identifiers', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(new TextEncoder().encode('snapshot body'), {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain', 'Content-Length': '13' },
+      }),
+    )
+
+    const bytes = await fetchRunInput(
+      'run/id',
+      'attachment 1',
+      { baseURL: 'http://127.0.0.1:17371/', token: 'runtime-token' },
+      fetcher,
+    )
+
+    expect(new TextDecoder().decode(bytes)).toBe('snapshot body')
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17371/v1/runs/run%2Fid/inputs/attachment%201',
+      {
+        method: 'GET',
+        headers: { Authorization: 'Bearer runtime-token' },
+      },
+    )
+  })
+
+  it('rejects an oversized response before buffering it', async () => {
+    const response = new Response('small placeholder', {
+      status: 200,
+      headers: { 'Content-Length': String(21 * 1024 * 1024) },
+    })
+    const arrayBuffer = vi.spyOn(response, 'arrayBuffer')
+    const fetcher = vi.fn().mockResolvedValue(response)
+
+    await expect(fetchRunInput(
+      'run_1',
+      'source',
+      { baseURL: 'http://127.0.0.1:17371', token: 'runtime-token' },
+      fetcher,
+      20 * 1024 * 1024,
+    )).rejects.toThrow(/too large/i)
+    expect(arrayBuffer).not.toHaveBeenCalled()
+  })
+})
 
 describe('getLocalArtifactContent', () => {
   it('downloads the authenticated artifact body without JSON decoding', async () => {
@@ -42,13 +88,24 @@ describe('getLocalArtifactContent', () => {
 describe('createLocalRun plugin selection', () => {
   it('serializes explicit references and one plugin command', async () => {
     const fetcher = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'run_plugin' }), {
+      new Response(JSON.stringify({
+        id: 'run_plugin',
+        inputs: [{
+          client_index: 0,
+          input_id: 'source',
+          virtual_path: '/attachments/brief.txt',
+          original_name: 'brief.txt',
+          media_type: 'text/plain',
+          bytes: 5,
+          sha256: 'a'.repeat(64),
+        }],
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
     )
 
-    await createLocalRun(
+    const run = await createLocalRun(
       {
         commandId: 'cmd_plugin_run',
         clientMessageId: 'msg_plugin_run',
@@ -81,6 +138,7 @@ describe('createLocalRun plugin selection', () => {
         expected_digest: `sha256:${'a'.repeat(64)}`,
       },
     ])
+    expect(run.inputs?.[0]).toMatchObject({ input_id: 'source', original_name: 'brief.txt' })
     expect(body.plugin_command).toEqual({
       plugin_id: 'dev.shejane.fixture.archive',
       command_id: 'archive.extract',

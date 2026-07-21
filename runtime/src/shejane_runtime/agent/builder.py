@@ -93,6 +93,8 @@ from ..tools.mcp import (
 from ..tools.registry import build_tools, tool_definition
 from ..tools.runtime import RuntimeToolProxy
 from .backends import (
+    ATTACHMENT_FILE_READ_MAX_MB,
+    MODEL_FILE_READ_MAX_MB,
     ReadOnlyBackend,
     ReadOnlyFileBackend,
     RuntimeBackend,
@@ -106,7 +108,9 @@ log = logging.getLogger("shejane_runtime.agent.builder")
 
 _AGENT_DEFINITION_CACHE_MAX = 16
 _AGENT_STATE_SCHEMA_VERSION = 2
-_APPROVAL_REVIEW_MAX_CALLS = 8
+_MAX_SUBAGENT_TASKS_PER_RUN = 5
+_PARENT_MODEL_CALL_RESERVE = 5
+_APPROVAL_REVIEW_MAX_CALLS = 20
 _CLARIFICATION_REVIEW_MAX_CALLS = 4
 _COMPLETION_REVIEW_MAX_CALLS = 4
 _VISION_MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024
@@ -261,7 +265,7 @@ def _agent_backend_routes(
             RuntimeFilesystemBackend(
                 root_dir=source.parent,
                 virtual_mode=True,
-                max_file_size_mb=10,
+                max_file_size_mb=ATTACHMENT_FILE_READ_MAX_MB,
             ),
             source.name,
             display_name=Path(item["virtual_path"]).name,
@@ -275,7 +279,7 @@ def _agent_backend_routes(
             RuntimeFilesystemBackend(
                 root_dir=backend_root,
                 virtual_mode=True,
-                max_file_size_mb=10,
+                max_file_size_mb=MODEL_FILE_READ_MAX_MB,
             )
         )
         for route in _absolute_route_keys(root):
@@ -291,7 +295,7 @@ def _agent_backend_routes(
             RuntimeFilesystemBackend(
                 root_dir=path.parent.resolve(strict=False),
                 virtual_mode=True,
-                max_file_size_mb=10,
+                max_file_size_mb=MODEL_FILE_READ_MAX_MB,
             ),
             path.name,
         )
@@ -460,6 +464,10 @@ def _custom_middleware(
             ToolCallLimitMiddleware(  # P8
                 tool_name="web.search",
                 run_limit=settings.research_search_limit,
+            ),
+            ToolCallLimitMiddleware(
+                tool_name="task",
+                run_limit=_MAX_SUBAGENT_TASKS_PER_RUN,
             ),
             # Retry only network/IO-flaky tools, with a tight retryable
             # exception set. We deliberately exclude tools that use
@@ -1109,6 +1117,10 @@ async def build_agent(
         else model
     )
     definition_model = RuntimeModelProxy(profile=getattr(model, "profile", None))
+    subagent_model = RuntimeModelProxy(
+        profile=getattr(model, "profile", None),
+        max_model_calls=max(1, settings.max_model_calls - _PARENT_MODEL_CALL_RESERVE),
+    )
 
     skills_dirs = _resolve_skills_dirs() if skills_enabled else []
     skills_arg = [str(d) for d in skills_dirs] if skills_dirs else None
@@ -1151,7 +1163,7 @@ async def build_agent(
     subagents_arg = (
         build_subagents(
             main_tools=tools,
-            main_model=definition_model,
+            main_model=subagent_model,
             deferred_tool_names=deferred_tool_names,
         )
         if settings.enable_subagents
@@ -1308,6 +1320,7 @@ def _agent_definition_fingerprint(
         "memory": memory or [],
         "plugin_catalog_hash": plugin_catalog_hash,
         "middleware": {
+            "max_model_calls": settings.max_model_calls,
             "input_guard": settings.input_guard_mode,
             "plan_first": settings.plan_first_mode,
             "research_limit": settings.research_search_limit,

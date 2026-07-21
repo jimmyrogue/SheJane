@@ -1,4 +1,5 @@
 import type { RuntimeModelSpec } from '@shejane/runtime-sdk'
+import type { FilePreviewKind } from '../files/filePreview'
 
 export type MessageRole = 'system' | 'user' | 'assistant'
 /** Concrete Runtime model selection (`local:<provider>:<model>`). */
@@ -147,6 +148,11 @@ export interface ChatMessage {
 export interface LocalAttachmentRef {
   path: string
   name: string
+  /** Runtime-owned immutable input location for attachments already admitted to a Run. */
+  runId?: string
+  inputId?: string
+  mediaType?: string
+  bytes?: number
 }
 
 export interface ConversationWorkspace {
@@ -190,7 +196,7 @@ export interface OpenDocument {
   /** "word", "excel", "powerpoint", or "pdf" — drives which preview
    *  component the panel mounts (DocxPreview / XlsxPreview /
    *  PptxPreview / PdfPreview). */
-  kind: 'word' | 'excel' | 'powerpoint' | 'pdf'
+  kind: FilePreviewKind
   /** Display label — typically the basename. */
   name: string
   /** Optional full path or description shown as tooltip on the header. */
@@ -210,32 +216,23 @@ export interface OpenDocument {
    *  endpoint + the "open natively" button can hand the path to the
    *  Electron shell. */
   localPath?: string
+  runId?: string
+  inputId?: string
 }
 
 /** Reference to an office file living inside an authorized workspace.
  *  Emitted by detectors / clickable-filename handlers; App.tsx wraps
  *  it into a full OpenDocument by binding `fetchWorkspaceFile`. */
-export interface LocalOfficeFileRef {
+export interface LocalFileRef {
   /** Absolute path on the user's machine. Must be inside an
    *  authorized workspace (the runtime enforces this on fetch). */
   path: string
-  kind: 'word' | 'excel' | 'powerpoint'
+  kind?: FilePreviewKind
   /** Display name — typically the basename. */
   name: string
-}
-
-/** One slide's outline data returned by the runtime's
- *  GET /v1/pptx-outline endpoint (and equivalently by the
- *  office.read_slides tool). The PptxPreview component renders one
- *  card per entry. */
-export interface PptxSlideOutline {
-  index: number
-  layout: string
-  title: string
-  bullets: string[]
-  notes: string
-  shape_count: number
-  image_count: number
+  /** Prefer the immutable Runtime snapshot when this ref came from a sent attachment. */
+  runId?: string
+  inputId?: string
 }
 
 /**

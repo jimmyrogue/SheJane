@@ -50,7 +50,8 @@ def test_all_knobs_applied_with_coercion() -> None:
     assert eff.input_guard_mode == "block"
     assert eff.plan_first_mode == "auto"
     # Copy semantics: the base instance is never mutated.
-    assert base.max_model_calls == 20
+    assert base.max_model_calls == 100
+    assert base.research_search_limit == 10
     assert base.enable_subagents is True
 
 

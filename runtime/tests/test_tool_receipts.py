@@ -69,6 +69,67 @@ async def test_tool_review_rejects_duplicate_call_ids_before_execution() -> None
         )
 
 
+@pytest.mark.asyncio
+async def test_tool_review_skips_calls_already_blocked_by_an_earlier_middleware(
+    tmp_path: Path,
+) -> None:
+    store, run = await _store_and_run(tmp_path)
+    calls = [
+        ToolCall(
+            type="tool_call", id=f"task-{index}", name="task", args={"description": str(index)}
+        )
+        for index in range(3)
+    ]
+    context = RuntimeContext(
+        store=store,
+        run_id=str(run["id"]),
+        execution_attempt_id="job-limit:1",
+        graph_definition_id="graph-v1",
+        tool_registry={
+            "task": SimpleNamespace(
+                tool_call_schema={
+                    "type": "object",
+                    "properties": {"description": {"type": "string"}},
+                    "required": ["description"],
+                    "additionalProperties": False,
+                }
+            )
+        },
+    )
+    state = {
+        "messages": [
+            AIMessage(content="", tool_calls=calls),
+            ToolMessage(
+                content="Tool call limit exceeded.",
+                name="task",
+                tool_call_id="task-1",
+                status="error",
+            ),
+            ToolMessage(
+                content="Tool call limit exceeded.",
+                name="task",
+                tool_call_id="task-2",
+                status="error",
+            ),
+        ]
+    }
+    try:
+        assert (
+            await ToolReviewMiddleware().aafter_model(
+                state,
+                SimpleNamespace(context=context),  # type: ignore[arg-type]
+            )
+            is None
+        )
+
+        receipts = await store.list_tool_receipts_for_run(str(run["id"]))
+        assert [(receipt["tool_call_id"], receipt["status"]) for receipt in receipts] == [
+            ("task-0", "prepared")
+        ]
+    finally:
+        await store.close()
+
+
 def test_tool_review_validates_json_schema_tools() -> None:
     tool = SimpleNamespace(
         tool_call_schema={
@@ -1197,6 +1258,33 @@ async def test_oversized_command_state_is_not_silently_dropped(
             )
         receipt = (await store.list_tool_receipts_for_run(str(run["id"])))[0]
         assert receipt["status"] == "outcome_unknown"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_task_failure_is_not_misclassified_as_unknown_external_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, run = await _store_and_run(tmp_path)
+
+    async def handler(_request: ToolCallRequest) -> ToolMessage:
+        raise RuntimeError("subagent model budget exhausted")
+
+    monkeypatch.setattr(
+        "shejane_runtime.middleware.tool_execution.interrupt",
+        lambda _payload: (_ for _ in ()).throw(AssertionError("task must not reconcile")),
+    )
+    try:
+        result = await ToolExecutionMiddleware().awrap_tool_call(
+            _request(store, str(run["id"]), tool_name="task", arguments={"description": "x"}),
+            handler,
+        )
+        assert isinstance(result, ToolMessage)
+        assert result.status == "error"
+        assert "subagent model budget exhausted" in str(result.content)
+        receipt = (await store.list_tool_receipts_for_run(str(run["id"])))[0]
+        assert receipt["status"] == "failed"
     finally:
         await store.close()
 

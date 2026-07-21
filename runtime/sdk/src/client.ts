@@ -82,15 +82,8 @@ export interface LocalEditedToolAction {
   name: string
   args: Record<string, unknown>
 }
-export interface PptxSlideOutline {
-  index: number
-  layout: string
-  title: string
-  bullets: string[]
-  notes: string
-  shape_count: number
-  image_count: number
-}
+export type PptxSlideOutline = Schemas['PptxSlideOutline']
+export type PptxOutlineResponse = Schemas['PptxOutlineResponse']
 export type LocalPlanApprovalDecision = 'approve' | 'modify' | 'reject'
 
 // -- Hand-written types (not in OpenAPI) -------------------------------------
@@ -1472,8 +1465,27 @@ export async function fetchPptxOutline(
   path: string,
   config: RuntimeClientConfig,
   fetcher: Fetcher = fetch,
-): Promise<{ slides: PptxSlideOutline[]; slide_count: number }> {
+): Promise<PptxOutlineResponse> {
   const url = `${normalizeBaseURL(config.baseURL)}/v1/pptx-outline?path=${encodeURIComponent(path)}`
+  const response = await fetcher(url, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  if (!response.ok) {
+    const text = await response.text().catch(() => response.statusText)
+    throw new Error(`pptx outline fetch failed (${response.status}): ${text}`)
+  }
+  return response.json()
+}
+
+/** Parse a PowerPoint outline from an immutable Runtime-owned attachment. */
+export async function fetchRunInputPptxOutline(
+  runID: string,
+  inputID: string,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PptxOutlineResponse> {
+  const url = `${normalizeBaseURL(config.baseURL)}/v1/runs/${encodeURIComponent(runID)}/inputs/${encodeURIComponent(inputID)}/pptx-outline`
   const response = await fetcher(url, {
     method: 'GET',
     headers: localHeaders(config, false),
@@ -1508,6 +1520,34 @@ export async function fetchWorkspaceFile(
     throw new Error(`workspace file fetch failed (${response.status}): ${text}`)
   }
   return response.arrayBuffer()
+}
+
+/** Download one immutable attachment snapshot owned by a Runtime Run. */
+export async function fetchRunInput(
+  runID: string,
+  inputID: string,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+  maxBytes = 200 * 1024 * 1024,
+): Promise<ArrayBuffer> {
+  const url = `${normalizeBaseURL(config.baseURL)}/v1/runs/${encodeURIComponent(runID)}/inputs/${encodeURIComponent(inputID)}`
+  const response = await fetcher(url, {
+    method: 'GET',
+    headers: localHeaders(config, false),
+  })
+  if (!response.ok) {
+    const text = await response.text().catch(() => response.statusText)
+    throw new Error(`run input fetch failed (${response.status}): ${text}`)
+  }
+  const declaredBytes = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    throw new Error(`run input is too large to preview (${declaredBytes} bytes)`)
+  }
+  const body = await response.arrayBuffer()
+  if (body.byteLength > maxBytes) {
+    throw new Error(`run input is too large to preview (${body.byteLength} bytes)`)
+  }
+  return body
 }
 
 export async function listAuthorizedWorkspaces(config: RuntimeClientConfig, fetcher: Fetcher = fetch): Promise<LocalWorkspaceAuthorization[]> {

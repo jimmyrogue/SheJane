@@ -933,7 +933,7 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
     it('rejects a workspace file above the Runtime read-size limit without loading it', async () => {
       const suffix = Date.now().toString(36)
       const fileName = `oversized-${suffix}.txt`
-      writeFileSync(join(workspace, fileName), Buffer.alloc(11 * 1024 * 1024, 0x78))
+      writeFileSync(join(workspace, fileName), Buffer.alloc(21 * 1024 * 1024, 0x78))
       const run = await createLocalRun({
         commandId: `cmd_e2e_oversized_read_${suffix}`,
         clientMessageId: `msg_e2e_oversized_read_${suffix}`,
@@ -953,7 +953,7 @@ describe.skipIf(!BASE_URL)('flow:P10 > contract: every Runtime Tool (live runtim
         }),
         expect.objectContaining({ type: 'run.completed' }),
       ]))
-      expect(JSON.stringify(events)).toMatch(/too large|size|10 MB/i)
+      expect(JSON.stringify(events)).toMatch(/too large|size|20 MB/i)
       const diagnostics = await getLocalRunDiagnostics(run.id, config)
       expect(diagnostics.tool_receipts).toEqual(expect.arrayContaining([
         expect.objectContaining({

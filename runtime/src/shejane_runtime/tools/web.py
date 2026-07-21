@@ -24,6 +24,7 @@ ALLOWED_SCHEMES = {"http", "https"}
 DEFAULT_TIMEOUT_S = 15.0
 MAX_RESPONSE_BYTES = 2_000_000  # ~2 MB cap
 MAX_REDIRECTS = 5
+FAKE_IP_PROXY_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
 
 def _is_private_ip(ip_str: str) -> bool:
@@ -41,12 +42,23 @@ def _is_private_ip(ip_str: str) -> bool:
     )
 
 
-def _resolve_safe(hostname: str) -> tuple[bool, str]:
-    ok, reason, _address = _resolve_pinned(hostname)
+def _resolve_safe(hostname: str, *, allow_fake_ip: bool = False) -> tuple[bool, str]:
+    ok, reason, _address = _resolve_pinned(hostname, allow_fake_ip=allow_fake_ip)
     return ok, reason
 
 
-def _resolve_pinned(hostname: str) -> tuple[bool, str, str | None]:
+def _is_fake_ip_proxy_address(ip_str: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip_str) in FAKE_IP_PROXY_NETWORK
+    except ValueError:
+        return False
+
+
+def _resolve_pinned(
+    hostname: str,
+    *,
+    allow_fake_ip: bool = False,
+) -> tuple[bool, str, str | None]:
     try:
         addresses = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
@@ -54,7 +66,7 @@ def _resolve_pinned(hostname: str) -> tuple[bool, str, str | None]:
     pinned: str | None = None
     for _family, _type, _proto, _canon, sockaddr in addresses:
         ip = sockaddr[0]
-        if _is_private_ip(ip):
+        if _is_private_ip(ip) and not (allow_fake_ip and _is_fake_ip_proxy_address(ip)):
             return False, f"refusing private/loopback address {ip} for {hostname}", None
         if pinned is None:
             pinned = ip
@@ -71,7 +83,7 @@ def _validate_fetch_url(url: str) -> tuple[bool, str]:
         return False, "missing hostname"
     if parts.username is not None or parts.password is not None:
         return False, "URL credentials are not allowed"
-    return _resolve_safe(parts.hostname)
+    return _resolve_safe(parts.hostname, allow_fake_ip=parts.scheme == "https")
 
 
 class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
@@ -120,7 +132,14 @@ def _pinned_transport(url: str) -> tuple[httpx.AsyncHTTPTransport | None, str]:
         return None, "missing hostname"
     if parts.username is not None or parts.password is not None:
         return None, "URL credentials are not allowed"
-    ok, reason, address = _resolve_pinned(parts.hostname)
+    # Clash/OpenClash-style fake-IP DNS uses the RFC 2544 benchmarking range
+    # as a local proxy route. Permit that one range for HTTPS only: TLS still
+    # authenticates the requested hostname, while HTTP and all real private,
+    # loopback, link-local, multicast, and reserved ranges remain blocked.
+    ok, reason, address = _resolve_pinned(
+        parts.hostname,
+        allow_fake_ip=parts.scheme == "https",
+    )
     if not ok or address is None:
         return None, reason
     transport = httpx.AsyncHTTPTransport()

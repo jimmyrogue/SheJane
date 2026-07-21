@@ -440,7 +440,7 @@ describe('MessageBubble meta', () => {
     expect(screen.queryByText('missing API key')).not.toBeInTheDocument()
   })
 
-  it('discards transient model-round text after a durable run failure', () => {
+  it('keeps already displayed model output visible after a durable run failure', () => {
     vi.useFakeTimers()
     const { rerender } = render(
       <I18nProvider>
@@ -466,8 +466,8 @@ describe('MessageBubble meta', () => {
       </I18nProvider>,
     )
 
-    expect(screen.queryByText(/临时模型/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '复制' })).not.toBeInTheDocument()
+    expect(screen.getByText(/临时模型/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '复制' })).toBeInTheDocument()
   })
 
   it('omits the usage chip when there is no usage data', () => {
@@ -511,13 +511,13 @@ describe('MessageBubble meta', () => {
     expect(screen.getByText('等待你的回答。')).toBeInTheDocument()
   })
 
-  it('renders recognized office filenames as preview buttons that fire with the resolved absolute path', () => {
+  it('renders recognized local filenames as preview buttons that fire with the resolved absolute path', () => {
     const onPreviewLocalFile = vi.fn()
     render(
       <I18nProvider>
         <MessageBubble
           message={message({
-            content: 'Files in workspace:\n- report.docx\n- /tmp/numbers.xlsx\n- slides.pptx\n- notes.txt',
+            content: 'Files in workspace:\n- report.docx\n- /tmp/numbers.xlsx\n- slides.pptx\n- paper.pdf\n- server.ts\n- notes.txt',
           })}
           workspaceRoot="/Users/me/proj"
           onPreviewLocalFile={onPreviewLocalFile}
@@ -551,8 +551,170 @@ describe('MessageBubble meta', () => {
       name: 'slides.pptx',
     })
 
-    // Non-office filename stays plain text — no button for "notes.txt".
-    expect(screen.queryByRole('button', { name: 'notes.txt' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'paper.pdf' }))
+    expect(onPreviewLocalFile).toHaveBeenLastCalledWith({
+      path: '/Users/me/proj/paper.pdf',
+      kind: 'pdf',
+      name: 'paper.pdf',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'server.ts' }))
+    expect(onPreviewLocalFile).toHaveBeenLastCalledWith({
+      path: '/Users/me/proj/server.ts',
+      kind: 'code',
+      name: 'server.ts',
+    })
+
+    expect(screen.getByRole('button', { name: 'notes.txt' })).toBeInTheDocument()
+  })
+
+  it('opens the native context menu for generated file references', () => {
+    const onPreviewLocalFile = vi.fn()
+    const onLocalFileContextMenu = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({ content: '结果已保存为 paper.pdf' })}
+          workspaceRoot="/Users/me/proj"
+          onPreviewLocalFile={onPreviewLocalFile}
+          onLocalFileContextMenu={onLocalFileContextMenu}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'paper.pdf' }))
+    expect(onLocalFileContextMenu).toHaveBeenCalledWith({
+      path: '/Users/me/proj/paper.pdf',
+      kind: 'pdf',
+      name: 'paper.pdf',
+    })
+  })
+
+  it('resolves quoted and inline-code paths with spaces but leaves tilde paths inert', () => {
+    const onPreviewLocalFile = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({ content: 'Open "my report.pdf", `source files/server.ts`, and ~/private.pdf.' })}
+          workspaceRoot="/Users/me/proj"
+          onPreviewLocalFile={onPreviewLocalFile}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'my report.pdf' }))
+    expect(onPreviewLocalFile).toHaveBeenLastCalledWith({
+      path: '/Users/me/proj/my report.pdf',
+      kind: 'pdf',
+      name: 'my report.pdf',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'source files/server.ts' }))
+    expect(onPreviewLocalFile).toHaveBeenLastCalledWith({
+      path: '/Users/me/proj/source files/server.ts',
+      kind: 'code',
+      name: 'server.ts',
+    })
+    expect(screen.queryByRole('button', { name: '~/private.pdf' })).not.toBeInTheDocument()
+  })
+
+  it('does not create a misleading partial link for an unquoted absolute path with spaces', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({ content: 'Open /Users/me/My Report.pdf' })}
+          workspaceRoot="/Users/me/proj"
+          onPreviewLocalFile={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Report.pdf' })).not.toBeInTheDocument()
+    expect(screen.getByText(/\/Users\/me\/My Report\.pdf/)).toBeInTheDocument()
+  })
+
+  it('does not create a misleading partial link for an unquoted relative path with spaces', () => {
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({ content: 'Open my reports/Report.pdf' })}
+          workspaceRoot="/Users/me/proj"
+          onPreviewLocalFile={vi.fn()}
+        />
+      </I18nProvider>,
+    )
+
+    expect(screen.queryByRole('button', { name: 'reports/Report.pdf' })).not.toBeInTheDocument()
+    expect(screen.getByText(/my reports\/Report\.pdf/)).toBeInTheDocument()
+  })
+
+  it('keeps an unambiguous bare relative path clickable after one prose token', () => {
+    const onPreviewLocalFile = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({ content: 'Open docs/report.pdf' })}
+          workspaceRoot="/Users/me/proj"
+          onPreviewLocalFile={onPreviewLocalFile}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'docs/report.pdf' }))
+    expect(onPreviewLocalFile).toHaveBeenCalledWith({
+      path: '/Users/me/proj/docs/report.pdf',
+      kind: 'pdf',
+      name: 'report.pdf',
+    })
+  })
+
+  it('activates and opens the native context menu for sent attachment cards', () => {
+    const onPreviewLocalFile = vi.fn()
+    const onLocalFileContextMenu = vi.fn()
+    render(
+      <I18nProvider>
+        <MessageBubble
+          message={message({
+            role: 'user',
+            content: '请阅读',
+            attachments: [{
+              path: '/tmp/paper.pdf',
+              name: 'paper.pdf',
+              runId: 'run-1',
+              inputId: 'source',
+            }, {
+              path: '/tmp/photo.png',
+              name: 'photo.png',
+            }],
+          })}
+          onPreviewLocalFile={onPreviewLocalFile}
+          onLocalFileContextMenu={onLocalFileContextMenu}
+        />
+      </I18nProvider>,
+    )
+
+    const card = screen.getByRole('button', { name: 'paper.pdf' })
+    const attachmentGroup = card.closest('.message-attachments')
+    expect(attachmentGroup).toHaveClass('message-attachments-detached')
+    expect(card.closest('.message-bubble-inner')).toBeNull()
+    expect(screen.getByText('请阅读').closest('.message-bubble-inner')).not.toBeNull()
+    expect(card.querySelector('.message-attachment-name')).toHaveTextContent('paper.pdf')
+    expect(card.querySelector('.tabler-icon-file-type-pdf')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'photo.png' }).querySelector('.tabler-icon-photo'))
+      .toBeInTheDocument()
+    fireEvent.click(card)
+    expect(onPreviewLocalFile).toHaveBeenCalledWith({
+      path: '/tmp/paper.pdf',
+      name: 'paper.pdf',
+      kind: 'pdf',
+      runId: 'run-1',
+      inputId: 'source',
+    })
+    fireEvent.contextMenu(card)
+    expect(onLocalFileContextMenu).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'paper.pdf',
+      runId: 'run-1',
+      inputId: 'source',
+    }))
   })
 
   it('finds office filenames wrapped in inline code + bold (regression: the agent emits **`X.docx`**)', () => {

@@ -182,13 +182,14 @@ def test_docx_attachment_snapshot_is_exposed_as_model_readable_text(tmp_path: Pa
     assert "immutable attachment snapshot" in selected.file_data["content"]
 
 
-def test_document_attachment_read_keeps_the_model_file_size_limit(tmp_path: Path) -> None:
+def test_document_attachment_read_keeps_the_200_mib_file_size_limit(tmp_path: Path) -> None:
     from shejane_runtime.agent.builder import _build_agent_backend
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     snapshot = tmp_path / "large-snapshot"
-    snapshot.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+    with snapshot.open("wb") as stream:
+        stream.truncate(200 * 1024 * 1024 + 1)
     backend = _build_agent_backend(
         effective_workspace=str(workspace),
         skills_dirs=[],
@@ -205,6 +206,48 @@ def test_document_attachment_read_keeps_the_model_file_size_limit(tmp_path: Path
     assert selected.file_data is None
     assert selected.error is not None
     assert "too large to read" in selected.error
+    assert "limit 209715200 bytes / 200 MB" in selected.error
+
+
+def test_workspace_read_keeps_the_20_mib_file_size_limit(tmp_path: Path) -> None:
+    from shejane_runtime.agent.builder import _build_agent_backend
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    large_file = workspace / "large.txt"
+    with large_file.open("wb") as stream:
+        stream.truncate(20 * 1024 * 1024 + 1)
+    backend = _build_agent_backend(
+        effective_workspace=str(workspace),
+        skills_dirs=[],
+        memory_sources=[],
+    )
+
+    selected = backend.read("/large.txt")
+    assert selected.file_data is None
+    assert selected.error is not None
+    assert "too large to read" in selected.error
+    assert "limit 20971520 bytes / 20 MB" in selected.error
+
+
+def test_workspace_pdf_uses_the_200_mib_file_size_limit(tmp_path: Path) -> None:
+    from shejane_runtime.agent.builder import _build_agent_backend
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    large_pdf = workspace / "large.pdf"
+    with large_pdf.open("wb") as stream:
+        stream.truncate(20 * 1024 * 1024 + 1)
+    backend = _build_agent_backend(
+        effective_workspace=str(workspace),
+        skills_dirs=[],
+        memory_sources=[],
+    )
+
+    selected = backend.download_files(["/large.pdf"])[0]
+    assert selected.error is None
+    assert selected.content is not None
+    assert len(selected.content) == 20 * 1024 * 1024 + 1
 
 
 def _minimal_pdf(text: str) -> bytes:

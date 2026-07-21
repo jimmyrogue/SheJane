@@ -35,6 +35,7 @@ def bind_runtime_model(model: BaseChatModel):
 class RuntimeModelProxy(BaseChatModel):
     """Model placeholder whose calls use the current execution's model."""
 
+    max_model_calls: int | None = None
     bound_tools: list[Any] = Field(default_factory=list, exclude=True)
     tool_choice: str | None = Field(default=None, exclude=True)
     binding_kwargs: dict[str, Any] = Field(default_factory=dict, exclude=True)
@@ -62,6 +63,10 @@ class RuntimeModelProxy(BaseChatModel):
         model = _CURRENT_MODEL.get()
         if model is None:
             raise RuntimeError("model call is outside a bound execution")
+        if self.max_model_calls is not None and hasattr(model, "max_calls"):
+            model = model.model_copy(
+                update={"max_calls": min(int(model.max_calls), self.max_model_calls)}
+            )
         if self.bound_tools:
             return model.bind_tools(
                 self.bound_tools,

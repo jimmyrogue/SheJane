@@ -71,6 +71,25 @@ function trayMenuTemplateForPlatform(platform, locale, actions = {}) {
   ]
 }
 
+function fileContextMenuTemplate(platform, locale, canPreview, actions = {}) {
+  return [
+    {
+      id: 'preview',
+      label: desktopText(locale, 'fileContext.preview'),
+      enabled: Boolean(canPreview),
+      click: actions.onPreview,
+    },
+    { id: 'open', label: desktopText(locale, 'fileContext.open'), click: actions.onOpen },
+    { id: 'save', label: desktopText(locale, 'fileContext.save'), click: actions.onSave },
+    { type: 'separator' },
+    {
+      id: 'reveal',
+      label: desktopText(locale, platform === 'darwin' ? 'fileContext.revealFinder' : 'fileContext.revealFolder'),
+      click: actions.onReveal,
+    },
+  ]
+}
+
 function windowMenuOptionsForPlatform(platform) {
   return platform === 'darwin' ? {} : { autoHideMenuBar: true }
 }
@@ -107,6 +126,7 @@ module.exports = {
   configureApplicationMenuForPlatform,
   desktopLabels,
   desktopText,
+  fileContextMenuTemplate,
   normalizeDesktopLocale,
   suppressWindowMenuForPlatform,
   trayIconConfigForPlatform,

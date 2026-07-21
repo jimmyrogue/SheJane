@@ -290,4 +290,31 @@ describe('desktop shell', () => {
     expect(await screen.findByText('brief.pdf')).toBeInTheDocument()
     expect(selectAttachmentFiles).toHaveBeenCalledTimes(1)
   })
+
+  it('adds a local file dropped onto the composer', async () => {
+    const file = new File(['brief'], 'brief.pdf', { type: 'application/pdf' })
+    const getPathForFile = vi.fn().mockReturnValue('/tmp/brief.pdf')
+    Object.defineProperty(window, 'shejaneClient', {
+      configurable: true,
+      value: {
+        platform: 'darwin',
+        runtime: { baseURL: 'http://127.0.0.1:17371', session: 'client', ready: true },
+        getPathForFile,
+      },
+    })
+    render(<App />)
+    const editor = screen.getByRole('textbox')
+
+    fireEvent.drop(editor, {
+      dataTransfer: {
+        types: ['Files'],
+        files: [file],
+        getData: vi.fn().mockReturnValue(''),
+        setData: vi.fn(),
+      },
+    })
+
+    expect(await screen.findByText('brief.pdf')).toBeInTheDocument()
+    expect(getPathForFile).toHaveBeenCalledWith(file)
+  })
 })

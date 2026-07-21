@@ -2257,6 +2257,13 @@
             "title": "Id",
             "type": "string"
           },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/LocalRunInputRef"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
           "metadata_json": {
             "default": "{}",
             "title": "Metadata Json",
@@ -2335,7 +2342,8 @@
           "goal",
           "status",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "inputs"
         ],
         "title": "LocalRun",
         "type": "object"
@@ -2444,6 +2452,51 @@
           "handoff"
         ],
         "title": "LocalRunDiagnostics",
+        "type": "object"
+      },
+      "LocalRunInputRef": {
+        "properties": {
+          "bytes": {
+            "minimum": 0.0,
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "client_index": {
+            "minimum": 0.0,
+            "title": "Client Index",
+            "type": "integer"
+          },
+          "input_id": {
+            "title": "Input Id",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "original_name": {
+            "title": "Original Name",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "virtual_path": {
+            "title": "Virtual Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_index",
+          "input_id",
+          "virtual_path",
+          "original_name",
+          "media_type",
+          "bytes",
+          "sha256"
+        ],
+        "title": "LocalRunInputRef",
         "type": "object"
       },
       "LocalRuntimeModel": {
@@ -4561,6 +4614,73 @@
         "title": "PluginVersionSwitchCommandReceipt",
         "type": "object"
       },
+      "PptxOutlineResponse": {
+        "properties": {
+          "slide_count": {
+            "title": "Slide Count",
+            "type": "integer"
+          },
+          "slides": {
+            "items": {
+              "$ref": "#/components/schemas/PptxSlideOutline"
+            },
+            "title": "Slides",
+            "type": "array"
+          }
+        },
+        "required": [
+          "slides",
+          "slide_count"
+        ],
+        "title": "PptxOutlineResponse",
+        "type": "object"
+      },
+      "PptxSlideOutline": {
+        "properties": {
+          "bullets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Bullets",
+            "type": "array"
+          },
+          "image_count": {
+            "title": "Image Count",
+            "type": "integer"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "layout": {
+            "title": "Layout",
+            "type": "string"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "shape_count": {
+            "title": "Shape Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "layout",
+          "title",
+          "bullets",
+          "notes",
+          "shape_count",
+          "image_count"
+        ],
+        "title": "PptxSlideOutline",
+        "type": "object"
+      },
       "QuestionAnswer": {
         "properties": {
           "answered": {
@@ -4927,7 +5047,7 @@
             "type": "string"
           },
           "max_model_calls": {
-            "default": 20,
+            "default": 100,
             "maximum": 100.0,
             "minimum": 1.0,
             "title": "Max Model Calls",
@@ -4971,7 +5091,7 @@
             "type": "integer"
           },
           "research_search_limit": {
-            "default": 3,
+            "default": 10,
             "maximum": 20.0,
             "minimum": 1.0,
             "title": "Research Search Limit",
@@ -6274,9 +6394,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Pptx Outline V1 Pptx Outline Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PptxOutlineResponse"
                 }
               }
             },
@@ -6617,6 +6735,105 @@
           }
         },
         "summary": "Inject Run Instruction"
+      }
+    },
+    "/v1/runs/{run_id}/inputs/{input_id}": {
+      "get": {
+        "description": "Stream one immutable Runtime-owned input to its Run owner.",
+        "operationId": "get_run_input_v1_runs__run_id__inputs__input_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "input_id",
+            "required": true,
+            "schema": {
+              "title": "Input Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Input"
+      }
+    },
+    "/v1/runs/{run_id}/inputs/{input_id}/pptx-outline": {
+      "get": {
+        "description": "Return a deck outline from the immutable Runtime-owned input.",
+        "operationId": "get_run_input_pptx_outline_v1_runs__run_id__inputs__input_id__pptx_outline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "input_id",
+            "required": true,
+            "schema": {
+              "title": "Input Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PptxOutlineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Input Pptx Outline"
       }
     },
     "/v1/runs/{run_id}/stream": {

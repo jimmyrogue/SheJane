@@ -80,9 +80,9 @@ class Settings(BaseSettings):
     fake_llm: bool = Field(default=False, alias="SHEJANE_FAKE_LLM")
 
     # Agent runtime knobs
-    max_model_calls: int = 20
+    max_model_calls: int = 100
     max_tool_retries: int = 2
-    research_search_limit: int = 3
+    research_search_limit: int = 10
     unknown_model_max_input_tokens: int = Field(
         default=32_768,
         alias="SHEJANE_RUNTIME_UNKNOWN_MODEL_MAX_INPUT_TOKENS",
@@ -169,7 +169,7 @@ class Settings(BaseSettings):
     @field_validator("max_model_calls", mode="before")
     @classmethod
     def _coerce_max_model_calls(cls, value: Any) -> Any:
-        return _empty_string_default(value, 20)
+        return _empty_string_default(value, 100)
 
     @field_validator("max_model_calls")
     @classmethod
@@ -189,7 +189,7 @@ class Settings(BaseSettings):
     @field_validator("research_search_limit", mode="before")
     @classmethod
     def _coerce_research_search_limit(cls, value: Any) -> Any:
-        return _empty_string_default(value, 3)
+        return _empty_string_default(value, 10)
 
     @field_validator("research_search_limit")
     @classmethod

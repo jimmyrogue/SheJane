@@ -1,8 +1,8 @@
+import { useRef, useState, type DragEvent } from 'react'
 import {
   IconArrowUp,
   IconFolder,
   IconFolderPlus,
-  IconFile,
   IconPaperclip,
   IconPlayerStopFilled,
   IconShield,
@@ -17,6 +17,7 @@ import {
 import { ModeSelector, type ModelOption } from './ModeSelector'
 import { SkillEditor } from './SkillEditor'
 import { useI18n } from '@/shared/i18n/i18n'
+import { FileTypeIcon } from '@/shared/files/FileTypeIcon'
 import type {
   InstalledSkill,
   McpServerInfo,
@@ -47,6 +48,7 @@ export function Composer({
   onRemoveProject,
   attachments = [],
   onSelectAttachments,
+  onDropAttachments,
   onRemoveAttachment,
   isDesktop = true,
   slashCommandsEnabled = true,
@@ -74,6 +76,7 @@ export function Composer({
   onRemoveProject?: () => void
   attachments?: LocalAttachmentRef[]
   onSelectAttachments?: () => void
+  onDropAttachments?: (files: File[]) => void
   onRemoveAttachment?: (path: string) => void
   isDesktop?: boolean
   slashCommandsEnabled?: boolean
@@ -84,15 +87,51 @@ export function Composer({
   const sendLabel = steeringMode ? t('composer.appendInstruction') : t('composer.send')
   const sendTitle = steeringMode ? t('composer.appendInstruction') : t('composer.kbdHint')
   const handleSend = steeringMode ? onAppendInstruction : onSend
+  const dragDepthRef = useRef(0)
+  const [isDragging, setIsDragging] = useState(false)
+  const canDropAttachments = isDesktop && !isSending && !hasActiveRun && Boolean(onDropAttachments)
+
+  function handleDragEnter(event: DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    if (!canDropAttachments) return
+    dragDepthRef.current += 1
+    setIsDragging(true)
+  }
+
+  function handleDragLeave() {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setIsDragging(false)
+  }
+
+  function handleDragOver(event: DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = canDropAttachments ? 'copy' : 'none'
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    dragDepthRef.current = 0
+    setIsDragging(false)
+    if (canDropAttachments) onDropAttachments?.(Array.from(event.dataTransfer.files))
+  }
 
   return (
-    <footer className="composer">
+    <footer
+      className={`composer${isDragging ? ' composer-dragging' : ''}`}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div className="composer-input">
         {attachments.length ? (
           <div className="composer-chips">
             {attachments.map((attachment) => (
               <span className="composer-attachment-chip" key={attachment.path} title={attachment.path}>
-                <IconFile size={14} aria-hidden="true" />
+                <FileTypeIcon name={attachment.name} size={14} />
                 <span>{attachment.name}</span>
                 <button
                   type="button"

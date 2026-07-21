@@ -10,8 +10,6 @@ export function projectTransientAssistantText(current: string, event: AgentRunEv
     event.event_type === 'llm.round.started'
     || event.event_type === 'tool.requested'
     || event.event_type === 'question.asked'
-    || event.event_type === 'run.failed'
-    || event.event_type === 'run.cleanup_required'
   ) {
     return ''
   }

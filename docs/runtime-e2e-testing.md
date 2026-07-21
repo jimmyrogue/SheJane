@@ -101,7 +101,7 @@ Tool case 在测试输出中按 `filesystem`、`runtime-context`、`network`、`
 - 超过模型交接上限的 Tool 输出保存为可取回 Artifact，最终模型上下文保持有界；
 - `execute` 从授权 workspace 作为 cwd 运行，保留 stdout、带来源标记的 stderr 与非零退出码；自定义 timeout 和 Run cancel 都必须杀死并回收完整 shell 进程组，不能留下脱离 Run 的子进程；
 - `execute` 能处理含空格和单引号的路径，非法 UTF-8 stdout 被包含而不会击穿 Agent loop；
-- 每个 workspace-write Tool 都在批准前验证目标文件/输出副作用仍为零，批准后才验证预期输出；空文件可以经 `write_file` 创建并由 `read_file` 作为成功空状态读取；offset/limit 只返回指定分页窗口；超过 10 MB 的文件在 backend 读取前被拒绝并形成 failed receipt；`edit_file` 的零匹配与多匹配都失败且原文件字节不变；同一模型批次对同一路径的两个写入按模型顺序结算，第一个成功结果不被第二个冲突写覆盖，receipt 顺序保持一致；
+- 每个 workspace-write Tool 都在批准前验证目标文件/输出副作用仍为零，批准后才验证预期输出；空文件可以经 `write_file` 创建并由 `read_file` 作为成功空状态读取；offset/limit 只返回指定分页窗口；超过 20 MiB 的 workspace 文件在 backend 读取前被拒绝并形成 failed receipt；`edit_file` 的零匹配与多匹配都失败且原文件字节不变；同一模型批次对同一路径的两个写入按模型顺序结算，第一个成功结果不被第二个冲突写覆盖，receipt 顺序保持一致；
 - `open.url` 与 `open.file` 在隔离的系统 handler 中证明允许路径成功，同时危险协议和缺失文件仍形成可观察的 guarded failure；
 - `web.fetch` 的公开 E2E 证明 SSRF 拒绝、`tool.failed`、failed receipt 与 final 回传完全一致；生产 Tool 集成测试另证明受控成功响应、真正达到 2 MB 就停止消费响应流、超长 header 丢弃、303 后 POST 转 GET、超时与重定向耗尽；
 - 同一个批准命令重放不会重复执行副作用；拒绝后副作用次数为 0；

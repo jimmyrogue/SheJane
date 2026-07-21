@@ -25,6 +25,7 @@ interface Window {
     }
     selectWorkspaceDirectory?: () => Promise<string | undefined>
     selectAttachmentFiles?: () => Promise<string[]>
+    getPathForFile?: (file: File) => string
     selectPluginPackage?: () => Promise<string | undefined>
     openExternal?: (url: string) => Promise<string>
     setLocale?: (locale: 'zh' | 'en') => Promise<'zh' | 'en'>
@@ -41,6 +42,13 @@ interface Window {
      *  success, an error message string otherwise (mirrors Electron
      *  `shell.openPath`). Used by PptxPreview's "Open in PowerPoint". */
     openFileWithDefaultApp?: (filePath: string) => Promise<string>
+    openFileSnapshot?: (input: {
+      name: string
+      bytes: Uint8Array
+      action: 'open' | 'reveal'
+    }) => Promise<string>
+    revealFileInFolder?: (filePath: string) => Promise<boolean>
+    showFileContextMenu?: (input: { canPreview: boolean }) => Promise<'preview' | 'open' | 'save' | 'reveal' | undefined>
   }
 }
 

@@ -6,6 +6,7 @@ const {
   appNameForLocale,
   applicationMenuTemplateForPlatform,
   desktopText,
+  fileContextMenuTemplate,
   normalizeDesktopLocale,
   trayIconConfigForPlatform,
   windowMenuOptionsForPlatform,
@@ -13,6 +14,7 @@ const {
   appNameForLocale: (locale: string) => string
   applicationMenuTemplateForPlatform: (platform: NodeJS.Platform, locale: 'zh' | 'en') => unknown[] | null
   desktopText: (locale: string, key: string, params?: Record<string, unknown>) => string
+  fileContextMenuTemplate: (platform: NodeJS.Platform, locale: 'zh' | 'en', canPreview: boolean, actions: Record<string, () => void>) => Array<{ label?: string, enabled?: boolean, click?: () => void }>
   normalizeDesktopLocale: (locale: string) => 'zh' | 'en'
   trayIconConfigForPlatform: (platform: NodeJS.Platform) => { filename: string; template: boolean }
   windowMenuOptionsForPlatform: (platform: NodeJS.Platform) => Record<string, boolean>
@@ -50,5 +52,28 @@ describe('Electron menu policy', () => {
     expect(trayIconConfigForPlatform('darwin')).toEqual({ filename: 'app-tray.png', template: true })
     expect(trayIconConfigForPlatform('win32')).toEqual({ filename: 'app-tray-win.png', template: false })
     expect(trayIconConfigForPlatform('linux')).toEqual({ filename: 'app-tray-win.png', template: false })
+  })
+
+  it('builds a localized attachment menu with deterministic actions', () => {
+    const selected: string[] = []
+    const menu = fileContextMenuTemplate('darwin', 'zh', true, {
+      onPreview: () => selected.push('preview'),
+      onOpen: () => selected.push('open'),
+      onSave: () => selected.push('save'),
+      onReveal: () => selected.push('reveal'),
+    })
+
+    expect(menu.map(item => item.label).filter(Boolean)).toEqual([
+      '预览',
+      '打开',
+      '保存副本',
+      '在访达中显示',
+    ])
+    menu[0].click?.()
+    expect(selected).toEqual(['preview'])
+    expect(fileContextMenuTemplate('linux', 'en', false, {}).at(0)).toMatchObject({
+      label: 'Preview',
+      enabled: false,
+    })
   })
 })

@@ -165,6 +165,7 @@ function diagnostics(overrides: Partial<LocalRunDiagnostics> = {}): LocalRunDiag
       history_json: '[]',
       settings_json: '{}',
       metadata_json: '{}',
+      inputs: [],
     },
     events: [],
     permissions: [],

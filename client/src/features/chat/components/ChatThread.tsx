@@ -4,7 +4,7 @@ import { AnsweredQuestions } from './AnsweredQuestions'
 import { MessageBubble } from './MessageBubble'
 import { ThinkingIndicator } from './ThinkingIndicator'
 import { IconCalendar, IconFileText, IconMessage } from '@tabler/icons-react'
-import type { Conversation, LocalOfficeFileRef } from '@/shared/local-data/types'
+import type { Conversation, LocalFileRef } from '@/shared/local-data/types'
 import { appLogoURL } from '@/shared/assets/logo'
 import { useI18n } from '@/shared/i18n/i18n'
 import { useSmartAutoScroll } from '@/shared/streaming/useSmartAutoScroll'
@@ -15,6 +15,7 @@ export function ChatThread({
   onOpenArtifact,
   onOpenDiagnostics,
   onPreviewLocalFile,
+  onLocalFileContextMenu,
   onPickSuggestion,
   onRegenerateMessage,
   onEditResendMessage,
@@ -28,11 +29,9 @@ export function ChatThread({
   workspaceRoot?: string
   onOpenArtifact: (artifactID: string) => void
   onOpenDiagnostics: (runID: string) => void
-  /** Open the DocPreviewPanel for an office file living inside the
-   *  conversation's workspace. Wired from App.tsx →
-   *  openOfficeDocument; MessageBubble calls this when the user clicks
-   *  a `.docx` / `.xlsx` reference rendered inside agent markdown. */
-  onPreviewLocalFile?: (ref: LocalOfficeFileRef) => void
+  /** Open supported local files in the right-side preview. */
+  onPreviewLocalFile?: (ref: LocalFileRef) => void
+  onLocalFileContextMenu?: (ref: LocalFileRef) => void
   /** Welcome-screen suggestion tiles: prefill the composer with a concrete
    *  example prompt (the user edits/sends). Wired from App.tsx → setDraft. */
   onPickSuggestion?: (prompt: string) => void
@@ -125,6 +124,7 @@ export function ChatThread({
                 onStreamTextCommit={handleStreamTextCommit}
                 workspaceRoot={effectiveWorkspaceRoot}
                 onPreviewLocalFile={onPreviewLocalFile}
+                onLocalFileContextMenu={onLocalFileContextMenu}
                 onRegenerate={onRegenerateMessage}
                 onEditResend={onEditResendMessage}
                 onDelete={onDeleteMessage}

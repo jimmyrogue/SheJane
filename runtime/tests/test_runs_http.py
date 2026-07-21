@@ -868,11 +868,26 @@ def test_create_run_accepts_existing_file_attachments_only(
         headers=headers,
         json={
             **run_command("inspect attachment", command_id="cmd_attachment_ok"),
+            "thread_id": "thread_attachment_ok",
+            "user_input": "inspect attachment",
+            "user_item_metadata": {"attachments": [{"path": str(attachment), "name": "brief.txt"}]},
             "required_capabilities": ["agent.run", "agent.stream", "attachments"],
             "attachment_paths": [str(attachment)],
         },
     )
     assert accepted.status_code == 200
+    expected_inputs = [
+        {
+            "client_index": 0,
+            "input_id": "source",
+            "virtual_path": "/attachments/brief.txt",
+            "original_name": "brief.txt",
+            "media_type": "text/plain",
+            "bytes": len(b"runtime-owned attachment"),
+            "sha256": hashlib.sha256(b"runtime-owned attachment").hexdigest(),
+        }
+    ]
+    assert accepted.json()["inputs"] == expected_inputs
     stored = asyncio.run(client.app.state.store.get_run(accepted.json()["id"]))
     metadata = json.loads(stored["metadata_json"])
     assert metadata["_attachments"] == [
@@ -885,6 +900,62 @@ def test_create_run_accepts_existing_file_attachments_only(
     immutable_body = client.app.state.store.run_input_body_path(run_inputs[0])
     attachment.write_text("changed after admission", encoding="utf-8")
     assert immutable_body.read_bytes() == b"runtime-owned attachment"
+    downloaded = client.get(
+        f"/v1/runs/{accepted.json()['id']}/inputs/source",
+        headers=headers,
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"runtime-owned attachment"
+    assert downloaded.headers["content-type"].startswith("application/octet-stream")
+    snapshot = client.get("/v1/threads/thread_attachment_ok", headers=headers)
+    assert snapshot.status_code == 200
+    assert snapshot.json()["runs"][0]["inputs"] == expected_inputs
+    user_item = next(
+        item for item in snapshot.json()["items"] if item["item_type"] == "user_message"
+    )
+    assert user_item["metadata"]["attachments"] == [
+        {
+            "path": str(attachment),
+            "name": "brief.txt",
+            "input_id": "source",
+            "media_type": "text/plain",
+            "bytes": len(b"runtime-owned attachment"),
+        }
+    ]
+    fetched_run = client.get(f"/v1/runs/{accepted.json()['id']}", headers=headers)
+    assert fetched_run.json()["inputs"] == expected_inputs
+    listed_run = next(
+        run
+        for run in client.get("/v1/runs", headers=headers).json()["runs"]
+        if run["id"] == accepted.json()["id"]
+    )
+    assert listed_run["inputs"] == expected_inputs
+    diagnostics = client.get(
+        f"/v1/runs/{accepted.json()['id']}/diagnostics",
+        headers=headers,
+    )
+    assert diagnostics.status_code == 200
+    assert diagnostics.json()["run"]["inputs"] == expected_inputs
+
+    second = tmp_path / "second.txt"
+    second.write_text("second", encoding="utf-8")
+    multiple = client.post(
+        "/v1/runs",
+        headers=headers,
+        json={
+            **run_command("inspect two", command_id="cmd_attachment_multiple"),
+            "required_capabilities": ["agent.run", "agent.stream", "attachments"],
+            "attachment_paths": [str(attachment), str(second)],
+        },
+    )
+    assert multiple.status_code == 200
+    assert [
+        (item["client_index"], item["input_id"], item["original_name"])
+        for item in multiple.json()["inputs"]
+    ] == [
+        (0, "attachment_1", "brief.txt"),
+        (1, "attachment_2", "second.txt"),
+    ]
 
     large_attachment = tmp_path / "clip.mp4"
     large_attachment.write_bytes(b"\0" * (10 * 1024 * 1024 + 1))
@@ -898,6 +969,47 @@ def test_create_run_accepts_existing_file_attachments_only(
         },
     )
     assert large.status_code == 200
+
+    oversized_attachment = tmp_path / "oversized.pdf"
+    with oversized_attachment.open("wb") as stream:
+        stream.truncate(200 * 1024 * 1024 + 1)
+    oversized = client.post(
+        "/v1/runs",
+        headers=headers,
+        json={
+            **run_command("inspect oversized", command_id="cmd_attachment_oversized"),
+            "required_capabilities": ["agent.run", "agent.stream", "attachments"],
+            "attachment_paths": [str(oversized_attachment)],
+        },
+    )
+    assert oversized.status_code == 409
+    assert "attachment exceeds the 200 MiB limit" in oversized.json()["detail"]["message"]
+
+    from pptx import Presentation
+
+    deck_path = tmp_path / "deck.pptx"
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[1])
+    slide.shapes.title.text = "Runtime snapshot deck"
+    slide.placeholders[1].text = "Immutable outline"
+    deck.save(deck_path)
+    deck_run = client.post(
+        "/v1/runs",
+        headers=headers,
+        json={
+            **run_command("inspect deck", command_id="cmd_attachment_deck"),
+            "required_capabilities": ["agent.run", "agent.stream", "attachments"],
+            "attachment_paths": [str(deck_path)],
+        },
+    )
+    assert deck_run.status_code == 200
+    deck_path.unlink()
+    outline = client.get(
+        f"/v1/runs/{deck_run.json()['id']}/inputs/source/pptx-outline",
+        headers=headers,
+    )
+    assert outline.status_code == 200
+    assert outline.json()["slides"][0]["title"] == "Runtime snapshot deck"
 
 
 def test_command_replay_precedes_current_workspace_admission(
@@ -973,6 +1085,7 @@ def test_foreign_run_and_children_are_hidden(client: TestClient) -> None:
     assert client.get(f"/v1/runs/{run_id}", headers=headers).status_code == 404
     assert client.get(f"/v1/runs/{run_id}/stream", headers=headers).status_code == 404
     assert client.get(f"/v1/runs/{run_id}/diagnostics", headers=headers).status_code == 404
+    assert client.get(f"/v1/runs/{run_id}/inputs/source", headers=headers).status_code == 404
     assert client.post(f"/v1/runs/{run_id}/cancel", headers=headers).status_code == 404
     assert (
         client.post(

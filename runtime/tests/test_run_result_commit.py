@@ -263,6 +263,7 @@ async def test_open_backfills_resumed_projection_watermark_from_legacy_events(
 async def test_runtime_thread_pages_are_bounded_and_version_consistent(tmp_path: Path) -> None:
     store = await _open_store(tmp_path)
     try:
+        admitted_runs = []
         for index in range(2):
             run, _created = await store.accept_run_command(
                 principal_id=LOCAL_OWNER_PRINCIPAL_ID,
@@ -276,6 +277,7 @@ async def test_runtime_thread_pages_are_bounded_and_version_consistent(tmp_path:
                 workspace_path=None,
                 mode="auto",
             )
+            admitted_runs.append(run)
             await store.append_event(run["id"], "model.delta", {"index": index})
             job = await store.claim_run_job(worker_id="worker-page")
             assert job is not None
@@ -315,6 +317,24 @@ async def test_runtime_thread_pages_are_bounded_and_version_consistent(tmp_path:
         assert oldest is not None
         assert [item["position"] for item in oldest["items"]] == [1, 2]
         assert oldest["has_more_items"] is False
+
+        odd_page = await store.get_thread_snapshot(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            thread_id="thread_page",
+            item_limit=3,
+        )
+        assert odd_page is not None
+        assert [item["position"] for item in odd_page["items"]] == [2, 3, 4]
+        user_only_page = await store.get_thread_snapshot(
+            principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+            thread_id="thread_page",
+            before_position=2,
+            item_limit=2,
+            expected_version=int(odd_page["thread"]["version"]),
+        )
+        assert user_only_page is not None
+        assert [item["position"] for item in user_only_page["items"]] == [1]
+        assert [run["id"] for run in user_only_page["runs"]] == [admitted_runs[0]["id"]]
 
         await store.update_thread(
             principal_id=LOCAL_OWNER_PRINCIPAL_ID,

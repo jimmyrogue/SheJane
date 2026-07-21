@@ -53,7 +53,7 @@ import {
 import type { AgentRunEvent } from '@shejane/runtime-sdk'
 import { I18nProvider, useI18n, type Translator } from './shared/i18n/i18n'
 import { createLocalID, LocalConversationStore } from './shared/local-data/localConversations'
-import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationProject, ConversationWorkspace, LocalAttachmentRef, LocalOfficeFileRef, OpenDocument } from './shared/local-data/types'
+import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationProject, ConversationWorkspace, LocalAttachmentRef, LocalFileRef, OpenDocument } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
   answerLocalQuestionCommand,
@@ -68,6 +68,7 @@ import {
   deleteMcpServer,
   diagnoseLocalWorkspace,
   fetchWorkspaceFile,
+  fetchRunInput,
   forkLocalRun,
   getLocalRunDiagnostics,
   getRuntimeSettings,
@@ -134,6 +135,8 @@ import {
   type LocalWorkspaceDiagnosis,
   type LocalWorkspaceAuthorization,
 } from './runtime/client'
+import { filePreviewKind } from './shared/files/filePreview'
+import { downloadFile } from './shared/files/downloadFile'
 import { projectRuntimeThread } from './features/chat/runtimeProjection'
 
 const ArtifactPanel = lazy(() => import('./features/chat/components/ArtifactPanel').then((module) => ({ default: module.ArtifactPanel })))
@@ -397,34 +400,86 @@ function AppContent() {
   const [docPreviewRefreshKey, setDocPreviewRefreshKey] = useState(0)
   const [runDiagnostics, setRunDiagnostics] = useState<LocalRunDiagnostics | null>(null)
 
-  /** Open the right-side DocPreviewPanel for a workspace-resident office
-   *  file. Called from `appendLocalRunEvent` (when office.read completes)
-   *  and from MessageBubble (when the user clicks a file ref in agent
-   *  text). The caller hands us a LocalOfficeFileRef; we wrap it into an
-   *  OpenDocument by binding `fetchWorkspaceFile` as the byte loader.
-   *
-   *  Bumping the refresh key forces a re-fetch even when the same path
-   *  was already open — needed once Phase 2 edits land so the panel
-   *  refreshes after every write. */
-  function openOfficeDocument(ref: LocalOfficeFileRef) {
+  function loadLocalFileBytes(ref: LocalFileRef): Promise<ArrayBuffer> {
     if (!runtimeConnection) {
-      setNotice(t('app.notice.runtimeDisconnected'))
+      return Promise.reject(new Error(t('app.notice.runtimeDisconnected')))
+    }
+    if (ref.runId && ref.inputId) {
+      return fetchRunInput(ref.runId, ref.inputId, runtimeConnection)
+    }
+    return fetchWorkspaceFile(ref.path, runtimeConnection)
+  }
+
+  /** Open supported files in the right panel; external-only files use their OS app. */
+  function openLocalDocument(ref: LocalFileRef) {
+    const kind = ref.kind ?? filePreviewKind(ref.name)
+    if (!kind) {
+      void openLocalFileNatively(ref)
       return
     }
-    const cfg = runtimeConnection
     setActiveDocument({
-      sourceKey: `local:${ref.path}`,
-      kind: ref.kind,
+      sourceKey: ref.runId && ref.inputId
+        ? `run-input:${ref.runId}:${ref.inputId}`
+        : `local:${ref.path}`,
+      kind,
       name: ref.name,
       tooltip: ref.path,
-      // PptxPreview doesn't actually need the bytes (it calls the
-      // outline endpoint), but the panel API still requires a loader
-      // — point at fetchWorkspaceFile for consistency; if a future
-      // "download" affordance lands it can reuse this.
-      loadBytes: () => fetchWorkspaceFile(ref.path, cfg),
+      loadBytes: () => loadLocalFileBytes(ref),
       localPath: ref.path,
+      runId: ref.runId,
+      inputId: ref.inputId,
     })
     setDocPreviewRefreshKey((k) => k + 1)
+  }
+
+  async function openLocalFileNatively(ref: LocalFileRef) {
+    try {
+      const error = ref.runId && ref.inputId
+        ? await window.shejaneClient?.openFileSnapshot?.({
+          name: ref.name,
+          bytes: new Uint8Array(await loadLocalFileBytes(ref)),
+          action: 'open',
+        })
+        : await window.shejaneClient?.openFileWithDefaultApp?.(ref.path)
+      if (error) setNotice(error)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function revealLocalFile(ref: LocalFileRef) {
+    try {
+      if (ref.runId && ref.inputId) {
+        const error = await window.shejaneClient?.openFileSnapshot?.({
+          name: ref.name,
+          bytes: new Uint8Array(await loadLocalFileBytes(ref)),
+          action: 'reveal',
+        })
+        if (error) setNotice(error)
+        return
+      }
+      await window.shejaneClient?.revealFileInFolder?.(ref.path)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function downloadLocalFile(ref: LocalFileRef) {
+    try {
+      await downloadFile(ref.name, () => loadLocalFileBytes(ref))
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function showLocalFileContextMenu(ref: LocalFileRef) {
+    const action = await window.shejaneClient?.showFileContextMenu?.({
+      canPreview: Boolean(ref.kind ?? filePreviewKind(ref.name)),
+    })
+    if (action === 'preview') openLocalDocument(ref)
+    if (action === 'open') await openLocalFileNatively(ref)
+    if (action === 'save') await downloadLocalFile(ref)
+    if (action === 'reveal') await revealLocalFile(ref)
   }
 
   function setNotice(message: string, options: NoticeOptions = {}) {
@@ -1723,6 +1778,23 @@ function AppContent() {
     try {
       const run = await createLocalRun(runInput, runRuntimeConnection)
       Object.assign(assistantMessage, { runId: run.id, status: 'streaming' as const })
+      const runInputs = run.inputs
+      const runInputsByIndex = new Map(runInputs.map((input) => [input.client_index, input]))
+      if (attachments.length && (
+        runInputs.length !== attachments.length
+        || attachments.some((_, index) => !runInputsByIndex.has(index))
+      )) {
+        throw new Error('Runtime returned invalid attachment input references')
+      }
+      if (attachments.length) {
+        userMessage.attachments = attachments.map((attachment, index) => ({
+          ...attachment,
+          runId: run.id,
+          inputId: runInputsByIndex.get(index)!.input_id,
+          mediaType: runInputsByIndex.get(index)!.media_type,
+          bytes: runInputsByIndex.get(index)!.bytes,
+        }))
+      }
       keepConversation = await settleDeliveredLocalRunCommand(pendingCommand, run, runRuntimeConnection)
       if (!keepConversation) return conversation
       setLocalRuns((items) => upsertLocalRun(items, run))
@@ -1733,7 +1805,7 @@ function AppContent() {
         conversation,
         assistantMessage,
         t,
-        openOfficeDocument,
+        openLocalDocument,
         () => scheduleConversationRender(conversation, context),
       )
       finalizeLocalRunStatus(assistantMessage)
@@ -1995,7 +2067,7 @@ function AppContent() {
         conversation,
         message,
         t,
-        openOfficeDocument,
+        openLocalDocument,
         () => scheduleConversationRender(conversation, renderContext),
       )
       finalizeLocalRunStatus(message)
@@ -2091,7 +2163,7 @@ function AppContent() {
         conversation,
         message,
         t,
-        openOfficeDocument,
+        openLocalDocument,
         () => scheduleConversationRender(conversation, renderContext),
       )
       finalizeLocalRunStatus(message)
@@ -2190,7 +2262,7 @@ function AppContent() {
         conversation,
         message,
         t,
-        openOfficeDocument,
+        openLocalDocument,
         () => scheduleConversationRender(conversation, renderContext),
       )
       finalizeLocalRunStatus(message)
@@ -2294,7 +2366,7 @@ function AppContent() {
         conversation,
         message,
         t,
-        openOfficeDocument,
+        openLocalDocument,
         () => scheduleConversationRender(conversation, renderContext),
       )
       finalizeLocalRunStatus(message)
@@ -2359,7 +2431,7 @@ function AppContent() {
         conversation,
         assistantMessage,
         t,
-        openOfficeDocument,
+        openLocalDocument,
         () => scheduleConversationRender(conversation, renderContext),
       )
       finalizeLocalRunStatus(assistantMessage)
@@ -2558,7 +2630,7 @@ function AppContent() {
         conversation,
         assistantMessage,
         t,
-        openOfficeDocument,
+        openLocalDocument,
         () => scheduleConversationRender(conversation, renderContext),
       )
       finalizeLocalRunStatus(assistantMessage)
@@ -2663,11 +2735,29 @@ function AppContent() {
   async function selectAttachments() {
     if (isSending || hasActiveRun) return
     const paths = await window.shejaneClient?.selectAttachmentFiles?.()
-    if (!paths?.length) return
+    addAttachmentPaths(paths ?? [])
+  }
+
+  function addAttachmentPaths(paths: string[]) {
+    if (!paths.length) return
     setPendingAttachments((current) => mergeAttachments(
       current,
       paths.map((path) => ({ path, name: pathBasename(path) || path })),
     ))
+  }
+
+  function dropAttachments(files: File[]) {
+    if (isSending || hasActiveRun) return
+    const getPathForFile = window.shejaneClient?.getPathForFile
+    if (!getPathForFile) return
+    addAttachmentPaths(files.flatMap((file) => {
+      try {
+        const path = getPathForFile(file)
+        return path ? [path] : []
+      } catch {
+        return []
+      }
+    }))
   }
 
   function removeAttachment(path: string) {
@@ -3207,7 +3297,8 @@ function AppContent() {
               workspaceRoot={activeWorkspace?.path}
               onOpenArtifact={(artifactID) => void openLocalArtifact(artifactID)}
               onOpenDiagnostics={(runID) => void openLocalRunDiagnostics(runID)}
-              onPreviewLocalFile={openOfficeDocument}
+              onPreviewLocalFile={openLocalDocument}
+              onLocalFileContextMenu={(ref) => void showLocalFileContextMenu(ref)}
               onPickSuggestion={setDraft}
               onRegenerateMessage={handleRegenerateMessage}
               onEditResendMessage={handleEditResendMessage}
@@ -3357,6 +3448,7 @@ function AppContent() {
               onRemoveProject={() => void removeProjectFromActiveConversation()}
               attachments={pendingAttachments}
               onSelectAttachments={() => void selectAttachments()}
+              onDropAttachments={dropAttachments}
               onRemoveAttachment={removeAttachment}
               isDesktop={isDesktop}
               slashCommandsEnabled={isDesktop}
@@ -3442,7 +3534,7 @@ function appendLocalRunEvent(
   seenEventIDs: Set<string>,
   toolArgsByCallId: ToolArgsByCallId,
   t: Translator,
-  onOfficeFileOpened?: (ref: LocalOfficeFileRef) => void,
+  onOfficeFileOpened?: (ref: LocalFileRef) => void,
 ) {
   if (event.event_type === 'llm.delta') {
     return
@@ -3580,14 +3672,14 @@ const OFFICE_WRITE_TOOL_NAMES = new Set<string>([
   'office.add_image_to_slide',
 ])
 
-/** Inspect a `tool.completed` payload and return a LocalOfficeFileRef
+/** Inspect a `tool.completed` payload and return a LocalFileRef
  *  when the underlying tool was a successful office.* WRITE — the
  *  ref points at the `.edited.<ext>` copy that now holds the changes.
  *
  *  Returns null for unknown tools, non-success results, and missing
  *  edited_path (so a malformed result silently degrades to "don't
  *  switch the preview"). */
-function detectOfficeFileEdited(payload: AgentRunEvent['payload']): LocalOfficeFileRef | null {
+function detectOfficeFileEdited(payload: AgentRunEvent['payload']): LocalFileRef | null {
   if (!payload) return null
   const toolName = String((payload as Record<string, unknown>).tool ?? (payload as Record<string, unknown>).name ?? '')
   if (!OFFICE_WRITE_TOOL_NAMES.has(toolName)) return null
@@ -3600,7 +3692,7 @@ function detectOfficeFileEdited(payload: AgentRunEvent['payload']): LocalOfficeF
   if (!editedPath) return null
   const kindRaw = String(resultObj.kind ?? '')
   const lower = editedPath.toLowerCase()
-  const kind: LocalOfficeFileRef['kind'] =
+  const kind: LocalFileRef['kind'] =
     kindRaw === 'word' || kindRaw === 'excel' || kindRaw === 'powerpoint'
       ? kindRaw
       : lower.endsWith('.xlsx')
@@ -3637,7 +3729,7 @@ async function streamLocalMessage(
   conversation: Conversation,
   message: ChatMessage,
   t: Translator,
-  onOfficeFileOpened: (ref: LocalOfficeFileRef) => void,
+  onOfficeFileOpened: (ref: LocalFileRef) => void,
   onUpdate: () => void,
 ) {
   let seenEventIDs = new Set(

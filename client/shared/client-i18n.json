@@ -43,6 +43,13 @@
       "selectAttachmentsTitle": "选择附件",
       "selectPluginPackageTitle": "选择插件包"
     },
+    "fileContext": {
+      "preview": "预览",
+      "open": "打开",
+      "save": "保存副本",
+      "revealFinder": "在访达中显示",
+      "revealFolder": "在文件夹中显示"
+    },
     "errors": {
       "requestFailed": "请求失败"
     }
@@ -90,6 +97,13 @@
       "selectWorkspaceTitle": "Choose local workspace",
       "selectAttachmentsTitle": "Choose attachments",
       "selectPluginPackageTitle": "Choose plugin package"
+    },
+    "fileContext": {
+      "preview": "Preview",
+      "open": "Open",
+      "save": "Save a Copy",
+      "revealFinder": "Show in Finder",
+      "revealFolder": "Show in Folder"
     },
     "errors": {
       "requestFailed": "Request failed"

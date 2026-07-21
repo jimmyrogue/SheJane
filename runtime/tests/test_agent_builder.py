@@ -18,6 +18,12 @@ from shejane_runtime.config import reset_settings_for_tests
 from shejane_runtime.store.sqlite import LocalStore
 
 
+def test_approval_reviewer_budget_handles_long_agent_runs() -> None:
+    from shejane_runtime.agent.builder import _APPROVAL_REVIEW_MAX_CALLS
+
+    assert _APPROVAL_REVIEW_MAX_CALLS == 20
+
+
 def test_runtime_prompt_is_built_from_invocation_context() -> None:
     from shejane_runtime.agent.builder import RuntimePromptMiddleware
     from shejane_runtime.agent.context_builder import RuntimeContext
@@ -549,6 +555,40 @@ def test_custom_middleware_keeps_tool_retry_but_no_unsafe_model_retry(tmp_path: 
     assert tool_result_retry[0].max_retries == 4
     assert "ModelRetryMiddleware" not in names
     assert "ContextEditingMiddleware" not in names
+
+
+def test_custom_middleware_caps_research_and_subagent_dispatch(tmp_path: Path) -> None:
+    from langchain.agents.middleware import ToolCallLimitMiddleware
+
+    from shejane_runtime.agent.builder import _custom_middleware
+
+    settings = reset_settings_for_tests(data_dir=tmp_path)
+    limits = {
+        item.tool_name: item.run_limit
+        for item in _custom_middleware(settings)
+        if isinstance(item, ToolCallLimitMiddleware)
+    }
+
+    assert limits["web.search"] == 10
+    assert limits["task"] == 5
+
+
+def test_model_budget_changes_agent_definition_fingerprint() -> None:
+    from shejane_runtime.agent.builder import _agent_definition_fingerprint
+    from shejane_runtime.config import Settings
+
+    def fingerprint(max_model_calls: int) -> str:
+        return _agent_definition_fingerprint(
+            settings=Settings(max_model_calls=max_model_calls),
+            model_profile={},
+            tools=[],
+            subagents=[],
+            skills=[],
+            memory=[],
+            plugin_catalog_hash=None,
+        )
+
+    assert fingerprint(100) != fingerprint(80)
 
 
 def test_build_agent_runs_end_to_end_with_mocked_backend(tmp_path: Path, monkeypatch) -> None:

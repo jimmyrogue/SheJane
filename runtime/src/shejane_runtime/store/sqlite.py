@@ -53,7 +53,7 @@ MAX_RUN_ARTIFACT_BYTES = 4 * 1024 * 1024 * 1024
 MAX_PRINCIPAL_ARTIFACT_BYTES = 16 * 1024 * 1024 * 1024
 MAX_TOTAL_ARTIFACT_BYTES = 64 * 1024 * 1024 * 1024
 MAX_SETTLEMENT_ARTIFACT_REFS = 256
-MAX_RUN_INPUT_BYTES = 1024**4
+MAX_RUN_INPUT_BYTES = 200 * 1024 * 1024
 
 
 def _principal_thread_id(principal_id: str, requested_id: str) -> str:
@@ -5505,11 +5505,7 @@ class LocalStore:
             has_more_items = len(items) > bounded_item_limit
             page_items = list(reversed(items[:bounded_item_limit]))
             run_ids = list(
-                dict.fromkeys(
-                    str(item["run_id"])
-                    for item in page_items
-                    if item["item_type"] == "assistant_message" and item["run_id"]
-                )
+                dict.fromkeys(str(item["run_id"]) for item in page_items if item["run_id"])
             )
             runs: list[aiosqlite.Row] = []
             events: list[aiosqlite.Row] = []
@@ -7176,6 +7172,19 @@ class LocalStore:
             await self._conn.execute(
                 "SELECT * FROM local_run_inputs WHERE run_id = ? ORDER BY rowid",
                 (run_id,),
+            )
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    async def list_run_inputs_for_runs(self, run_ids: list[str]) -> list[dict[str, Any]]:
+        if not run_ids:
+            return []
+        placeholders = ", ".join("?" for _ in run_ids)
+        rows = await (
+            await self._conn.execute(
+                f"SELECT * FROM local_run_inputs WHERE run_id IN ({placeholders}) "
+                "ORDER BY run_id, rowid",
+                tuple(run_ids),
             )
         ).fetchall()
         return [dict(row) for row in rows]

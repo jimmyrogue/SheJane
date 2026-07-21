@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   IconDownload,
-  IconFileTypeDocx,
-  IconFileTypePdf,
-  IconFileTypePpt,
-  IconFileTypeXls,
   IconMinus,
   IconPlus,
   IconRestore,
@@ -13,6 +9,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useI18n, type Translator } from '@/shared/i18n/i18n'
+import { FileTypeIcon } from '@/shared/files/FileTypeIcon'
+import { downloadFile } from '@/shared/files/downloadFile'
 import { getRuntimeConnection } from '@/runtime/client'
 import type { OpenDocument, PdfDocumentMetadata } from '@/shared/local-data/types'
 
@@ -20,6 +18,8 @@ import { DocxPreview } from './DocPreview/DocxPreview'
 import { PdfPreview } from './DocPreview/PdfPreview'
 import { PptxPreview } from './DocPreview/PptxPreview'
 import { XlsxPreview } from './DocPreview/XlsxPreview'
+import { TextPreview } from './DocPreview/TextPreview'
+import { ImagePreview } from './DocPreview/ImagePreview'
 
 interface Props {
   doc: OpenDocument | null
@@ -136,14 +136,6 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
     return () => window.removeEventListener('resize', onWindowResize)
   }, [])
 
-  const KindIcon =
-    doc?.kind === 'excel'
-      ? IconFileTypeXls
-      : doc?.kind === 'powerpoint'
-        ? IconFileTypePpt
-        : doc?.kind === 'pdf'
-          ? IconFileTypePdf
-          : IconFileTypeDocx
   // Subtitle = kind label, plus a metadata summary ("· 15 页 ·
   // Author") when the doc carries pdfinfo output. Lets users
   // confirm extraction worked without leaving the preview.
@@ -155,7 +147,13 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
             ? 'docPreview.kind.excel'
             : doc.kind === 'powerpoint'
               ? 'docPreview.kind.powerpoint'
-              : 'docPreview.kind.pdf',
+              : doc.kind === 'pdf'
+                ? 'docPreview.kind.pdf'
+                : doc.kind === 'code'
+                  ? 'docPreview.kind.code'
+                  : doc.kind === 'text'
+                    ? 'docPreview.kind.text'
+                    : 'docPreview.kind.image',
       )
     : ''
   const metaSummary = buildPdfMetaSummary(doc?.metadata, t)
@@ -182,15 +180,7 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
   const downloadDoc = useCallback(async () => {
     if (!doc) return
     try {
-      const bytes = await doc.loadBytes()
-      const url = URL.createObjectURL(new Blob([bytes]))
-      const anchor = window.document.createElement('a')
-      anchor.href = url
-      anchor.download = doc.name
-      window.document.body.appendChild(anchor)
-      anchor.click()
-      window.document.body.removeChild(anchor)
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      await downloadFile(doc.name, doc.loadBytes)
     } catch {
       /* preview already surfaces load errors; a failed download is
          non-fatal and the user can retry. */
@@ -219,7 +209,7 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
         <SheetHeader>
           <div className="doc-preview-header">
             <span className={`doc-preview-icon doc-preview-icon-${doc?.kind ?? 'word'}`} aria-hidden="true">
-              <KindIcon size={20} />
+              <FileTypeIcon name={doc?.name ?? ''} size={18} />
             </span>
             <div className="doc-preview-header-text">
               <SheetTitle className="doc-preview-title" title={doc?.tooltip}>
@@ -317,11 +307,32 @@ export function DocPreviewPanel({ doc, refreshKey = 0, onClose }: Props) {
                   refreshKey={refreshKey}
                   onStatus={setStatus}
                 />
-              ) : doc?.kind === 'powerpoint' && doc.localPath && runtimeConnection ? (
+              ) : doc?.kind === 'powerpoint' && runtimeConnection ? (
                 <PptxPreview
                   sourceKey={doc.sourceKey}
+                  name={doc.name}
                   localPath={doc.localPath}
+                  runId={doc.runId}
+                  inputId={doc.inputId}
+                  loadBytes={doc.loadBytes}
                   config={runtimeConnection}
+                  refreshKey={refreshKey}
+                  onStatus={setStatus}
+                />
+              ) : (doc?.kind === 'code' || doc?.kind === 'text') ? (
+                <TextPreview
+                  sourceKey={doc.sourceKey}
+                  name={doc.name}
+                  kind={doc.kind}
+                  loadBytes={doc.loadBytes}
+                  refreshKey={refreshKey}
+                  onStatus={setStatus}
+                />
+              ) : doc?.kind === 'image' ? (
+                <ImagePreview
+                  sourceKey={doc.sourceKey}
+                  name={doc.name}
+                  loadBytes={doc.loadBytes}
                   refreshKey={refreshKey}
                   onStatus={setStatus}
                 />

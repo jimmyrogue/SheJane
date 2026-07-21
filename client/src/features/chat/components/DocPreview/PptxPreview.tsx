@@ -3,16 +3,16 @@ import { IconExternalLink, IconNotes } from '@tabler/icons-react'
 
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/shared/i18n/i18n'
-import { fetchPptxOutline } from '@/runtime/client'
-import type { RuntimeConnection } from '@/runtime/client'
-import type { PptxSlideOutline } from '@/shared/local-data/types'
+import { fetchPptxOutline, fetchRunInputPptxOutline } from '@/runtime/client'
+import type { PptxSlideOutline, RuntimeConnection } from '@/runtime/client'
 
 interface Props {
   sourceKey: string
-  /** Absolute path to the .pptx on the user's filesystem. Required —
-   *  the runtime's pptx-outline endpoint refuses anything outside an
-   *  authorized workspace. */
-  localPath: string
+  name: string
+  localPath?: string
+  runId?: string
+  inputId?: string
+  loadBytes: () => Promise<ArrayBuffer>
   config: RuntimeConnection
   refreshKey?: number
   onStatus?: (status: 'loading' | 'ready' | 'error', error?: Error) => void
@@ -25,7 +25,17 @@ interface Props {
  * bullets, and notes. The user clicks "Open in PowerPoint" to get the
  * real visual deck via the OS default app.
  */
-export function PptxPreview({ sourceKey, localPath, config, refreshKey = 0, onStatus }: Props) {
+export function PptxPreview({
+  sourceKey,
+  name,
+  localPath,
+  runId,
+  inputId,
+  loadBytes,
+  config,
+  refreshKey = 0,
+  onStatus,
+}: Props) {
   const { t } = useI18n()
   const [slides, setSlides] = useState<PptxSlideOutline[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -36,7 +46,12 @@ export function PptxPreview({ sourceKey, localPath, config, refreshKey = 0, onSt
     setError(null)
     setSlides(null)
     onStatus?.('loading')
-    fetchPptxOutline(localPath, config)
+    const outline = runId && inputId
+      ? fetchRunInputPptxOutline(runId, inputId, config)
+      : localPath
+        ? fetchPptxOutline(localPath, config)
+        : Promise.reject(new Error('PowerPoint source is unavailable'))
+    outline
       .then((data) => {
         if (cancelled) return
         setSlides(data.slides)
@@ -51,12 +66,23 @@ export function PptxPreview({ sourceKey, localPath, config, refreshKey = 0, onSt
     return () => {
       cancelled = true
     }
-  }, [sourceKey, refreshKey, localPath, config, onStatus])
+  }, [sourceKey, refreshKey, localPath, runId, inputId, config, onStatus])
 
   async function openNatively() {
     setOpenError(null)
     const bridge = window.shejaneClient
-    if (bridge?.openFileWithDefaultApp) {
+    if (runId && inputId && bridge?.openFileSnapshot) {
+      try {
+        const result = await bridge.openFileSnapshot({
+          name,
+          bytes: new Uint8Array(await loadBytes()),
+          action: 'open',
+        })
+        if (result) setOpenError(result)
+      } catch (err) {
+        setOpenError(err instanceof Error ? err.message : String(err))
+      }
+    } else if (localPath && bridge?.openFileWithDefaultApp) {
       try {
         const result = await bridge.openFileWithDefaultApp(localPath)
         if (result) setOpenError(result)

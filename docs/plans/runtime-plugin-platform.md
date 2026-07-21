@@ -720,7 +720,7 @@ runtime/plugins/office/
 
 ### 12.6 当前实施状态
 
-- Run 附件已在接纳时流式导入 Runtime-owned、内容寻址的不可变输入存储；插件 Action 只收到 MIME、大小、摘要和 `/input` 虚拟路径。通用模型读取仍保持 10 MiB 上限。
+- Run 附件已在接纳时流式导入 Runtime-owned、内容寻址的不可变输入存储；插件 Action 只收到 MIME、大小、摘要和 `/input` 虚拟路径。任务附件和 PDF 文件的模型读取上限为 200 MiB，其他 workspace、Skill、Memory 与子任务文件读取上限为 20 MiB。
 - 插件文件产物已从 SQLite base64 改为内容寻址正文 + Artifact 目录记录，正文端点支持所属 Run 鉴权和 HTTP Range；桌面端按需下载，不把大正文加载进 DOM。
 - Managed Worker `notifications/progress` 已有严格 schema、连续 sequence、帧/phase 上限和 250ms 合并；进度是瞬态 UI 投影，不进入模型上下文或持久事件日志。
 - 超时和取消会先发送协作式 `cancel`，短暂等待后再强制清理进程树。WASI byte-map ABI 明确限制为输入、输出各 16 MiB，超限要求使用 Managed Worker，不静默切换执行类型。

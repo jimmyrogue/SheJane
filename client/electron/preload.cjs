@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 // Main passes only the Runtime address and an opaque session marker. The
 // pairing token never crosses into the renderer process.
@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('shejaneClient', {
   },
   selectWorkspaceDirectory: () => ipcRenderer.invoke('shejane:select-workspace-directory'),
   selectAttachmentFiles: () => ipcRenderer.invoke('shejane:select-attachment-files'),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   selectPluginPackage: () => ipcRenderer.invoke('shejane:select-plugin-package'),
   openExternal: (url) => ipcRenderer.invoke('shejane:open-external', url),
   setLocale: (locale) => ipcRenderer.invoke('shejane:set-locale', locale),
@@ -46,6 +47,12 @@ contextBridge.exposeInMainWorld('shejaneClient', {
    *  right-side PptxPreview's "Open in PowerPoint" button. */
   openFileWithDefaultApp: (filePath) =>
     ipcRenderer.invoke('shejane:open-file-with-default-app', filePath),
+  openFileSnapshot: (input) =>
+    ipcRenderer.invoke('shejane:open-file-snapshot', input),
+  revealFileInFolder: (filePath) =>
+    ipcRenderer.invoke('shejane:reveal-file-in-folder', filePath),
+  showFileContextMenu: (input) =>
+    ipcRenderer.invoke('shejane:show-file-context-menu', input),
   /** Subscribe to the tray's "New Chat" action. Returns an unsubscribe
    *  fn so React effects can clean up properly. */
   onNewChatRequest: (handler) => {

@@ -32,14 +32,37 @@ from deepagents.backends.protocol import (
 from langgraph.runtime import get_runtime
 from markitdown import MarkItDown
 
+MODEL_FILE_READ_MAX_MB = 20
+PDF_FILE_READ_MAX_MB = 200
+ATTACHMENT_FILE_READ_MAX_MB = 200
+
 
 class _BoundedReadMixin:
     """Apply the advertised backend file-size limit to direct reads."""
 
+    def _configure_read_limits(
+        self,
+        *,
+        default_max_mb: int,
+        pdf_max_mb: int,
+    ) -> None:
+        self._default_read_max_bytes = default_max_mb * 1024 * 1024
+        self._pdf_read_max_bytes = pdf_max_mb * 1024 * 1024
+        # The dependency performs its own generic size check after this mixin.
+        # Give it the larger ceiling; this mixin enforces the type-specific one.
+        self.max_file_size_bytes = max(
+            self._default_read_max_bytes,
+            self._pdf_read_max_bytes,
+        )
+
     def _size_error(self, file_path: str) -> str | None:
         try:
             resolved_path = self._resolve_path(file_path)  # type: ignore[attr-defined]
-            max_bytes = int(self.max_file_size_bytes)  # type: ignore[attr-defined]
+            max_bytes = (
+                self._pdf_read_max_bytes
+                if resolved_path.suffix.lower() == ".pdf"
+                else self._default_read_max_bytes
+            )
             if resolved_path.exists() and resolved_path.is_file():
                 size = resolved_path.stat().st_size
                 if size > max_bytes:
@@ -82,6 +105,23 @@ class _BoundedReadMixin:
 class RuntimeFilesystemBackend(_BoundedReadMixin, FilesystemBackend):
     """Filesystem backend with a hard direct-read size boundary."""
 
+    def __init__(
+        self,
+        *args: Any,
+        max_file_size_mb: int = MODEL_FILE_READ_MAX_MB,
+        pdf_max_file_size_mb: int = PDF_FILE_READ_MAX_MB,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            *args,
+            max_file_size_mb=max(max_file_size_mb, pdf_max_file_size_mb),
+            **kwargs,
+        )
+        self._configure_read_limits(
+            default_max_mb=max_file_size_mb,
+            pdf_max_mb=pdf_max_file_size_mb,
+        )
+
 
 class RuntimeLocalShellBackend(_BoundedReadMixin, LocalShellBackend):
     """Run async shell commands in a process group owned by the Run.
@@ -95,6 +135,19 @@ class RuntimeLocalShellBackend(_BoundedReadMixin, LocalShellBackend):
     timeout and task cancellation both reap the complete command tree before
     control returns to the coordinator.
     """
+
+    def __init__(
+        self,
+        *args: Any,
+        max_file_size_mb: int = MODEL_FILE_READ_MAX_MB,
+        pdf_max_file_size_mb: int = PDF_FILE_READ_MAX_MB,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._configure_read_limits(
+            default_max_mb=max_file_size_mb,
+            pdf_max_mb=pdf_max_file_size_mb,
+        )
 
     async def aexecute(
         self,

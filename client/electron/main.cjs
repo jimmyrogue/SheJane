@@ -17,6 +17,7 @@ const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const net = require('node:net')
 const { installLocalRuntimeAuthorization } = require('./runtime-auth.cjs')
+const { materializeFileCopy } = require('./file-open.cjs')
 const {
   isPortConflictError,
   startRuntimeWithPortRetry,
@@ -34,6 +35,7 @@ const {
 } = require('./runtime-connection-store.cjs')
 const {
   configureApplicationMenuForPlatform,
+  fileContextMenuTemplate,
   suppressWindowMenuForPlatform,
   trayIconConfigForPlatform,
   trayMenuTemplateForPlatform,
@@ -677,6 +679,10 @@ ipcMain.handle('shejane:update-install', () => installClientUpdate())
 
 app.whenReady().then(async () => {
   app.setName(currentAppName())
+  await fs.promises.rm(path.join(app.getPath('temp'), 'shejane-open-files'), {
+    recursive: true,
+    force: true,
+  }).catch(() => undefined)
   configureApplicationMenu()
   if (process.platform === 'darwin') {
     app.dock.setIcon(appIconPath)
@@ -886,6 +892,62 @@ ipcMain.handle('shejane:open-file-with-default-app', async (_event, filePath) =>
   } catch (err) {
     return err instanceof Error ? err.message : String(err)
   }
+})
+
+ipcMain.handle('shejane:open-file-snapshot', async (_event, input) => {
+  if (!input || typeof input.name !== 'string' || !input.bytes) {
+    return 'file snapshot required'
+  }
+  try {
+    const filePath = await materializeFileCopy(
+      path.join(app.getPath('temp'), 'shejane-open-files'),
+      input.name,
+      input.bytes,
+    )
+    if (input.action === 'reveal') {
+      shell.showItemInFolder(filePath)
+      return ''
+    }
+    return await shell.openPath(filePath)
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+})
+
+ipcMain.handle('shejane:reveal-file-in-folder', async (_event, filePath) => {
+  if (typeof filePath !== 'string' || filePath.length === 0) {
+    return false
+  }
+  shell.showItemInFolder(filePath)
+  return true
+})
+
+ipcMain.handle('shejane:show-file-context-menu', (event, input) => {
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) return undefined
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (action) => {
+      if (settled) return
+      settled = true
+      resolve(action)
+    }
+    const template = fileContextMenuTemplate(
+      process.platform,
+      currentLocale,
+      Boolean(input?.canPreview),
+      {
+        onPreview: () => finish('preview'),
+        onOpen: () => finish('open'),
+        onSave: () => finish('save'),
+        onReveal: () => finish('reveal'),
+      },
+    )
+    Menu.buildFromTemplate(template).popup({
+      window,
+      callback: () => finish(undefined),
+    })
+  })
 })
 
 app.on('window-all-closed', () => {

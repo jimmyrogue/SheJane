@@ -40,6 +40,9 @@ async def test_reviewer_returns_one_bounded_decision_per_operation() -> None:
 
     assert decisions == {"op-1": {"decision": "allow", "reason": "requested test"}}
     assert "secret-value" not in str(model.messages)
+    reviewer_prompt = str(model.messages[0].content)
+    assert "goal-relevant read-only" in reviewer_prompt
+    assert "Do not ask merely because an action accesses the public internet" in reviewer_prompt
 
 
 @pytest.mark.asyncio

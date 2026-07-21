@@ -95,6 +95,7 @@ from .api_schemas import (
     PluginStateCommandReceipt,
     PluginUpdateCommand,
     PluginVersionSwitchCommandReceipt,
+    PptxOutlineResponse,
     QuestionAnswer,
     ReconcileToolRequest,
     ResolvePermissionCommand,
@@ -153,6 +154,7 @@ from .store.sqlite import (
     ParentRunAdmissionError,
     PermissionDecisionConflictError,
     RunAdmissionError,
+    RunInputSnapshotError,
     RunResultConflictError,
     ThreadAdmissionError,
     WaitDecisionConflictError,
@@ -465,6 +467,40 @@ async def _owned_run(
     return run
 
 
+async def _run_with_inputs(store: LocalStore, run: dict[str, Any]) -> dict[str, Any]:
+    return (await _runs_with_inputs(store, [run]))[0]
+
+
+async def _runs_with_inputs(store: LocalStore, runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = await store.list_run_inputs_for_runs([str(run["id"]) for run in runs])
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["run_id"]), []).append(row)
+    return [
+        {
+            **run,
+            "inputs": [
+                {
+                    "client_index": index,
+                    **{
+                        key: item[key]
+                        for key in (
+                            "input_id",
+                            "virtual_path",
+                            "original_name",
+                            "media_type",
+                            "bytes",
+                            "sha256",
+                        )
+                    },
+                }
+                for index, item in enumerate(grouped.get(str(run["id"]), []))
+            ],
+        }
+        for run in runs
+    ]
+
+
 async def _normalized_path(raw: str) -> str:
     return await asyncio.to_thread(
         lambda: str(Path(os.path.abspath(os.path.expanduser(raw))).resolve())
@@ -656,6 +692,17 @@ async def lifespan(app: FastAPI):
     store = await LocalStore.open(settings.runtime_db_path)
     persisted_settings = await store.get_runtime_settings()
     if persisted_settings is not None:
+        old_defaults = persisted_settings["settings"]
+        migration = {}
+        if old_defaults.get("max_model_calls") == 20:
+            migration["max_model_calls"] = 100
+        if old_defaults.get("research_search_limit") == 3:
+            migration["research_search_limit"] = 10
+        if migration:
+            persisted_settings = await store.patch_runtime_settings(
+                migration,
+                initial_settings=old_defaults,
+            )
         settings = _apply_runtime_settings(settings, persisted_settings["settings"])
     checkpointer, ck_stack = await open_checkpointer(settings)
     agent_store, store_stack = await open_store(settings)
@@ -1329,6 +1376,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             **snapshot,
             "thread": _thread_record_for_api(snapshot["thread"]),
             "items": items,
+            "runs": await _runs_with_inputs(store, snapshot["runs"]),
             "events": events,
         }
 
@@ -1375,7 +1423,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         store: LocalStore = app.state.store
         runs = await store.list_runs(principal_id=request.state.principal_id)
-        return {"runs": runs}
+        return {"runs": await _runs_with_inputs(store, runs)}
 
     @app.get("/v1/plugins", response_model=ListPluginsResponse)
     async def list_plugins(request: Request) -> dict[str, Any]:
@@ -1801,7 +1849,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         attachment_paths = [await _normalized_path(path) for path in body.attachment_paths]
         coordinator: RunCoordinator = app.state.coordinator
         try:
-            return await coordinator.start_run(
+            run = await coordinator.start_run(
                 principal_id=principal_id,
                 command_id=body.command_id,
                 client_message_id=body.client_message_id,
@@ -1831,6 +1879,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 settings=body.settings,
                 metadata=body.metadata,
             )
+            return await _run_with_inputs(app.state.store, run)
         except CommandConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except WorkspaceAdmissionError as exc:
@@ -1924,7 +1973,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         coordinator: RunCoordinator = app.state.coordinator
         try:
-            return await coordinator.fork_run(
+            run = await coordinator.fork_run(
                 principal_id=request.state.principal_id,
                 source_run_id=run_id,
                 command_id=body.command_id,
@@ -1941,6 +1990,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 user_item_metadata=body.user_item_metadata,
                 metadata=body.metadata,
             )
+            return await _run_with_inputs(app.state.store, run)
         except RunNotFoundError as exc:
             raise HTTPException(
                 status_code=404,
@@ -1967,11 +2017,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def get_run(request: Request, run_id: str) -> dict[str, Any]:
         """Return the flat run record (same shape as POST /runs)."""
         store: LocalStore = app.state.store
-        return await _owned_run(
+        run = await _owned_run(
             store,
             principal_id=request.state.principal_id,
             run_id=run_id,
         )
+        return await _run_with_inputs(store, run)
 
     @app.get("/v1/runs/{run_id}/stream")
     async def stream_run(
@@ -2439,7 +2490,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # it reads response.arrayBuffer() directly.
         return FileResponse(resolved, filename=resolved.name)
 
-    @app.get("/v1/pptx-outline")
+    @app.get(
+        "/v1/runs/{run_id}/inputs/{input_id}",
+        response_class=FileResponse,
+        responses={
+            200: {
+                "content": {
+                    "application/octet-stream": {"schema": {"type": "string", "format": "binary"}}
+                }
+            }
+        },
+    )
+    async def get_run_input(request: Request, run_id: str, input_id: str):
+        """Stream one immutable Runtime-owned input to its Run owner."""
+        store: LocalStore = app.state.store
+        await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
+        record = next(
+            (item for item in await store.list_run_inputs(run_id) if item["input_id"] == input_id),
+            None,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail="run input not found")
+        try:
+            body = await asyncio.to_thread(store.run_input_body_path, record)
+        except RunInputSnapshotError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return FileResponse(
+            body,
+            filename=record["original_name"],
+            media_type="application/octet-stream",
+        )
+
+    @app.get("/v1/pptx-outline", response_model=PptxOutlineResponse)
     async def get_pptx_outline(
         request: Request,
         path: str = Query(..., description="Absolute .pptx path inside an authorized workspace"),
@@ -2480,7 +2566,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .tools.office import _outline_pptx
 
         try:
-            return _outline_pptx(str(resolved))
+            return await asyncio.to_thread(_outline_pptx, str(resolved))
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"failed to outline .pptx: {exc.__class__.__name__}: {exc}",
+            ) from exc
+
+    @app.get(
+        "/v1/runs/{run_id}/inputs/{input_id}/pptx-outline",
+        response_model=PptxOutlineResponse,
+    )
+    async def get_run_input_pptx_outline(
+        request: Request,
+        run_id: str,
+        input_id: str,
+    ) -> dict[str, Any]:
+        """Return a deck outline from the immutable Runtime-owned input."""
+        store: LocalStore = app.state.store
+        await _owned_run(
+            store,
+            principal_id=request.state.principal_id,
+            run_id=run_id,
+        )
+        record = next(
+            (item for item in await store.list_run_inputs(run_id) if item["input_id"] == input_id),
+            None,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail="run input not found")
+        if Path(str(record["original_name"])).suffix.lower() != ".pptx":
+            raise HTTPException(status_code=400, detail="run input must be a .pptx file")
+        try:
+            body = await asyncio.to_thread(store.run_input_body_path, record)
+        except RunInputSnapshotError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        from .tools.office import _outline_pptx
+
+        try:
+            return await asyncio.to_thread(_outline_pptx, str(body))
         except Exception as exc:
             raise HTTPException(
                 status_code=500,
@@ -2527,7 +2651,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "schema_version": 1,
             "exported_at": datetime.now(UTC).isoformat(),
             "runtime_version": __version__,
-            "run": run,
+            "run": await _run_with_inputs(store, run),
             "events": events,
             "permissions": permissions,
             "tool_receipts": [

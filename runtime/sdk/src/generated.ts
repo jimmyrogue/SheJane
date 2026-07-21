@@ -485,6 +485,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{run_id}/inputs/{input_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run Input
+         * @description Stream one immutable Runtime-owned input to its Run owner.
+         */
+        get: operations["get_run_input_v1_runs__run_id__inputs__input_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/inputs/{input_id}/pptx-outline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run Input Pptx Outline
+         * @description Return a deck outline from the immutable Runtime-owned input.
+         */
+        get: operations["get_run_input_pptx_outline_v1_runs__run_id__inputs__input_id__pptx_outline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{run_id}/stream": {
         parameters: {
             query?: never;
@@ -1653,6 +1693,8 @@ export interface components {
             history_json: string;
             /** Id */
             id: string;
+            /** Inputs */
+            inputs: components["schemas"]["LocalRunInputRef"][];
             /**
              * Metadata Json
              * @default {}
@@ -1706,6 +1748,23 @@ export interface components {
             tool_receipts?: components["schemas"]["DiagnosticsToolReceipt"][];
             /** Wait Candidates */
             wait_candidates?: components["schemas"]["DiagnosticsWaitCandidate"][];
+        };
+        /** LocalRunInputRef */
+        LocalRunInputRef: {
+            /** Bytes */
+            bytes: number;
+            /** Client Index */
+            client_index: number;
+            /** Input Id */
+            input_id: string;
+            /** Media Type */
+            media_type: string;
+            /** Original Name */
+            original_name: string;
+            /** Sha256 */
+            sha256: string;
+            /** Virtual Path */
+            virtual_path: string;
         };
         /** LocalRuntimeModel */
         LocalRuntimeModel: {
@@ -2546,6 +2605,30 @@ export interface components {
             /** Version */
             version: string;
         };
+        /** PptxOutlineResponse */
+        PptxOutlineResponse: {
+            /** Slide Count */
+            slide_count: number;
+            /** Slides */
+            slides: components["schemas"]["PptxSlideOutline"][];
+        };
+        /** PptxSlideOutline */
+        PptxSlideOutline: {
+            /** Bullets */
+            bullets: string[];
+            /** Image Count */
+            image_count: number;
+            /** Index */
+            index: number;
+            /** Layout */
+            layout: string;
+            /** Notes */
+            notes: string;
+            /** Shape Count */
+            shape_count: number;
+            /** Title */
+            title: string;
+        };
         /** QuestionAnswer */
         QuestionAnswer: {
             /**
@@ -2718,7 +2801,7 @@ export interface components {
             input_guard: "off" | "observe" | "block";
             /**
              * Max Model Calls
-             * @default 20
+             * @default 100
              */
             max_model_calls: number;
             /**
@@ -2749,7 +2832,7 @@ export interface components {
             repair_workflow_max: number;
             /**
              * Research Search Limit
-             * @default 3
+             * @default 10
              */
             research_search_limit: number;
             /**
@@ -3506,9 +3589,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PptxOutlineResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3760,6 +3841,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InjectRunInstructionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_input_v1_runs__run_id__inputs__input_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                input_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_input_pptx_outline_v1_runs__run_id__inputs__input_id__pptx_outline_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                input_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PptxOutlineResponse"];
                 };
             };
             /** @description Validation Error */

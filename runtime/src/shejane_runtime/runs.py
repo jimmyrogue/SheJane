@@ -57,6 +57,7 @@ from .plugins.identity import plugin_action_tool_version
 from .progress_ledger import build_handoff_snapshot
 from .store.fenced_checkpointer import FencedCheckpointer
 from .store.sqlite import (
+    MAX_RUN_INPUT_BYTES,
     TRANSIENT_RUN_EVENT_TYPES,
     GraphHeadConflictError,
     LeaseFenceError,
@@ -90,9 +91,10 @@ RUNTIME_CAPABILITIES = frozenset(
     }
 )
 
-# Attachments are admitted as immutable Runtime-owned references. Generic
-# model-facing file reads keep their separate 10 MiB ceiling in agent/builder.py.
-_MAX_ATTACHMENT_REFERENCE_BYTES = 1024**4
+# Attachments are admitted as immutable Runtime-owned references. Model-facing
+# attachment and PDF reads have a 200 MiB ceiling; other workspace, Skill,
+# Memory, and subagent reads use 20 MiB in agent/backends.py.
+_MAX_ATTACHMENT_REFERENCE_BYTES = MAX_RUN_INPUT_BYTES
 
 
 def _attachment_bindings(paths: list[str]) -> list[dict[str, str]]:
@@ -126,10 +128,10 @@ async def _attachment_admission_error(bindings: list[dict[str, str]]) -> str | N
             return f"attachment is no longer available: {path.name}"
         size = (await asyncio.to_thread(path.stat)).st_size
         if size > _MAX_ATTACHMENT_REFERENCE_BYTES:
-            return f"attachment exceeds the 1 TiB file-reference limit: {path.name}"
+            return f"attachment exceeds the 200 MiB limit: {path.name}"
         total_size += size
         if total_size > _MAX_ATTACHMENT_REFERENCE_BYTES:
-            return "attachments exceed the 1 TiB per-Run file-reference limit"
+            return "attachments exceed the 200 MiB per-Run limit"
     return None
 
 
@@ -946,6 +948,7 @@ class RunCoordinator:
                             f"Skill configuration could not be inspected: {exc}",
                         )
             prepared_inputs: list[dict[str, object]] = []
+            admitted_user_item_metadata = dict(user_item_metadata or {})
             if admission_error is None and attachment_bindings:
                 try:
                     prepared_inputs = await _prepare_run_inputs(self.store, attachment_bindings)
@@ -962,6 +965,25 @@ class RunCoordinator:
                         }
                         for item in prepared_inputs
                     ]
+                    visible_attachments = admitted_user_item_metadata.get("attachments")
+                    if isinstance(visible_attachments, list) and len(visible_attachments) == len(
+                        prepared_inputs
+                    ):
+                        admitted_user_item_metadata["attachments"] = [
+                            {
+                                **attachment,
+                                "input_id": prepared["input_id"],
+                                "media_type": prepared["media_type"],
+                                "bytes": prepared["bytes"],
+                            }
+                            if isinstance(attachment, dict)
+                            else attachment
+                            for attachment, prepared in zip(
+                                visible_attachments,
+                                prepared_inputs,
+                                strict=True,
+                            )
+                        ]
 
             run, _created = await self.store.accept_run_command(
                 principal_id=principal_id,
@@ -974,7 +996,7 @@ class RunCoordinator:
                 assistant_message_id=assistant_message_id,
                 thread_title=thread_title,
                 thread_metadata=thread_metadata,
-                user_item_metadata=user_item_metadata,
+                user_item_metadata=admitted_user_item_metadata or None,
                 replace_from_client_id=replace_from_client_id,
                 workspace_path=workspace_path,
                 mode=mode,

@@ -26,7 +26,10 @@ describe('Runtime thread projection', () => {
           status: 'completed',
           content: 'Visible question',
           metadata: {
-            attachments: [{ path: '/tmp/brief.pdf', name: 'brief.pdf' }],
+            attachments: [{
+              path: '/tmp/brief.pdf',
+              name: 'brief.pdf',
+            }],
             plugin_selection: {
               references: [{
                 plugin_id: 'dev.shejane.fixture.archive',
@@ -74,6 +77,15 @@ describe('Runtime thread projection', () => {
         history_json: '[]',
         settings_json: '{}',
         metadata_json: '{}',
+        inputs: [{
+          client_index: 0,
+          input_id: 'source',
+          virtual_path: '/attachments/brief.pdf',
+          original_name: 'brief.pdf',
+          media_type: 'application/pdf',
+          bytes: 123,
+          sha256: 'a'.repeat(64),
+        }],
         created_at: '2026-07-12T00:00:00Z',
         updated_at: '2026-07-12T00:00:02Z',
       }],
@@ -104,7 +116,13 @@ describe('Runtime thread projection', () => {
         id: 'user-1',
         role: 'user',
         content: 'Visible question',
-        attachments: [{ path: '/tmp/brief.pdf', name: 'brief.pdf' }],
+        runId: 'run-1',
+        attachments: [{
+          path: '/tmp/brief.pdf',
+          name: 'brief.pdf',
+          runId: 'run-1',
+          inputId: 'source',
+        }],
         pluginReferences: [{
           pluginId: 'dev.shejane.fixture.archive',
           name: 'Archive fixture',
@@ -163,6 +181,7 @@ describe('Runtime thread projection', () => {
         history_json: '[]',
         settings_json: '{}',
         metadata_json: '{}',
+        inputs: [],
         created_at: '2026-07-12T00:00:00Z',
         updated_at: '2026-07-12T00:00:01Z',
       }],
@@ -243,6 +262,7 @@ describe('Runtime thread projection', () => {
         history_json: '[]',
         settings_json: '{}',
         metadata_json: '{"intent":"retry"}',
+        inputs: [],
         created_at: '2026-07-12T00:00:01Z',
         updated_at: '2026-07-12T00:00:02Z',
       }],

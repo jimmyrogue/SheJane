@@ -77,9 +77,9 @@ class RuntimeSettingsResponse(BaseModel):
     """Persisted defaults used when accepting future runs."""
 
     version: int = 0
-    max_model_calls: int = Field(default=20, ge=1, le=100)
+    max_model_calls: int = Field(default=100, ge=1, le=100)
     max_tool_retries: int = Field(default=2, ge=0, le=5)
-    research_search_limit: int = Field(default=3, ge=1, le=20)
+    research_search_limit: int = Field(default=10, ge=1, le=20)
     unknown_model_max_input_tokens: int = Field(default=32_768, ge=8_192, le=10_000_000)
     unknown_model_max_output_tokens: int = Field(default=8_192, ge=128, le=1_000_000)
     model_request_timeout_seconds: float = Field(default=120.0, ge=5.0, le=900.0)
@@ -208,6 +208,16 @@ RunStatus = Literal[
 PermissionMode = Literal["ask", "auto", "full_access"]
 
 
+class LocalRunInputRef(BaseModel):
+    client_index: int = Field(ge=0)
+    input_id: str
+    virtual_path: str
+    original_name: str
+    media_type: str
+    bytes: int = Field(ge=0)
+    sha256: str
+
+
 class LocalRun(BaseModel):
     """One row of the `local_runs` table, surfaced over HTTP.
 
@@ -236,10 +246,32 @@ class LocalRun(BaseModel):
     thread_id: str | None = None
     assistant_item_id: str | None = None
     user_input: str | None = None
+    inputs: list[LocalRunInputRef]
+
+    @model_validator(mode="after")
+    def input_order_is_dense(self) -> LocalRun:
+        if sorted(item.client_index for item in self.inputs) != list(range(len(self.inputs))):
+            raise ValueError("inputs must have unique dense client_index values")
+        return self
 
 
 class ListRunsResponse(BaseModel):
     runs: list[LocalRun]
+
+
+class PptxSlideOutline(BaseModel):
+    index: int
+    layout: str
+    title: str
+    bullets: list[str]
+    notes: str
+    shape_count: int
+    image_count: int
+
+
+class PptxOutlineResponse(BaseModel):
+    slides: list[PptxSlideOutline]
+    slide_count: int
 
 
 class LocalThread(BaseModel):
