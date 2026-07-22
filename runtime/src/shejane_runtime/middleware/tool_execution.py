@@ -573,10 +573,8 @@ def _provider_safe_tool_result(
     """
     if not isinstance(result, ToolMessage):
         return result
-    call = request.tool_call
-    if str(call.get("name") or "") != "read_file":
-        return result
     blocks = result.content
+    call = request.tool_call
     context = getattr(request.runtime, "context", None)
     model_profile = getattr(getattr(context, "model", None), "profile", None)
     if (
@@ -585,11 +583,19 @@ def _provider_safe_tool_result(
         and isinstance(model_profile, dict)
         and model_profile.get("image_inputs") is False
     ):
+        limitation = (
+            "Image content was not provided because the selected model is text-only. "
+            "Choose a model marked as supporting images before describing this file."
+        )
+        remaining = [
+            block
+            for block in blocks
+            if not (isinstance(block, dict) and block.get("type") == "image")
+        ]
         return result.model_copy(
             update={
                 "content": (
-                    "Image content was not provided because the selected model is text-only. "
-                    "Choose a model marked as supporting images before describing this file."
+                    [*remaining, {"type": "text", "text": limitation}] if remaining else limitation
                 ),
                 "additional_kwargs": {
                     **result.additional_kwargs,
@@ -597,6 +603,8 @@ def _provider_safe_tool_result(
                 },
             }
         )
+    if str(call.get("name") or "") != "read_file":
+        return result
     arguments = call.get("args")
     requested_path = arguments.get("file_path") if isinstance(arguments, dict) else None
     if not isinstance(requested_path, str) or not requested_path.lower().endswith(".pdf"):

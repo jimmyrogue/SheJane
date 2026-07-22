@@ -1,11 +1,13 @@
 # SheJane Plugin Developer Guide
 
-> v1 preview: WASI packages install and execute. Managed Worker packages remain fail-closed until the current platform's production isolation Gate passes.
+> v1 preview: WASI packages install and execute. Managed Worker packages remain fail-closed until the current platform's production isolation Gate passes. `builtin` is reserved for audited Runtime-owned adapters and is not a general plugin escape hatch.
 
 A SheJane plugin packages one or more deterministic Actions. Developers choose the execution type that fits the work:
 
 - choose **WASI** for focused transformations with a small dependency surface;
 - choose **Managed Worker** for native libraries, Python/Node ecosystems, or heavyweight document and media processing.
+
+The first-party [Computer Use plugin](../../runtime/plugins/computer-use) demonstrates the reserved `builtin` form. Its package supplies immutable schemas and pinned upstream assets, while the Runtime owns the only allowed host adapter and P11 lifecycle.
 
 This is not an “official versus community” distinction. Every package follows the same manifest, Action, authorization, receipt, and Artifact rules.
 

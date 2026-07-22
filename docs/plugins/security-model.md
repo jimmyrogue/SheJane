@@ -1,6 +1,6 @@
 # SheJane Plugin Platform Security Model
 
-> Status: Phase 0 threat model; normative for the plugin contracts, not a claim that plugin execution is implemented.
+> Status: normative for the implemented plugin contracts.
 >
 > Review date: 2026-07-15
 
@@ -10,10 +10,11 @@ SheJane is a local-first agentic chat application. The Electron Client submits c
 
 The security goal is not “plugins are trusted after installation.” The goal is that a malicious, compromised, buggy, or prompt-influenced plugin cannot exceed the exact capability and resource lease issued for one Action invocation, and cannot forge a durable result.
 
-The platform supports two developer-selected execution types:
+The platform supports two public developer-selected execution types and one reserved host selector:
 
 - `wasi`: capability-oriented WebAssembly/WASI execution with no ambient host access;
 - `managed_worker`: native local executable supervised out of process and, for untrusted code, enclosed by a platform-specific OS isolation adapter.
+- `builtin`: selects an audited Runtime-owned host adapter and exact canonical package digest. Currently limited to `computer_use`; modified package bytes fail installation and P6 revalidation.
 
 Both use the same manifest and Action protocol. Publisher identity, signature validity, execution type, capability grant, and platform isolation status are independent facts.
 
@@ -86,6 +87,10 @@ JSON-RPC frames, stderr, exit status, staged files, and child processes are host
 ### TB6: Staging to authoritative Artifact store
 
 `/output` is untrusted temporary state. Runtime reopens candidates safely, recomputes digest/type/size, applies quotas, and atomically promotes only validated files. Paths returned by a plugin are never Artifact authority.
+
+### TB6a: Runtime to Computer Use helper
+
+The first-party adapter and its pinned native helper have the current user's explicit macOS Accessibility and Screen Recording grants. This is intentionally stronger authority than a Worker. Every Action still uses frozen package identity, an exact Runtime allowlisted digest, schema validation, P10 review/receipt, bounded frames/timeouts, one Run-scoped service, and P11 shutdown. Unknown handlers and modified payload bytes fail closed.
 
 ### TB7: Plugin output to model and user interface
 

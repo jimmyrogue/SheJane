@@ -1220,7 +1220,7 @@ class PluginSummary(BaseModel):
     version: str
     digest: str
     publisher: PluginPublisherSummary
-    execution_kind: Literal["wasi", "managed_worker"]
+    execution_kind: Literal["wasi", "managed_worker", "builtin"]
     signature_status: Literal["unsigned", "verified"]
     compatibility: Literal["compatible", "incompatible"]
     enabled: bool
@@ -1243,7 +1243,7 @@ class PluginActionSummary(BaseModel):
     description: str
     consumes: list[str]
     produces: list[str]
-    effects: list[Literal["read", "artifact"]]
+    effects: list[Literal["read", "artifact", "external"]]
     determinism: Literal["pure", "input_stable", "nondeterministic"]
     capabilities: list[str]
     limits: PluginActionLimits

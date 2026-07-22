@@ -34,6 +34,10 @@ export interface PluginsViewProps {
   bindVisionModel?: (plugin: PluginDetail, model: RuntimeModelSpec) => Promise<unknown>
 }
 
+function executionLabel(kind: PluginSummary['execution_kind']): string {
+  return kind === 'wasi' ? 'WASI' : kind === 'managed_worker' ? 'Managed Worker' : 'Built-in'
+}
+
 export function PluginsView({
   listPlugins,
   refreshVersion,
@@ -189,7 +193,7 @@ export function PluginsView({
                   </div>
                   <code className="plugin-id">{plugin.id}</code>
                   <div className="plugin-meta">
-                    <span>{plugin.execution_kind === 'wasi' ? 'WASI' : 'Managed Worker'}</span>
+                    <span>{executionLabel(plugin.execution_kind)}</span>
                     <span>{plugin.signature_status}</span>
                   </div>
                   <div className="skill-card-footer">
@@ -342,7 +346,7 @@ function PluginDetails({
       <p>{plugin.description}</p>
       <dl className="plugin-detail-facts">
         <div><dt>{t('plugins.publisher')}</dt><dd>{plugin.publisher.name}</dd></div>
-        <div><dt>{t('plugins.execution')}</dt><dd>{plugin.execution_kind === 'wasi' ? 'WASI' : 'Managed Worker'}</dd></div>
+        <div><dt>{t('plugins.execution')}</dt><dd>{executionLabel(plugin.execution_kind)}</dd></div>
         <div><dt>{t('plugins.signature')}</dt><dd>{plugin.signature_status}</dd></div>
         <div><dt>{t('plugins.digest')}</dt><dd><code>{plugin.digest}</code></dd></div>
       </dl>

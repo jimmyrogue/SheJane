@@ -124,6 +124,9 @@
             },
             {
               "$ref": "#/$defs/managedWorkerExecution"
+            },
+            {
+              "$ref": "#/$defs/builtinExecution"
             }
           ]
         }
@@ -219,6 +222,34 @@
         }
       }
     },
+    "builtinExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "handler",
+        "platforms"
+      ],
+      "properties": {
+        "kind": {
+          "const": "builtin"
+        },
+        "handler": {
+          "const": "computer_use"
+        },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "darwin/arm64"
+            ]
+          }
+        }
+      }
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,
@@ -305,7 +336,8 @@
           "items": {
             "enum": [
               "read",
-              "artifact"
+              "artifact",
+              "external"
             ]
           }
         },

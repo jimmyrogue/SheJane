@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["stateId","ref"],"properties":{"stateId":{"type":"string","minLength":1,"maxLength":128},"ref":{"type":"string","minLength":1,"maxLength":128},"depth":{"type":"integer","minimum":1,"maximum":8,"default":3}}}

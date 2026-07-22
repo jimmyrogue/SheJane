@@ -79,11 +79,12 @@ from ..middleware.tool_visibility import ToolVisibilityMiddleware, delivered_plu
 from ..model_credentials import CredentialStoreError, get_model_api_key
 from ..model_profiles import apply_known_model_profile_defaults
 from ..plugins.catalog import PluginExecutionLease
+from ..plugins.computer_use import ComputerUseActionExecutor, ComputerUseService
 from ..plugins.linux_cgroup import load_linux_cgroup_resources
 from ..plugins.macos_vm import load_macos_vm_resources
 from ..plugins.platforms import current_managed_worker_platform
 from ..plugins.sandbox_runtime import SandboxRuntimeError, configured_srt_launcher
-from ..plugins.tools import PluginActionError, build_plugin_tool
+from ..plugins.tools import PluginActionError, PluginToolAdapter, build_plugin_tool
 from ..store.sqlite import LocalStore
 from ..tools.mcp import (
     MCP_TOOL_SEARCH_THRESHOLD,
@@ -1041,15 +1042,41 @@ async def build_agent(
         except SandboxRuntimeError as exc:
             raise PluginActionError("executor_unavailable", str(exc)) from exc
 
-    plugin_tools = [
-        build_plugin_tool(
-            action,
-            vision_invoker=invoke_plugin_vision,
-            linux_cgroup=linux_cgroup,
-            vm_resources=vm_resources,
+    actions = plugin_lease.actions if plugin_lease else ()
+    computer_use_service = None
+    if any(action.execution_kind == "builtin" for action in actions):
+        if resource_stack is None:
+            raise PluginActionError(
+                "executor_unavailable", "Computer Use requires a Runtime resource stack"
+            )
+        computer_package = next(
+            action.package_root for action in actions if action.execution_kind == "builtin"
         )
-        for action in (plugin_lease.actions if plugin_lease else ())
-    ]
+        computer_use_service = ComputerUseService(
+            computer_package,
+            workspace_root=workspace_root or settings.data_dir,
+        )
+        resource_stack.push_async_callback(computer_use_service.aclose)
+
+    plugin_tools = []
+    for action in actions:
+        adapter = None
+        if action.execution_kind == "builtin":
+            assert computer_use_service is not None
+            adapter = PluginToolAdapter(
+                executor_factory=lambda selected, service=computer_use_service: (
+                    ComputerUseActionExecutor(service, selected.action_id)
+                )
+            )
+        plugin_tools.append(
+            build_plugin_tool(
+                action,
+                adapter=adapter,
+                vision_invoker=invoke_plugin_vision,
+                linux_cgroup=linux_cgroup,
+                vm_resources=vm_resources,
+            )
+        )
     dynamic_tool_map = {item.name: item.tool for item in dynamic_tools}
     dynamic_tool_map.update({tool.name: tool for tool in plugin_tools})
     mcp_tool_names = {item.name for item in dynamic_tools}

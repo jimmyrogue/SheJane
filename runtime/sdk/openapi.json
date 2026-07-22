@@ -3585,7 +3585,8 @@
             "items": {
               "enum": [
                 "read",
-                "artifact"
+                "artifact",
+                "external"
               ],
               "type": "string"
             },
@@ -3734,7 +3735,8 @@
           "execution_kind": {
             "enum": [
               "wasi",
-              "managed_worker"
+              "managed_worker",
+              "builtin"
             ],
             "title": "Execution Kind",
             "type": "string"
@@ -4407,7 +4409,8 @@
           "execution_kind": {
             "enum": [
               "wasi",
-              "managed_worker"
+              "managed_worker",
+              "builtin"
             ],
             "title": "Execution Kind",
             "type": "string"

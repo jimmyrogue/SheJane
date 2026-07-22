@@ -67,6 +67,7 @@ ManagedWorkerPlatform = Literal[
     "windows/arm64",
     "windows/amd64",
 ]
+HostPlatform = Literal["darwin/arm64"]
 
 
 def _package_path(value: str) -> str:
@@ -134,9 +135,19 @@ class ManagedWorkerExecution(_StrictModel):
         return self
 
 
+class BuiltinExecution(_StrictModel):
+    """A Runtime-authorized host adapter restricted to one exact package digest."""
+
+    kind: Literal["builtin"]
+    handler: Literal["computer_use"]
+    platforms: list[HostPlatform] = Field(min_length=1, max_length=1)
+
+
 class PluginRuntime(_StrictModel):
     min_version: Semver
-    execution: WasiExecution | ManagedWorkerExecution = Field(discriminator="kind")
+    execution: WasiExecution | ManagedWorkerExecution | BuiltinExecution = Field(
+        discriminator="kind"
+    )
 
 
 class ActionLimits(_StrictModel):
@@ -153,7 +164,7 @@ class PluginAction(_StrictModel):
     output_schema: PackagePath
     consumes: list[MimeType] = Field(max_length=32)
     produces: list[MimeType] = Field(max_length=32)
-    effects: list[Literal["read", "artifact"]] = Field(min_length=1, max_length=2)
+    effects: list[Literal["read", "artifact", "external"]] = Field(min_length=1, max_length=3)
     determinism: Literal["pure", "input_stable", "nondeterministic"]
     capabilities: list[Capability] = Field(max_length=32)
     limits: ActionLimits
@@ -231,7 +242,9 @@ def load_plugin_manifest(root: Path) -> PluginManifest:
     except (OSError, UnicodeError, json.JSONDecodeError, ValidationError) as exc:
         raise InvalidPluginPackage("plugin manifest is invalid") from exc
 
-    references = [manifest.runtime.execution.entrypoint]
+    references = []
+    if not isinstance(manifest.runtime.execution, BuiltinExecution):
+        references.append(manifest.runtime.execution.entrypoint)
     references.extend(
         reference
         for action in manifest.contributions.actions

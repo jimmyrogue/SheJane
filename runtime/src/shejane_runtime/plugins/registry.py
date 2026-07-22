@@ -13,6 +13,7 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from ..store.sqlite import LocalStore, PluginStateError, PluginVersionConflictError
+from .computer_use import is_allowed_computer_use_package
 from .manifest import load_plugin_manifest
 from .package import (
     SIGNATURE_PATH,
@@ -240,6 +241,24 @@ class PluginRegistry:
                     raise PluginRegistryError(
                         "managed_worker_sandbox_unavailable",
                         "Managed Worker plugins require a production operating-system sandbox",
+                        status_code=409,
+                    )
+            elif manifest.runtime.execution.kind == "builtin":
+                if not is_allowed_computer_use_package(
+                    plugin_id=manifest.id,
+                    version=manifest.version,
+                    digest=digest,
+                    handler=manifest.runtime.execution.handler,
+                ):
+                    raise PluginRegistryError(
+                        "builtin_plugin_not_allowed",
+                        "Built-in plugins require an exact Runtime allowlisted package digest",
+                        status_code=409,
+                    )
+                if manifest.runtime.execution.platforms != [current_managed_worker_platform()]:
+                    raise PluginRegistryError(
+                        "plugin_platform_incompatible",
+                        "Built-in plugin does not target this operating system and architecture",
                         status_code=409,
                     )
             try:

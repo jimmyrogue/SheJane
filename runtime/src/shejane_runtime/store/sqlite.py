@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS plugin_versions (
     version TEXT NOT NULL,
     digest TEXT NOT NULL UNIQUE,
     manifest_json TEXT NOT NULL,
-    execution_kind TEXT NOT NULL CHECK (execution_kind IN ('wasi', 'managed_worker')),
+    execution_kind TEXT NOT NULL CHECK (execution_kind IN ('wasi', 'managed_worker', 'builtin')),
     signature_status TEXT NOT NULL CHECK (signature_status IN ('unsigned', 'verified')),
     signer_key_id TEXT,
     compatibility TEXT NOT NULL CHECK (compatibility IN ('compatible', 'incompatible')),
@@ -767,6 +767,7 @@ class LocalStore:
         try:
             await _configure_connection(conn)
             await conn.executescript(SCHEMA)
+            await cls._ensure_plugin_execution_kinds(conn)
             await conn.execute("BEGIN IMMEDIATE")
             await cls._ensure_columns(conn)
             await conn.commit()
@@ -929,6 +930,54 @@ class LocalStore:
         ):
             if column not in columns:
                 await conn.execute(f"ALTER TABLE local_artifacts ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    async def _ensure_plugin_execution_kinds(conn: aiosqlite.Connection) -> None:
+        schema = await (
+            await conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'plugin_versions'"
+            )
+        ).fetchone()
+        if schema is not None and "'builtin'" in str(schema[0]):
+            return
+        columns = {
+            row[1]
+            for row in await (await conn.execute("PRAGMA table_info(plugin_versions)")).fetchall()
+        }
+        signer_key = "signer_key_id" if "signer_key_id" in columns else "NULL"
+        await conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
+            await conn.execute(
+                "CREATE TABLE plugin_versions_v2 ("
+                "plugin_id TEXT NOT NULL, version TEXT NOT NULL, digest TEXT NOT NULL UNIQUE, "
+                "manifest_json TEXT NOT NULL, execution_kind TEXT NOT NULL "
+                "CHECK (execution_kind IN ('wasi', 'managed_worker', 'builtin')), "
+                "signature_status TEXT NOT NULL CHECK (signature_status IN ('unsigned', 'verified')), "
+                "signer_key_id TEXT, compatibility TEXT NOT NULL "
+                "CHECK (compatibility IN ('compatible', 'incompatible')), "
+                "source TEXT NOT NULL, state TEXT NOT NULL "
+                "CHECK (state IN ('installed', 'retired')), created_at TEXT NOT NULL, "
+                "updated_at TEXT NOT NULL, retired_at TEXT, PRIMARY KEY (plugin_id, digest), "
+                "UNIQUE (plugin_id, version))"
+            )
+            await conn.execute(
+                "INSERT INTO plugin_versions_v2 "
+                "(plugin_id, version, digest, manifest_json, execution_kind, signature_status, "
+                "signer_key_id, compatibility, source, state, created_at, updated_at, retired_at) "
+                "SELECT plugin_id, version, digest, manifest_json, execution_kind, "
+                f"signature_status, {signer_key}, compatibility, source, state, created_at, "
+                "updated_at, retired_at FROM plugin_versions"
+            )
+            await conn.execute("DROP TABLE plugin_versions")
+            await conn.execute("ALTER TABLE plugin_versions_v2 RENAME TO plugin_versions")
+            await conn.commit()
+        except BaseException:
+            if conn.in_transaction:
+                await conn.rollback()
+            raise
+        finally:
+            await conn.execute("PRAGMA foreign_keys = ON")
 
     @staticmethod
     async def _ensure_model_provider_kinds(conn: aiosqlite.Connection) -> None:

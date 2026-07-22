@@ -43,7 +43,7 @@ Unknown fields fail validation. A future contract must use a new schema version 
 
 ## Execution types
 
-Developers choose one of two types. They are capability choices, not “official” versus “community” tiers.
+Public plugin developers choose `wasi` or `managed_worker`. The Runtime also reserves a narrow `builtin` selector for audited first-party host adapters. Runtime code allowlists the exact package identity, version, handler, and canonical digest; any changed package is rejected.
 
 ### `wasi`
 
@@ -86,6 +86,16 @@ Each Managed Worker package targets exactly one OS/architecture pair. Publish an
 
 An ordinary child process is only a crash boundary. It still has the current user's host permissions. A platform may enable untrusted Managed Workers only after its OS isolation adapter proves filesystem, network, credential, process, and resource restrictions. Otherwise installation or enablement fails closed.
 
+### `builtin`
+
+`builtin` is not a general third-party execution type. It selects one named adapter already shipped and audited inside the Runtime:
+
+```json
+{"kind":"builtin","handler":"computer_use","platforms":["darwin/arm64"]}
+```
+
+The package contributes schemas, user-facing commands, and pinned audited bridge assets. It cannot replace those assets without a matching Runtime release that updates the exact digest allowlist. The adapter remains bound to P10 Action authorization. The first handler is `computer_use`, which keeps one state-scoped desktop service for a Run and closes it during P11.
+
 ## Contributions
 
 `contributions.actions` is required. `skills`, `commands`, and `mcp_servers` are optional discoverability or orchestration layers; they never bypass Action authorization.
@@ -99,7 +109,7 @@ Each Action declares:
 | `id` | Stable local identifier, combined with the plugin ID at Runtime |
 | `input_schema` / `output_schema` | Package-relative JSON Schema documents for Action arguments and output |
 | `consumes` / `produces` | MIME types used for discovery and preflight checks |
-| `effects` | `read` and/or staged `artifact`; v1 has no direct arbitrary host mutation |
+| `effects` | `read`, staged `artifact`, and/or explicit `external` state |
 | `determinism` | `pure`, `input_stable`, or `nondeterministic` |
 | `capabilities` | Maximum capabilities the Action may request |
 | `limits` | Requested timeout, memory, and staged output ceilings |
@@ -118,6 +128,9 @@ The initial capability vocabulary is deliberately small:
 - `input.read`: read only the materialized `/input` references listed in the invocation.
 - `artifact.write`: write only to the private `/output` staging root.
 - `model.vision.invoke`: a Managed Worker may make one bounded request to the Runtime-owned Vision provider adapter using only authorized image input IDs and its frozen model binding. It does not grant network or credential access and is invalid for WASI Actions.
+- `computer.observe`: inspect the local desktop through the Runtime-owned Computer Use adapter.
+- `computer.control`: deliver checked input to the local desktop through that adapter.
+- `computer.setup`: install/register the pinned helper and open the relevant operating-system permission panes.
 
 New capabilities require an explicit platform vocabulary revision, an executor implementation, threat-model coverage, and conformance tests. The extensible string shape in schema v1 is not permission for a Runtime to accept an unknown capability.
 

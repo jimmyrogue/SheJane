@@ -122,6 +122,21 @@ describe('PluginsView', () => {
     await waitFor(() => expect(listPlugins).toHaveBeenCalledTimes(2))
   })
 
+  it('labels the Computer Use host adapter as built-in', async () => {
+    render(
+      <I18nProvider>
+        <PluginsView
+          listPlugins={vi.fn().mockResolvedValue([
+            { ...plugin, id: 'org.shejane.computer-use', name: 'Computer Use', execution_kind: 'builtin' },
+          ])}
+        />
+      </I18nProvider>,
+    )
+
+    expect(await screen.findByText('Computer Use')).toBeInTheDocument()
+    expect(screen.getByText('Built-in')).toBeInTheDocument()
+  })
+
   it('shows details and runs enable, update, rollback, and remove commands', async () => {
     const listPlugins = vi.fn().mockResolvedValue([plugin])
     const getPlugin = vi.fn().mockResolvedValue(detail)

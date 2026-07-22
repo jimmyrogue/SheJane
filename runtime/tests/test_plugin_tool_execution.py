@@ -175,6 +175,93 @@ async def test_plugin_adapter_maps_worker_progress_to_custom_stream(
 
 
 @pytest.mark.asyncio
+async def test_builtin_plugin_adapter_returns_screenshot_as_model_content(
+    tmp_path: Path,
+) -> None:
+    store = await LocalStore.open(tmp_path / "runtime.db")
+    run = await store.create_run(
+        principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        goal="observe desktop",
+        workspace_path=None,
+    )
+    binding = _install_fixture(tmp_path)
+
+    class ScreenshotExecutor:
+        async def invoke(self, invocation, *, input_root, output_root, on_progress=None):
+            return {
+                "schema_version": 1,
+                "invocation_id": invocation["invocation_id"],
+                "operation_id": invocation["operation_id"],
+                "status": "succeeded",
+                "output": {
+                    "text": "Desktop state s1 with one button",
+                    "images": [{"base64": "cG5n", "mime_type": "image/png"}],
+                },
+                "artifacts": [],
+            }
+
+    try:
+        async with PluginCatalog(tmp_path).acquire_snapshot(
+            [binding], execution_context=object()
+        ) as lease:
+            action = replace(
+                lease.actions[0],
+                execution_kind="builtin",
+                input_schema={
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "additionalProperties": False,
+                },
+                output_schema={
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["text", "images"],
+                    "properties": {
+                        "text": {"type": "string"},
+                        "images": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["base64", "mime_type"],
+                                "properties": {
+                                    "base64": {"type": "string"},
+                                    "mime_type": {"const": "image/png"},
+                                },
+                            },
+                        },
+                    },
+                },
+                consumes=(),
+                capabilities=(),
+            )
+            context = RuntimeContext(
+                store=store,
+                run_id=str(run["id"]),
+                plugin_inputs=(),
+            )
+            result = await PluginToolAdapter(
+                executor_factory=lambda _action: ScreenshotExecutor()
+            ).invoke(
+                action,
+                {},
+                RuntimeToolExecution(
+                    context=context,
+                    operation_id="toolop_screenshot",
+                    tool_call_id="call_screenshot",
+                ),
+            )
+    finally:
+        await store.close()
+
+    assert result[0]["type"] == "text"
+    text_result = json.loads(result[0]["text"])
+    assert text_result["output"] == {"text": "Desktop state s1 with one button"}
+    assert result[1] == {"type": "image", "base64": "cG5n", "mime_type": "image/png"}
+
+
+@pytest.mark.asyncio
 async def test_plugin_adapter_uses_frozen_vision_binding_without_exposing_credentials(
     tmp_path: Path,
 ) -> None:

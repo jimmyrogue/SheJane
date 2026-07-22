@@ -2329,7 +2329,14 @@ class RunCoordinator:
                     "inputs": action_inputs,
                     "grants": {
                         "capabilities": sorted(
-                            set(action.capabilities) & {"input.read", "artifact.write"}
+                            set(action.capabilities)
+                            & {
+                                "input.read",
+                                "artifact.write",
+                                "computer.observe",
+                                "computer.control",
+                                "computer.setup",
+                            }
                         )
                     },
                     "limits": dict(action.limits),

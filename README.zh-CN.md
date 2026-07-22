@@ -50,13 +50,13 @@ Runtime 可以脱离 Client 独立启动和测试。SDK 与插件放在 Runtime 
 |---|---|
 | Runtime | LangGraph 和 Deep Agents 循环、流式事件、检查点、恢复、规划、验证、记忆和人工审批 |
 | 本地工具 | 工作区文件、工作区只读且无网络的沙箱 Shell、Office、网页抓取、剪贴板审批和定时任务 |
-| 扩展能力 | Skill、MCP、确定性的 WASI/Managed Worker 插件、Subagent 和可配置 middleware |
+| 扩展能力 | Skill、MCP、确定性的 WASI/Managed Worker 插件、首方 macOS Computer Use 适配器、Subagent 和可配置 middleware |
 | Client | Electron 和 React、Runtime 权威对话的本地投影、文件预览、供应商设置与工作区控制 |
 | Runtime SDK | 面向命令、SSE、快照、错误和生成协议类型的公共 TypeScript 客户端 |
 
 业务平台连接器统一通过标准工具或 MCP 接入。
 
-插件平台目前处于预览阶段。WASI 插件包已经可以通过 Runtime 权威的 Action 协议安装和执行；Managed Worker 插件在当前平台的生产隔离与发布 Gate 通过前保持 fail-closed。公开包规范和本地工具见[插件开发者指南](./docs/plugins/developer-guide.md)。
+插件平台目前处于预览阶段。WASI 插件包已经可以通过 Runtime 权威的 Action 协议安装和执行；Managed Worker 插件在当前平台的生产隔离与发布 Gate 通过前保持 fail-closed。首方 macOS [Computer Use 插件](./runtime/plugins/computer-use)使用 Runtime 保留适配器，并继续经过 Action 审批与回执。公开包规范和本地工具见[插件开发者指南](./docs/plugins/developer-guide.md)。
 
 ## 快速开始
 

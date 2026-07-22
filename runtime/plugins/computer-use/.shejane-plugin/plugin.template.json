@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "org.shejane.computer-use",
+  "version": "__PLUGIN_VERSION__",
+  "name": "Computer Use",
+  "description": "Observe and control macOS desktop applications through state-scoped accessibility actions.",
+  "license": "AGPL-3.0-only AND MIT",
+  "publisher": {"id": "org.shejane", "name": "SheJane"},
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "builtin",
+      "handler": "computer_use",
+      "platforms": ["__PLATFORM__"]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {"id":"setup","title":"Set up Computer Use","description":"Install the pinned macOS helper and register Accessibility and Screen Recording permission entries.","input_schema":"actions/empty.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["external"],"determinism":"nondeterministic","capabilities":["computer.setup"],"limits":{"timeout_ms":120000,"memory_mb":256,"output_mb":4}},
+      {"id":"status","title":"Check Computer Use","description":"Check helper installation, protocol, and macOS permission status.","input_schema":"actions/empty.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
+      {"id":"find_roots","title":"Find UI roots","description":"Find a bounded ranked set of controllable desktop roots with stable refs.","input_schema":"actions/find_roots.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
+      {"id":"observe_ui","title":"Observe UI","description":"Capture one desktop root and return a bounded outline plus its immutable stateId.","input_schema":"actions/observe_ui.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["computer.observe"],"limits":{"timeout_ms":30000,"memory_mb":512,"output_mb":16}},
+      {"id":"search_ui","title":"Search UI","description":"Search the complete cached outline owned by one stateId.","input_schema":"actions/search_ui.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read"],"determinism":"input_stable","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
+      {"id":"expand_ui","title":"Expand UI","description":"Expand bounded local outline context for one element ref.","input_schema":"actions/expand_ui.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read"],"determinism":"input_stable","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
+      {"id":"inspect_ui","title":"Inspect UI","description":"Inspect one exact element ref with geometry, capabilities, and evidence.","input_schema":"actions/inspect_ui.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read"],"determinism":"input_stable","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
+      {"id":"act_ui","title":"Act on UI","description":"Perform one checked desktop action transaction and return its successor state.","input_schema":"actions/act_ui.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["external"],"determinism":"nondeterministic","capabilities":["computer.control"],"limits":{"timeout_ms":60000,"memory_mb":512,"output_mb":16}},
+      {"id":"read_text","title":"Read UI text","description":"Read a fixed page from state-owned UI text or bounded output.","input_schema":"actions/read_text.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read"],"determinism":"input_stable","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
+      {"id":"wait_for","title":"Wait for UI","description":"Wait for a precise scoped UI condition and return the successor state.","input_schema":"actions/wait_for.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["computer.observe"],"limits":{"timeout_ms":65000,"memory_mb":256,"output_mb":8}}
+    ],
+    "commands": [
+      {"id":"computer-use","title":"Use desktop apps","description":"Set up, inspect, and operate a macOS desktop app.","instructions":"commands/computer-use.md","required_actions":["setup","status","find_roots","observe_ui","search_ui","expand_ui","inspect_ui","act_ui","read_text","wait_for"]}
+    ]
+  }
+}

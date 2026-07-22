@@ -2216,7 +2216,7 @@ export interface components {
              */
             determinism: "pure" | "input_stable" | "nondeterministic";
             /** Effects */
-            effects: ("read" | "artifact")[];
+            effects: ("read" | "artifact" | "external")[];
             /** Id */
             id: string;
             limits: components["schemas"]["PluginActionLimits"];
@@ -2266,7 +2266,7 @@ export interface components {
              * Execution Kind
              * @enum {string}
              */
-            execution_kind: "wasi" | "managed_worker";
+            execution_kind: "wasi" | "managed_worker" | "builtin";
             /** Id */
             id: string;
             /** License */
@@ -2523,7 +2523,7 @@ export interface components {
              * Execution Kind
              * @enum {string}
              */
-            execution_kind: "wasi" | "managed_worker";
+            execution_kind: "wasi" | "managed_worker" | "builtin";
             /** Id */
             id: string;
             /** Name */

@@ -20,6 +20,7 @@ from langgraph.config import get_stream_writer
 from ..store.sqlite import LocalStore
 from ..tools.runtime import RuntimeToolExecution, current_runtime_tool_execution
 from .catalog import PluginActionDescriptor
+from .computer_use import ComputerUseError
 from .executor import ActionExecutor, ManagedWorkerActionExecutor, WasiActionExecutor
 from .linux_cgroup import LinuxCgroupResources
 from .macos_vm import MacOSVMResources
@@ -32,7 +33,16 @@ from .sandbox_runtime import (
 )
 from .wasi import WasiProtocolError, WasiResourceLimitError
 
-_V1_PLATFORM_CAPABILITIES = frozenset({"input.read", "artifact.write", "model.vision.invoke"})
+_V1_PLATFORM_CAPABILITIES = frozenset(
+    {
+        "input.read",
+        "artifact.write",
+        "model.vision.invoke",
+        "computer.observe",
+        "computer.control",
+        "computer.setup",
+    }
+)
 
 
 class PluginActionError(ToolException):
@@ -74,7 +84,7 @@ class PluginToolAdapter:
         action: PluginActionDescriptor,
         arguments: dict[str, Any],
         execution: RuntimeToolExecution,
-    ) -> dict[str, Any]:
+    ) -> Any:
         context = execution.context
         store = getattr(context, "store", None)
         run_id = str(getattr(context, "run_id", None) or "")
@@ -217,6 +227,8 @@ class PluginToolAdapter:
                     "protocol_violation",
                     "Managed Worker violated the execution protocol",
                 ) from exc
+            except ComputerUseError as exc:
+                raise PluginActionError("computer_use_failed", str(exc)) from exc
             _validate_result_identity(result, invocation)
             if result["status"] == "failed":
                 error = result.get("error") if isinstance(result.get("error"), dict) else {}
@@ -272,12 +284,30 @@ class PluginToolAdapter:
                 candidates=result.get("artifacts", []),
                 provenance=provenance,
             )
-            return {
+            response = {
                 "status": "succeeded",
                 "output": output,
                 "artifacts": artifacts,
                 "provenance": provenance,
             }
+            images = output.get("images") if isinstance(output, dict) else None
+            if action.execution_kind == "builtin" and isinstance(images, list) and images:
+                text_output = dict(output)
+                del text_output["images"]
+                response["output"] = text_output
+                return [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            response,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    },
+                    *({"type": "image", **image} for image in images),
+                ]
+            return response
 
 
 def build_plugin_tool(
@@ -303,7 +333,7 @@ def build_plugin_tool(
 
     async def invoke_plugin_action(
         **arguments: Any,
-    ) -> dict[str, Any]:
+    ) -> Any:
         return await active_adapter.invoke(
             action,
             arguments,

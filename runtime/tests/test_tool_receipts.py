@@ -804,6 +804,55 @@ async def test_text_only_model_does_not_receive_image_tool_blocks(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_text_only_model_keeps_computer_use_outline_without_screenshot(
+    tmp_path: Path,
+) -> None:
+    store, run = await _store_and_run(tmp_path)
+    context = RuntimeContext(
+        store=store,
+        run_id=str(run["id"]),
+        execution_attempt_id="job-1:1",
+        model=SimpleNamespace(profile={"image_inputs": False}),
+    )
+
+    async def handler(request: ToolCallRequest) -> ToolMessage:
+        return ToolMessage(
+            content_blocks=[
+                {"type": "text", "text": "@e1 button Save"},
+                {"type": "image", "base64": "encoded-image", "mime_type": "image/png"},
+            ],
+            name=request.tool_call["name"],
+            tool_call_id=request.tool_call["id"],
+        )
+
+    try:
+        result = await ToolExecutionMiddleware().awrap_tool_call(
+            _request(
+                store,
+                str(run["id"]),
+                tool_name="plugin.org.shejane.computer-use.observe_ui",
+                arguments={},
+                context=context,
+            ),
+            handler,
+        )
+
+        assert isinstance(result, ToolMessage)
+        assert result.content == [
+            {"type": "text", "text": "@e1 button Save"},
+            {
+                "type": "text",
+                "text": (
+                    "Image content was not provided because the selected model is text-only. "
+                    "Choose a model marked as supporting images before describing this file."
+                ),
+            },
+        ]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_tool_definition_version_is_part_of_operation_identity(tmp_path: Path) -> None:
     store, run = await _store_and_run(tmp_path)
 

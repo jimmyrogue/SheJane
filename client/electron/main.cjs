@@ -387,6 +387,7 @@ async function spawnBundledRuntime() {
     env: runtimeEnv({
       PYTHONUNBUFFERED: '1',
       SHEJANE_MANAGED_WORKER_SANDBOX_COMMAND: managedWorkerSandboxCommand(),
+      SHEJANE_RUNTIME_NODE_PATH: process.execPath,
     }),
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

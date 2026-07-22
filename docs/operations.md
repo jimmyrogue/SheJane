@@ -103,6 +103,8 @@ Runtime 接受单个 `.shejane-plugin` ZIP，通过 `plugin.install` Command 安
 
 官方或第三方插件都以 `.shejane-plugin` 文件分发。用户下载、接收或自行构建后，从 Plugin Tab 本地导入；Runtime 不维护远程插件来源、索引或来源公钥。官方必要插件可以随应用提供，但仍使用相同的包格式、安装记录和运行约束。
 
+Computer Use 是首个保留的 `builtin` 插件：包只选择 Runtime 已知的 `computer_use` 适配器，不能携带任意宿主执行器。macOS 首版固定 `injaneity/pi-computer-use` 提交 `9f59ed0eeac09b115897732c46b794ee8ca4e5b0`（0.5.0/MIT），提供 `setup`、`status` 与八个 state-scoped 桌面 Action。首次 `setup` 会在 `~/Applications/pi-computer-use.app` 安装/注册 helper；用户仍须在“隐私与安全性”中显式开启辅助功能和屏幕录制。每个 Run 只保持一个服务，P11 关闭；所有桌面 Action 继续经过参数校验、审批和持久回执。当前只完成 macOS，Windows 不属于已发布能力。
+
 `@anthropic-ai/sandbox-runtime@0.0.65` 现在承担主 Agent `execute` 的宿主访问隔离：默认禁止网络，只允许读取已授权工作区和运行工具所需的系统/PATH 路径，只允许写入每次命令的私有临时目录；启动器缺失或策略创建失败时命令 fail closed，不回退到宿主 shell。开发入口 `scripts/dev.sh` 使用 pnpm 安装的 SRT CLI，打包入口由 Electron 注入包内 launcher。代码改写继续使用 Runtime 的 `write_file` / `edit_file` 等受工作区约束且有回执的结构化工具。
 
 这层 SRT 是主 Agent shell 的 access sandbox，不等同于不受信任插件的完整资源隔离，也不会得到 Managed Worker 的 `resource_isolated=true` 证明。Managed Worker 在 Linux 使用随 Runtime 冻结的 Bubblewrap 0.11.2、原生 launcher、seccomp、私有 tmpfs、Artifact broker 与 delegated cgroup v2；macOS arm64 使用下述短命 VM。
