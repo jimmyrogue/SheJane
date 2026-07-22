@@ -54,26 +54,34 @@ function run(command: string, args: string[]): Promise<void> {
   });
 }
 
-async function setup() {
+async function installHelper() {
   const script = path.join(packageRoot!, "payload", "upstream", "scripts", "setup-helper.mjs");
   if (!existsSync(script)) throw new Error("The pinned helper installer is missing from this plugin package.");
   await run(process.execPath, [script, "--runtime"]);
   await macosHelper.restart();
-  await macosHelper.command("registerPermissions", {}, { timeoutMs: 15_000 });
-  await macosHelper.command("openPermissionPane", { kind: "accessibility" });
-  await macosHelper.command("openPermissionPane", { kind: "screenRecording" });
-  return {
-    text: `Installed pi-computer-use.app at ${HELPER_APP_PATH}. Enable Accessibility and Screen Recording, then run status.`,
-    details: { helperPath: HELPER_APP_PATH },
-  };
+  return {};
 }
 
-async function status() {
+async function inspectReadiness() {
   if (!existsSync(HELPER_APP_PATH)) {
-    return { text: "Computer Use helper is not installed. Run setup.", details: { installed: false, helperPath: HELPER_APP_PATH } };
+    return {
+      installed: false,
+      helper_ready: false,
+      helper_identity_valid: false,
+      accessibility: false,
+      screen_recording: false,
+    };
   }
   const ready = await macosHelper.ensureDaemon();
-  if (!ready) return { text: "Computer Use helper is installed but unavailable.", details: { installed: true, ready: false, helperPath: HELPER_APP_PATH } };
+  if (!ready) {
+    return {
+      installed: true,
+      helper_ready: false,
+      helper_identity_valid: false,
+      accessibility: false,
+      screen_recording: false,
+    };
+  }
   const [diagnostics, permissions] = await Promise.all([
     macosHelper.command("diagnostics", {}),
     macosHelper.command("checkPermissions", {}),
@@ -81,9 +89,21 @@ async function status() {
   const accessibility = permissions?.accessibility === true;
   const screenRecording = permissions?.screenRecordingCapturable === true;
   return {
-    text: `Accessibility: ${accessibility ? "granted" : "missing"}; Screen Recording: ${screenRecording ? "granted" : "missing"}.`,
-    details: { installed: true, ready: true, accessibility, screenRecording, helperPath: HELPER_APP_PATH, diagnostics },
+    installed: true,
+    helper_ready: true,
+    helper_identity_valid: permissions?.source?.attribution === "helper-app",
+    accessibility,
+    screen_recording: screenRecording,
+    diagnostics: clean(diagnostics),
   };
+}
+
+async function requireReady() {
+  const readiness = await inspectReadiness();
+  if (!readiness.installed || !readiness.helper_ready || !readiness.helper_identity_valid ||
+      !readiness.accessibility || !readiness.screen_recording) {
+    throw new Error("Computer Use is not ready. Finish setup from the Plugins page.");
+  }
 }
 
 function clean(value: unknown): unknown {
@@ -95,10 +115,27 @@ function clean(value: unknown): unknown {
 }
 
 async function invoke(action: string, args: Record<string, unknown>) {
-  if (action === "setup") return await setup();
-  if (action === "status") return await status();
+  if (action === "readiness.inspect") return await inspectReadiness();
+  if (action === "readiness.install") return await installHelper();
+  if (action === "readiness.request_permission") {
+    const kind = args.kind === "screenRecording" ? "screenRecording" : args.kind === "accessibility" ? "accessibility" : undefined;
+    if (!kind) throw new Error("Unknown Computer Use permission kind.");
+    await macosHelper.command("registerPermissions", { kind }, { timeoutMs: 15_000 });
+    return {};
+  }
+  if (action === "readiness.open_settings") {
+    const kind = args.kind === "screenRecording" ? "screenRecording" : args.kind === "accessibility" ? "accessibility" : undefined;
+    if (!kind) throw new Error("Unknown Computer Use permission kind.");
+    await macosHelper.command("openPermissionPane", { kind });
+    return {};
+  }
+  if (action === "readiness.recheck") {
+    await macosHelper.restart();
+    return {};
+  }
   const executor = executors[action];
   if (!executor) throw new Error(`Unknown Computer Use action: ${action}`);
+  await requireReady();
   const result = await executor(`shejane-${Date.now()}`, args, undefined, undefined, ctx);
   const text = result.content
     .filter((item: any) => item?.type === "text" && typeof item.text === "string")

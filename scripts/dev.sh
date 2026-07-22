@@ -125,10 +125,12 @@ start_runtime() {
 
   local log_file="${LOG_DIR}/runtime.log"
   echo "Starting Runtime at ${RUNTIME_URL}"
+  "${ROOT_DIR}/scripts/build-computer-use-builtin.sh"
   (
     cd "${ROOT_DIR}/runtime"
     "${RUNTIME_ENV[@]}" uv run shejane-runtime \
       --host 127.0.0.1 --port "$RUNTIME_PORT" --token "$TOKEN" \
+      --computer-use-package "${ROOT_DIR}/runtime/plugins/computer-use/dist/computer-use-0.2.0-darwin-arm64.shejane-plugin" \
       >"$log_file" 2>&1
   ) &
   PIDS+=("$!")

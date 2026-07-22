@@ -3814,6 +3814,7 @@
         "required": [
           "id",
           "name",
+          "description",
           "version",
           "digest",
           "publisher",
@@ -3822,7 +3823,6 @@
           "compatibility",
           "enabled",
           "retired",
-          "description",
           "actions",
           "skills",
           "commands",
@@ -4181,6 +4181,82 @@
         "title": "PluginPublisherSummary",
         "type": "object"
       },
+      "PluginReadinessSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "anyOf": [
+              {
+                "enum": [
+                  "install_helper",
+                  "request_screen_recording",
+                  "open_screen_recording_settings",
+                  "request_accessibility",
+                  "open_accessibility_settings"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Id"
+          },
+          "can_recheck": {
+            "title": "Can Recheck",
+            "type": "boolean"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "action_required",
+              "awaiting_user",
+              "blocked"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "enum": [
+                  "install_helper",
+                  "screen_recording",
+                  "accessibility"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          }
+        },
+        "required": [
+          "state",
+          "revision",
+          "can_recheck"
+        ],
+        "title": "PluginReadinessSnapshot",
+        "type": "object"
+      },
       "PluginReference": {
         "additionalProperties": false,
         "properties": {
@@ -4349,6 +4425,84 @@
         "title": "PluginRollbackCommand",
         "type": "object"
       },
+      "PluginSetupAdvanceCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "enum": [
+              "install_helper",
+              "request_screen_recording",
+              "open_screen_recording_settings",
+              "request_accessibility",
+              "open_accessibility_settings",
+              "recheck"
+            ],
+            "title": "Action Id",
+            "type": "string"
+          },
+          "command_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "title": "Command Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "plugin_id": {
+            "const": "org.shejane.computer-use",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "plugin.setup.advance",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "plugin_id",
+          "expected_revision",
+          "action_id"
+        ],
+        "title": "PluginSetupAdvanceCommand",
+        "type": "object"
+      },
+      "PluginSetupAdvanceCommandReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "plugin_id": {
+            "const": "org.shejane.computer-use",
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/PluginReadinessSnapshot"
+          },
+          "type": {
+            "const": "plugin.setup.advance",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command_id",
+          "plugin_id",
+          "readiness"
+        ],
+        "title": "PluginSetupAdvanceCommandReceipt",
+        "type": "object"
+      },
       "PluginStateCommandReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -4396,6 +4550,10 @@
               "incompatible"
             ],
             "title": "Compatibility",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
             "type": "string"
           },
           "digest": {
@@ -4446,6 +4604,7 @@
         "required": [
           "id",
           "name",
+          "description",
           "version",
           "digest",
           "publisher",
@@ -5812,6 +5971,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/PluginRemoveCommand"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PluginSetupAdvanceCommand"
                   }
                 ],
                 "title": "Body"
@@ -5858,6 +6020,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/PluginRemoveCommandReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PluginSetupAdvanceCommandReceipt"
                     }
                   ],
                   "title": "Response Accept Command V1 Commands Post"
@@ -6373,6 +6538,45 @@
           }
         },
         "summary": "Inspect Plugin"
+      }
+    },
+    "/v1/plugins/{plugin_id}/readiness": {
+      "get": {
+        "operationId": "inspect_plugin_readiness_v1_plugins__plugin_id__readiness_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "title": "Plugin Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginReadinessSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inspect Plugin Readiness"
       }
     },
     "/v1/pptx-outline": {

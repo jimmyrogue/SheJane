@@ -59,6 +59,15 @@ export type RuntimeAssetInstallCommandReceipt = Schemas['RuntimeAssetInstallComm
 export type PluginStateCommandReceipt = Schemas['PluginStateCommandReceipt']
 export type PluginVersionSwitchCommandReceipt = Schemas['PluginVersionSwitchCommandReceipt']
 export type PluginRemoveCommandReceipt = Schemas['PluginRemoveCommandReceipt']
+export type PluginReadinessSnapshot = Schemas['PluginReadinessSnapshot']
+export type PluginSetupAdvanceCommandReceipt = Schemas['PluginSetupAdvanceCommandReceipt']
+export type PluginSetupActionID =
+  | 'install_helper'
+  | 'request_screen_recording'
+  | 'open_screen_recording_settings'
+  | 'request_accessibility'
+  | 'open_accessibility_settings'
+  | 'recheck'
 export type PluginSummary = Schemas['PluginSummary']
 export type PluginDetail = Schemas['PluginDetail']
 export type PluginReference = Schemas['PluginReference']
@@ -972,6 +981,40 @@ export async function getLocalPlugin(
   return decodeLocalResponse<PluginDetail>(response)
 }
 
+export async function getLocalPluginReadiness(
+  pluginID: string,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginReadinessSnapshot> {
+  const response = await fetcher(
+    `${normalizeBaseURL(config.baseURL)}/v1/plugins/${encodeURIComponent(pluginID)}/readiness`,
+    { method: 'GET', headers: localHeaders(config, false) },
+  )
+  return decodeLocalResponse<PluginReadinessSnapshot>(response)
+}
+
+export async function advanceLocalPluginSetupCommand(
+  commandID: string,
+  pluginID: 'org.shejane.computer-use',
+  expectedRevision: number,
+  actionID: PluginSetupActionID,
+  config: RuntimeClientConfig,
+  fetcher: Fetcher = fetch,
+): Promise<PluginSetupAdvanceCommandReceipt> {
+  const response = await fetcher(`${normalizeBaseURL(config.baseURL)}/v1/commands`, {
+    method: 'POST',
+    headers: localHeaders(config, true),
+    body: JSON.stringify({
+      type: 'plugin.setup.advance',
+      command_id: commandID,
+      plugin_id: pluginID,
+      expected_revision: expectedRevision,
+      action_id: actionID,
+    }),
+  })
+  return decodeLocalResponse<PluginSetupAdvanceCommandReceipt>(response)
+}
+
 export async function listLocalThreads(
   config: RuntimeClientConfig,
   fetcher: Fetcher = fetch,
@@ -1819,6 +1862,10 @@ export class SheJaneRuntimeClient {
     return getLocalPlugin(pluginID, this.config, this.fetcher)
   }
 
+  getPluginReadiness(pluginID: string): Promise<PluginReadinessSnapshot> {
+    return getLocalPluginReadiness(pluginID, this.config, this.fetcher)
+  }
+
   listThreads(): Promise<{ threads: LocalThread[]; cursor: number }> {
     return listLocalThreads(this.config, this.fetcher)
   }
@@ -1942,6 +1989,22 @@ export class SheJaneRuntimeClient {
       commandID,
       pluginID,
       expectedDigest,
+      this.config,
+      this.fetcher,
+    )
+  }
+
+  advancePluginSetup(
+    commandID: string,
+    pluginID: 'org.shejane.computer-use',
+    expectedRevision: number,
+    actionID: PluginSetupActionID,
+  ): Promise<PluginSetupAdvanceCommandReceipt> {
+    return advanceLocalPluginSetupCommand(
+      commandID,
+      pluginID,
+      expectedRevision,
+      actionID,
       this.config,
       this.fetcher,
     )

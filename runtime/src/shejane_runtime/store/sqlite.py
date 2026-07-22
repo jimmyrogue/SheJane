@@ -259,6 +259,23 @@ CREATE TABLE IF NOT EXISTS plugin_installations (
     FOREIGN KEY (active_digest) REFERENCES plugin_versions(digest)
 );
 
+CREATE TABLE IF NOT EXISTS plugin_setup_flows (
+    principal_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (
+        stage IN (
+            'idle',
+            'screen_requested',
+            'screen_settings_opened',
+            'accessibility_requested',
+            'accessibility_settings_opened'
+        )
+    ),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (principal_id, plugin_id)
+);
+
 CREATE TABLE IF NOT EXISTS run_plugin_bindings (
     run_id TEXT NOT NULL,
     plugin_id TEXT NOT NULL,
@@ -2853,6 +2870,61 @@ class LocalStore:
             }
             for row in rows
         ]
+
+    async def get_plugin_setup_flow(self, *, principal_id: str, plugin_id: str) -> dict[str, Any]:
+        row = await (
+            await self._conn.execute(
+                "SELECT stage, revision, updated_at FROM plugin_setup_flows "
+                "WHERE principal_id = ? AND plugin_id = ?",
+                (principal_id, plugin_id),
+            )
+        ).fetchone()
+        if row is None:
+            return {"stage": "idle", "revision": 0, "updated_at": None}
+        return dict(row)
+
+    async def begin_plugin_setup_action(
+        self,
+        *,
+        principal_id: str,
+        plugin_id: str,
+        expected_revision: int,
+        next_stage: str,
+    ) -> dict[str, Any]:
+        now = _now()
+        async with aiosqlite.connect(str(self._db_path)) as conn:
+            await _configure_connection(conn)
+            await conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = await (
+                    await conn.execute(
+                        "SELECT stage, revision FROM plugin_setup_flows "
+                        "WHERE principal_id = ? AND plugin_id = ?",
+                        (principal_id, plugin_id),
+                    )
+                ).fetchone()
+                revision = int(row["revision"]) if row is not None else 0
+                if revision != expected_revision:
+                    raise PluginStateError("plugin_setup_stale", "plugin setup state changed")
+                next_revision = revision + 1
+                await conn.execute(
+                    "INSERT INTO plugin_setup_flows "
+                    "(principal_id, plugin_id, stage, revision, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(principal_id, plugin_id) DO UPDATE SET "
+                    "stage = excluded.stage, revision = excluded.revision, "
+                    "updated_at = excluded.updated_at",
+                    (principal_id, plugin_id, next_stage, next_revision, now),
+                )
+                await conn.commit()
+                return {
+                    "stage": next_stage,
+                    "revision": next_revision,
+                    "updated_at": now,
+                }
+            except BaseException:
+                await conn.rollback()
+                raise
 
     async def get_plugin(
         self,

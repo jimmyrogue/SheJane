@@ -344,7 +344,7 @@ function SkillTypeaheadPlugin({
     [t],
   )
 
-  // Functions first, then skills, then MCP — fixed group order so the
+  // Functions first, then plugin commands, skills, and MCP — fixed group order so the
   // user develops muscle memory for "/" → top options.
   const options = useMemo(() => {
     const normalized = (query ?? '').toLowerCase()
@@ -387,7 +387,7 @@ function SkillTypeaheadPlugin({
             ),
         ),
     )
-    return [...funcOptions, ...skillOptions, ...mcpOptions, ...pluginCommandOptions]
+    return [...funcOptions, ...pluginCommandOptions, ...skillOptions, ...mcpOptions]
   }, [functionsCatalog, skills, mcpServers, plugins, query])
 
   const onSelectOption = useCallback(
@@ -455,6 +455,7 @@ function SkillTypeaheadPlugin({
         if (!anchorElementRef.current) {
           return null
         }
+        const menuRoot = editor.getRootElement()?.closest('.composer') ?? anchorElementRef.current
         const funcOptions = options.filter((option) => option.kind === 'function')
         const skillOptions = options.filter((option) => option.kind === 'skill')
         const mcpOptions = options.filter((option) => option.kind === 'mcp')
@@ -497,9 +498,28 @@ function SkillTypeaheadPlugin({
           )
           funcOptions.forEach((option) => rows.push(renderItem(option)))
         }
-        if (showSkillsGroup) {
+        if (showPluginCommandGroup) {
           if (funcOptions.length > 0) {
-            rows.push(<li key="divider-fn-skill" className="composer-menu-divider" aria-hidden="true" />)
+            rows.push(<li key="divider-fn-plugin" className="composer-menu-divider" aria-hidden="true" />)
+          }
+          rows.push(
+            <li key="grp-plugin-command" className="composer-menu-group" aria-hidden="true">
+              {t('composer.menu.pluginCommandsGroup')}
+            </li>,
+          )
+          if (pluginsLoading && pluginCommandOptions.length === 0) {
+            rows.push(
+              <li key="plugin-command-loading" className="composer-skill-menu-empty">
+                {t('composer.pluginMenu.loading')}
+              </li>,
+            )
+          } else {
+            pluginCommandOptions.forEach((option) => rows.push(renderItem(option)))
+          }
+        }
+        if (showSkillsGroup) {
+          if (funcOptions.length > 0 || showPluginCommandGroup) {
+            rows.push(<li key="divider-plugin-skill" className="composer-menu-divider" aria-hidden="true" />)
           }
           rows.push(
             <li key="grp-skill" className="composer-menu-group" aria-hidden="true">
@@ -517,7 +537,7 @@ function SkillTypeaheadPlugin({
           }
         }
         if (showMcpGroup) {
-          if (funcOptions.length > 0 || showSkillsGroup) {
+          if (funcOptions.length > 0 || showPluginCommandGroup || showSkillsGroup) {
             rows.push(<li key="divider-skill-mcp" className="composer-menu-divider" aria-hidden="true" />)
           }
           rows.push(
@@ -541,25 +561,6 @@ function SkillTypeaheadPlugin({
             mcpOptions.forEach((option) => rows.push(renderItem(option)))
           }
         }
-        if (showPluginCommandGroup) {
-          if (funcOptions.length > 0 || showSkillsGroup || showMcpGroup) {
-            rows.push(<li key="divider-mcp-plugin" className="composer-menu-divider" aria-hidden="true" />)
-          }
-          rows.push(
-            <li key="grp-plugin-command" className="composer-menu-group" aria-hidden="true">
-              {t('composer.menu.pluginCommandsGroup')}
-            </li>,
-          )
-          if (pluginsLoading && pluginCommandOptions.length === 0) {
-            rows.push(
-              <li key="plugin-command-loading" className="composer-skill-menu-empty">
-                {t('composer.pluginMenu.loading')}
-              </li>,
-            )
-          } else {
-            pluginCommandOptions.forEach((option) => rows.push(renderItem(option)))
-          }
-        }
         if (rows.length === 0) {
           rows.push(
             <li key="empty" className="composer-skill-menu-empty">
@@ -571,7 +572,7 @@ function SkillTypeaheadPlugin({
           <ul className="composer-skill-menu" role="listbox" aria-label={t('sidebar.skills')}>
             {rows}
           </ul>,
-          anchorElementRef.current,
+          menuRoot,
         )
       }}
     />
@@ -676,6 +677,7 @@ function PluginMentionTypeaheadPlugin({
       }}
       menuRenderFn={(anchorElementRef, { selectedIndex, selectOptionAndCleanUp, setHighlightedIndex }) => {
         if (!anchorElementRef.current) return null
+        const menuRoot = editor.getRootElement()?.closest('.composer') ?? anchorElementRef.current
         return createPortal(
           <ul className="composer-skill-menu" role="listbox" aria-label={t('composer.menu.pluginsGroup')}>
             <li className="composer-menu-group" aria-hidden="true">
@@ -708,7 +710,7 @@ function PluginMentionTypeaheadPlugin({
               ))
             )}
           </ul>,
-          anchorElementRef.current,
+          menuRoot,
         )
       }}
     />

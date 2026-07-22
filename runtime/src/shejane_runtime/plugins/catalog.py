@@ -211,7 +211,6 @@ class PluginCatalog:
                 if not is_allowed_computer_use_package(
                     plugin_id=str(binding["plugin_id"]),
                     version=str(binding["version"]),
-                    digest=digest,
                     handler=str(execution["handler"]),
                 ):
                     raise PluginCatalogError(

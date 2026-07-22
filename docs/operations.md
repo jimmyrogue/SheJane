@@ -101,9 +101,11 @@ Runtime 接受单个 `.shejane-plugin` ZIP，通过 `plugin.install` Command 安
 
 同一 publisher 可以保留多把 key 进行轮换。将 `status` 改为 `revoked` 会阻止后续安装；签名有效只证明来源和完整性，不授予额外文件、网络或执行权限。
 
-官方或第三方插件都以 `.shejane-plugin` 文件分发。用户下载、接收或自行构建后，从 Plugin Tab 本地导入；Runtime 不维护远程插件来源、索引或来源公钥。官方必要插件可以随应用提供，但仍使用相同的包格式、安装记录和运行约束。
+第三方插件以 `.shejane-plugin` 文件分发。用户下载、接收或自行构建后，从“插件”页本地导入；Runtime 不维护远程插件来源、索引或来源公钥。普通插件继续执行上述签名或未签名确认策略。
 
-Computer Use 是首个保留的 `builtin` 插件：包只选择 Runtime 已知的 `computer_use` 适配器，不能携带任意宿主执行器。macOS 首版固定 `injaneity/pi-computer-use` 提交 `9f59ed0eeac09b115897732c46b794ee8ca4e5b0`（0.5.0/MIT），提供 `setup`、`status` 与八个 state-scoped 桌面 Action。首次 `setup` 会在 `~/Applications/pi-computer-use.app` 安装/注册 helper；用户仍须在“隐私与安全性”中显式开启辅助功能和屏幕录制。每个 Run 只保持一个服务，P11 关闭；所有桌面 Action 继续经过参数校验、审批和持久回执。当前只完成 macOS，Windows 不属于已发布能力。
+Computer Use 是 Runtime 随应用提供的固定能力，不属于外部插件分发面。Runtime 只自动接纳构建时固定的 `org.shejane.computer-use` 版本、平台和 `computer_use` 适配器；外部安装、更新、回滚和移除都会被拒绝，因此不再要求用户确认该内置包的发布者签名。包仍进入内容寻址存储并冻结到 Run，不能携带另一种宿主执行器。
+
+macOS 首版固定 `injaneity/pi-computer-use` 提交 `9f59ed0eeac09b115897732c46b794ee8ca4e5b0`（0.5.0/MIT），只向模型暴露八个 state-scoped 桌面 Action。启用时由“插件”页依次完成 Helper、屏幕录制、辅助功能三步；每次用户操作最多触发一个系统授权，返回 SheJane 后自动复检。安装器把 Helper 固定在 `~/Applications/pi-computer-use.app`，并保留稳定的 macOS 代码签名身份；这里不能用“内置包免验签”替代 Helper 签名，否则系统可能把升级后的 Helper 视为新应用并重复要求 TCC 授权。每个 Run 只保持一个服务，P11 关闭；所有桌面 Action 继续经过参数校验、审批和持久回执。当前只完成 macOS arm64，其他平台不属于已发布能力。
 
 `@anthropic-ai/sandbox-runtime@0.0.65` 现在承担主 Agent `execute` 的宿主访问隔离：默认禁止网络，只允许读取已授权工作区和运行工具所需的系统/PATH 路径，只允许写入每次命令的私有临时目录；启动器缺失或策略创建失败时命令 fail closed，不回退到宿主 shell。开发入口 `scripts/dev.sh` 使用 pnpm 安装的 SRT CLI，打包入口由 Electron 注入包内 launcher。代码改写继续使用 Runtime 的 `write_file` / `edit_file` 等受工作区约束且有回执的结构化工具。
 

@@ -181,6 +181,7 @@ async def test_build_agent_injects_runtime_owned_plugin_resources(
     def fake_build_plugin_tool(
         _action,
         *,
+        adapter=None,
         vision_invoker=None,
         linux_cgroup=None,
         vm_resources=None,

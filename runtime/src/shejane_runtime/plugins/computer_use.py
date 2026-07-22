@@ -7,31 +7,167 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .executor import ActionExecutor
 
 MAX_FRAME_BYTES = 24 * 1024 * 1024
 COMPUTER_USE_PLUGIN_ID = "org.shejane.computer-use"
-COMPUTER_USE_PLUGIN_VERSION = "0.1.0"
-COMPUTER_USE_PLUGIN_DIGEST = (
-    "sha256:3cf2a4089e37c325df9f61c20235c7e6a6a5979e81ff47e3319f588fafbedf55"
-)
+COMPUTER_USE_PLUGIN_VERSION = "0.2.0"
 
 
-def is_allowed_computer_use_package(
-    *, plugin_id: str, version: str, digest: str, handler: str
-) -> bool:
+def is_allowed_computer_use_package(*, plugin_id: str, version: str, handler: str) -> bool:
     return (
         plugin_id == COMPUTER_USE_PLUGIN_ID
         and version == COMPUTER_USE_PLUGIN_VERSION
-        and digest == COMPUTER_USE_PLUGIN_DIGEST
         and handler == "computer_use"
     )
 
 
 class ComputerUseError(RuntimeError):
     pass
+
+
+class _ComputerUseCaller(Protocol):
+    async def call(self, action: str, arguments: dict[str, Any], *, timeout_ms: int) -> Any: ...
+
+
+class ComputerUseReadiness:
+    """Converge the fixed Computer Use capability without exposing TCC sequencing."""
+
+    def __init__(self, service: _ComputerUseCaller) -> None:
+        self._service = service
+
+    @staticmethod
+    def stage_after(action_id: str, current_stage: str) -> str:
+        return {
+            "install_helper": "idle",
+            "request_screen_recording": "screen_requested",
+            "open_screen_recording_settings": "screen_settings_opened",
+            "request_accessibility": "accessibility_requested",
+            "open_accessibility_settings": "accessibility_settings_opened",
+            "recheck": current_stage,
+        }.get(action_id, current_stage)
+
+    async def inspect(self, *, stage: str, revision: int) -> dict[str, Any]:
+        evidence = await self._service.call("readiness.inspect", {}, timeout_ms=120_000)
+        if not evidence.get("installed"):
+            return self._snapshot(revision, "action_required", "install_helper", "install_helper")
+        if not evidence.get("helper_ready"):
+            return self._blocked(revision, "helper_unavailable")
+        if not evidence.get("helper_identity_valid"):
+            return self._blocked(revision, "helper_identity_invalid")
+        if not evidence.get("screen_recording"):
+            awaiting = stage in {"screen_requested", "screen_settings_opened"}
+            return self._snapshot(
+                revision,
+                "awaiting_user" if awaiting else "action_required",
+                "screen_recording",
+                "open_screen_recording_settings" if awaiting else "request_screen_recording",
+                can_recheck=awaiting,
+            )
+        if not evidence.get("accessibility"):
+            awaiting = stage in {"accessibility_requested", "accessibility_settings_opened"}
+            return self._snapshot(
+                revision,
+                "awaiting_user" if awaiting else "action_required",
+                "accessibility",
+                "open_accessibility_settings" if awaiting else "request_accessibility",
+                can_recheck=awaiting,
+            )
+        return self._snapshot(revision, "ready", None, None)
+
+    async def advance(self, *, action_id: str, stage: str, revision: int) -> dict[str, Any]:
+        current = await self.inspect(stage=stage, revision=revision)
+        allowed = current.get("action_id")
+        awaiting_stage = stage in {
+            "screen_requested",
+            "screen_settings_opened",
+            "accessibility_requested",
+            "accessibility_settings_opened",
+        }
+        if action_id != allowed and not (action_id == "recheck" and awaiting_stage):
+            if self._action_is_already_satisfied(action_id, current):
+                return {**current, "revision": revision + 1}
+            raise ComputerUseError("computer-use setup action is stale")
+
+        next_stage = self.stage_after(action_id, stage)
+        if action_id == "install_helper":
+            await self._service.call("readiness.install", {}, timeout_ms=120_000)
+        elif action_id == "request_screen_recording":
+            await self._service.call(
+                "readiness.request_permission",
+                {"kind": "screenRecording"},
+                timeout_ms=120_000,
+            )
+        elif action_id == "open_screen_recording_settings":
+            await self._service.call(
+                "readiness.open_settings",
+                {"kind": "screenRecording"},
+                timeout_ms=120_000,
+            )
+        elif action_id == "request_accessibility":
+            await self._service.call(
+                "readiness.request_permission",
+                {"kind": "accessibility"},
+                timeout_ms=120_000,
+            )
+        elif action_id == "open_accessibility_settings":
+            await self._service.call(
+                "readiness.open_settings",
+                {"kind": "accessibility"},
+                timeout_ms=120_000,
+            )
+        elif action_id == "recheck":
+            await self._service.call("readiness.recheck", {}, timeout_ms=120_000)
+
+        return await self.inspect(stage=next_stage, revision=revision + 1)
+
+    @staticmethod
+    def _action_is_already_satisfied(action_id: str, current: dict[str, Any]) -> bool:
+        step = current.get("step")
+        if action_id == "install_helper":
+            return step != "install_helper"
+        if action_id in {
+            "request_screen_recording",
+            "open_screen_recording_settings",
+        }:
+            return step in {"accessibility", None}
+        if action_id in {
+            "request_accessibility",
+            "open_accessibility_settings",
+        }:
+            return current.get("state") == "ready"
+        return False
+
+    @staticmethod
+    def _snapshot(
+        revision: int,
+        state: str,
+        step: str | None,
+        action_id: str | None,
+        *,
+        can_recheck: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "state": state,
+            "revision": revision,
+            "step": step,
+            "action_id": action_id,
+            "can_recheck": can_recheck,
+        }
+
+    @classmethod
+    def _blocked(cls, revision: int, code: str) -> dict[str, Any]:
+        return {
+            **cls._snapshot(
+                revision,
+                "blocked",
+                "install_helper",
+                "install_helper",
+            ),
+            "code": code,
+        }
 
 
 class ComputerUseService:
@@ -43,6 +179,12 @@ class ComputerUseService:
         self._request_id = 0
         self._stderr = bytearray()
         self._stderr_task: asyncio.Task[None] | None = None
+
+    async def __aenter__(self) -> ComputerUseService:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        await self.aclose()
 
     async def call(self, action: str, arguments: dict[str, Any], *, timeout_ms: int) -> Any:
         async with self._lock:

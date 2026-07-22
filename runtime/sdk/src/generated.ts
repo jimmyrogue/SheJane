@@ -300,6 +300,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/plugins/{plugin_id}/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect Plugin Readiness */
+        get: operations["inspect_plugin_readiness_v1_plugins__plugin_id__readiness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/pptx-outline": {
         parameters: {
             query?: never;
@@ -2424,6 +2441,24 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** PluginReadinessSnapshot */
+        PluginReadinessSnapshot: {
+            /** Action Id */
+            action_id?: ("install_helper" | "request_screen_recording" | "open_screen_recording_settings" | "request_accessibility" | "open_accessibility_settings") | null;
+            /** Can Recheck */
+            can_recheck: boolean;
+            /** Code */
+            code?: string | null;
+            /** Revision */
+            revision: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "ready" | "action_required" | "awaiting_user" | "blocked";
+            /** Step */
+            step?: ("install_helper" | "screen_recording" | "accessibility") | null;
+        };
         /** PluginReference */
         PluginReference: {
             /** Expected Digest */
@@ -2492,6 +2527,44 @@ export interface components {
              */
             type: "plugin.rollback";
         };
+        /** PluginSetupAdvanceCommand */
+        PluginSetupAdvanceCommand: {
+            /**
+             * Action Id
+             * @enum {string}
+             */
+            action_id: "install_helper" | "request_screen_recording" | "open_screen_recording_settings" | "request_accessibility" | "open_accessibility_settings" | "recheck";
+            /** Command Id */
+            command_id: string;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Plugin Id
+             * @constant
+             */
+            plugin_id: "org.shejane.computer-use";
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.setup.advance";
+        };
+        /** PluginSetupAdvanceCommandReceipt */
+        PluginSetupAdvanceCommandReceipt: {
+            /** Command Id */
+            command_id: string;
+            /**
+             * Plugin Id
+             * @constant
+             */
+            plugin_id: "org.shejane.computer-use";
+            readiness: components["schemas"]["PluginReadinessSnapshot"];
+            /**
+             * Type
+             * @constant
+             */
+            type: "plugin.setup.advance";
+        };
         /** PluginStateCommandReceipt */
         PluginStateCommandReceipt: {
             /** Command Id */
@@ -2515,6 +2588,8 @@ export interface components {
              * @enum {string}
              */
             compatibility: "compatible" | "incompatible";
+            /** Description */
+            description: string;
             /** Digest */
             digest: string;
             /** Enabled */
@@ -3129,7 +3204,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"] | components["schemas"]["ToolReconcileCommand"] | components["schemas"]["PluginInstallCommand"] | components["schemas"]["PluginModelBindCommand"] | components["schemas"]["RuntimeAssetInstallCommand"] | components["schemas"]["PluginEnableCommand"] | components["schemas"]["PluginDisableCommand"] | components["schemas"]["PluginUpdateCommand"] | components["schemas"]["PluginRollbackCommand"] | components["schemas"]["PluginRemoveCommand"];
+                "application/json": components["schemas"]["CancelRunCommand"] | components["schemas"]["AnswerQuestionCommand"] | components["schemas"]["ResolvePermissionCommand"] | components["schemas"]["PlanResolveCommand"] | components["schemas"]["ToolReconcileCommand"] | components["schemas"]["PluginInstallCommand"] | components["schemas"]["PluginModelBindCommand"] | components["schemas"]["RuntimeAssetInstallCommand"] | components["schemas"]["PluginEnableCommand"] | components["schemas"]["PluginDisableCommand"] | components["schemas"]["PluginUpdateCommand"] | components["schemas"]["PluginRollbackCommand"] | components["schemas"]["PluginRemoveCommand"] | components["schemas"]["PluginSetupAdvanceCommand"];
             };
         };
         responses: {
@@ -3139,7 +3214,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"] | components["schemas"]["ToolReconcileCommandReceipt"] | components["schemas"]["PluginInstallCommandReceipt"] | components["schemas"]["PluginModelBindCommandReceipt"] | components["schemas"]["RuntimeAssetInstallCommandReceipt"] | components["schemas"]["PluginStateCommandReceipt"] | components["schemas"]["PluginVersionSwitchCommandReceipt"] | components["schemas"]["PluginRemoveCommandReceipt"];
+                    "application/json": components["schemas"]["CancelRunCommandReceipt"] | components["schemas"]["AnswerQuestionCommandReceipt"] | components["schemas"]["ResolvePermissionCommandReceipt"] | components["schemas"]["PlanResolveCommandReceipt"] | components["schemas"]["ToolReconcileCommandReceipt"] | components["schemas"]["PluginInstallCommandReceipt"] | components["schemas"]["PluginModelBindCommandReceipt"] | components["schemas"]["RuntimeAssetInstallCommandReceipt"] | components["schemas"]["PluginStateCommandReceipt"] | components["schemas"]["PluginVersionSwitchCommandReceipt"] | components["schemas"]["PluginRemoveCommandReceipt"] | components["schemas"]["PluginSetupAdvanceCommandReceipt"];
                 };
             };
             /** @description Validation Error */
@@ -3559,6 +3634,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PluginDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inspect_plugin_readiness_v1_plugins__plugin_id__readiness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plugin_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginReadinessSnapshot"];
                 };
             };
             /** @description Validation Error */

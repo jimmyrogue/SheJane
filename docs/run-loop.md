@@ -389,7 +389,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
 | 长期记忆 | “我的名字是/我叫/My name is”这类明确姓名事实在本轮直接获得写入能力，无需二次确认；本轮明确指令、“记录一下”确认的上一条用户消息，或“记住我的名字”指代的上一条姓名事实也会提取精确事实。`memory.write` 只能写入该能力允许的用户原文，子 Agent 不拥有写权限；工作区检索继承同一所有者的全局事实；旧 `notes.global` 只兼容读取其中的 `user_fact`，清空接口会删除全部旧记录 | `test_memory` / `test_memory_http` / `test_subagents` / `runtime-tools.contract.test.ts` |
 | Skills 渐进披露 | `SkillsMiddleware` | `test_agent_builder` / `runtime-agent.contract.test.ts` |
 | MCP 目录与调用 | `MCPToolCatalog` 固定目录快照；达到阈值后先用 `mcp.search_tools` | `test_mcp` / `runtime-tools.contract.test.ts` |
-| Computer Use 插件 | `builtin/computer_use` 复用插件 Action 校验、审批与回执；同一 Run 保存 `stateId`/UI refs，P11 关闭宿主服务 | `test_computer_use_package` / 插件协议 smoke |
+| Computer Use 固定能力 | Client 在 Run 外通过 revision 化 readiness 快照逐步完成 Helper/TCC 设置；模型只看到操作 Action。`builtin/computer_use` 复用插件 Action 校验、审批与回执；同一 Run 保存 `stateId`/UI refs，P11 关闭宿主服务 | `test_computer_use_package` / `test_plugins_http` / 插件协议 smoke |
 | 文件系统沙箱 | `FilesystemMiddleware` + backend；项目目录是可写根目录，本次附件仅通过 `/attachments/` 暴露被选中的单个文件并保持只读；PDF 在读取边界转换为 UTF-8 文本，不把 Base64 二进制交给模型 | `test_agent_builder` / `test_memory` / `test_runs_http` |
 | Shell execute | `FilesystemMiddleware` execute tool | `test_agent_builder` |
 | 进展账本与交接新鲜度 | `task.progress` 写入 `progress_ledger` artifact，diagnostics 暴露最新 ledger，并在 handoff 标记 `not_required` / `fresh` / `missing` / `stale`；`run.waiting` 也携带同样的轻量 pause snapshot，client timeline 会保留 missing/stale 状态并在等待中的聊天进度行提示暂停交接风险 | `test_smoke` / `test_runs_http` / `test_user_ask` / `chatStore.test` / `AgentProgress.test` |

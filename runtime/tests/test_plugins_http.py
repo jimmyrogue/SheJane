@@ -23,6 +23,7 @@ from tests.helpers import run_command
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ARCHIVE_FIXTURE = REPO_ROOT / "runtime" / "plugins" / "fixtures" / "wasi-archive"
 WORKER_FIXTURE = REPO_ROOT / "runtime" / "plugins" / "fixtures" / "worker-documents"
+COMPUTER_USE = REPO_ROOT / "runtime" / "plugins" / "computer-use"
 AUTH = {"Authorization": "Bearer tok"}
 
 
@@ -97,11 +98,26 @@ def _pack_worker_with_runtime_asset(destination: Path, digest: str) -> None:
                 archive.write(path, relative)
 
 
+def _pack_computer_use_builtin(destination: Path) -> None:
+    manifest = (COMPUTER_USE / ".shejane-plugin" / "plugin.template.json").read_text()
+    manifest = manifest.replace("__PLUGIN_VERSION__", "0.2.0").replace(
+        "__PLATFORM__", "darwin/arm64"
+    )
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(".shejane-plugin/plugin.json", manifest)
+        for folder in ("actions", "commands"):
+            for path in sorted((COMPUTER_USE / folder).rglob("*")):
+                if path.is_file():
+                    archive.write(path, path.relative_to(COMPUTER_USE).as_posix())
+        archive.writestr("payload/bridge-server.mjs", "process.exit(0)\n")
+
+
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
     settings = reset_settings_for_tests(
         SHEJANE_RUNTIME_TOKEN="tok",
         data_dir=tmp_path / "runtime",
+        computer_use_package=None,
     )
     with TestClient(create_app(settings)) as test_client:
         yield test_client
@@ -123,6 +139,55 @@ def test_plugin_source_api_and_commands_are_not_exposed(client: TestClient) -> N
     )
 
     assert response.status_code == 422
+
+
+def test_computer_use_is_runtime_managed_and_cannot_be_installed_or_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "computer-use.shejane-plugin"
+    _pack_computer_use_builtin(package)
+    monkeypatch.setattr(
+        "shejane_runtime.plugins.registry.current_managed_worker_platform",
+        lambda: "darwin/arm64",
+    )
+    settings = reset_settings_for_tests(
+        SHEJANE_RUNTIME_TOKEN="tok",
+        data_dir=tmp_path / "runtime",
+        computer_use_package=package,
+    )
+    with TestClient(create_app(settings)) as builtin_client:
+        listed = builtin_client.get("/v1/plugins", headers=AUTH)
+        assert listed.status_code == 200, listed.text
+        plugin = listed.json()["plugins"][0]
+        assert plugin["id"] == "org.shejane.computer-use"
+        assert plugin["execution_kind"] == "builtin"
+        assert plugin["enabled"] is False
+
+        install = builtin_client.post(
+            "/v1/commands",
+            headers=AUTH,
+            json={
+                "type": "plugin.install",
+                "command_id": "cmd_install_builtin_again",
+                "source_path": str(package),
+                "allow_unsigned": True,
+            },
+        )
+        assert install.status_code == 409
+        assert install.json()["detail"]["code"] == "builtin_capability_managed"
+
+        remove = builtin_client.post(
+            "/v1/commands",
+            headers=AUTH,
+            json={
+                "type": "plugin.remove",
+                "command_id": "cmd_remove_builtin",
+                "plugin_id": "org.shejane.computer-use",
+                "expected_digest": plugin["digest"],
+            },
+        )
+        assert remove.status_code == 409
+        assert remove.json()["detail"]["code"] == "builtin_capability_managed"
 
 
 def test_install_wasi_plugin_is_idempotent_and_lists_from_runtime_store(
@@ -169,6 +234,7 @@ def test_install_wasi_plugin_is_idempotent_and_lists_from_runtime_store(
             {
                 "id": "dev.shejane.fixture.archive",
                 "name": "Archive fixture",
+                "description": "Reference WASI plugin that extracts an archive into staged artifacts.",
                 "version": "0.1.0",
                 "digest": receipt["digest"],
                 "publisher": {"id": "dev.shejane", "name": "SheJane"},

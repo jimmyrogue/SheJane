@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
+import platform
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,17 @@ RUN_BUDGET_LIMITS: dict[str, tuple[int, int]] = {
 DEFAULT_RUNTIME_DATA_DIR = Path.home() / ".shejane" / "runtime"
 LEGACY_RUNTIME_DATA_DIR = Path.home() / ".shejane" / "local-host"
 LEGACY_RUNTIME_DB_FILENAME = "local-host.db"
+
+
+def default_computer_use_package() -> Path | None:
+    if sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+        return None
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if not frozen_root:
+        return None
+    name = "computer-use-0.2.0-darwin-arm64.shejane-plugin"
+    package = Path(frozen_root) / "builtin-plugins" / name
+    return package if package.is_file() else None
 
 
 def clamp_run_budget(field: str, value: int) -> int:
@@ -65,12 +78,15 @@ class Settings(BaseSettings):
     runtime_db_filename: str = "runtime.db"
     managed_worker_vm_assets: Path | None = None
     managed_worker_linux_assets: Path | None = None
+    computer_use_package: Path | None = Field(default_factory=default_computer_use_package)
 
-    @field_validator("managed_worker_vm_assets", "managed_worker_linux_assets")
+    @field_validator(
+        "managed_worker_vm_assets", "managed_worker_linux_assets", "computer_use_package"
+    )
     @classmethod
     def require_absolute_vm_assets(cls, value: Path | None) -> Path | None:
         if value is not None and not value.is_absolute():
-            raise ValueError("Managed Worker asset manifest must be absolute")
+            raise ValueError("Runtime asset paths must be absolute")
         return value
 
     # When set, the agent uses a deterministic in-process fake LLM instead of

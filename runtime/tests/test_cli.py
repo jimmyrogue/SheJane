@@ -18,6 +18,8 @@ def test_runtime_cli_accepts_desktop_owned_launch_values(tmp_path: Path) -> None
             str(tmp_path / "manifest.json"),
             "--managed-worker-linux-assets",
             str(tmp_path / "linux" / "manifest.json"),
+            "--computer-use-package",
+            str(tmp_path / "computer-use.shejane-plugin"),
             "--validate-managed-worker-vm-assets",
         ]
     )
@@ -28,6 +30,7 @@ def test_runtime_cli_accepts_desktop_owned_launch_values(tmp_path: Path) -> None
     assert args.data_dir == tmp_path
     assert args.managed_worker_vm_assets == tmp_path / "manifest.json"
     assert args.managed_worker_linux_assets == tmp_path / "linux" / "manifest.json"
+    assert args.computer_use_package == tmp_path / "computer-use.shejane-plugin"
     assert args.validate_managed_worker_vm_assets is True
 
 

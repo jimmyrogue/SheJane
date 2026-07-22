@@ -4,7 +4,7 @@ import { I18nProvider } from '@/shared/i18n/i18n'
 import { PluginsView } from './PluginsView'
 import {
   RuntimeHTTPError,
-  type PluginDetail,
+  type PluginReadinessSnapshot,
   type PluginSummary,
 } from '@/runtime/client'
 
@@ -13,6 +13,7 @@ afterEach(cleanup)
 const plugin: PluginSummary = {
   id: 'dev.shejane.fixture.archive',
   name: 'Archive fixture',
+  description: 'Create deterministic archives.',
   version: '0.1.0',
   digest: `sha256:${'a'.repeat(64)}`,
   publisher: { id: 'dev.shejane', name: 'SheJane' },
@@ -23,70 +24,13 @@ const plugin: PluginSummary = {
   retired: false,
 }
 
-const detail: PluginDetail = {
+const computerUsePlugin: PluginSummary = {
   ...plugin,
-  description: 'Create deterministic archives.',
-  license: 'AGPL-3.0-only',
-  actions: [
-    {
-      id: 'archive.extract',
-      title: 'Extract archive',
-      description: 'Extract an authorized ZIP.',
-      consumes: ['application/zip'],
-      produces: ['application/octet-stream'],
-      effects: ['read', 'artifact'],
-      determinism: 'input_stable',
-      capabilities: ['input.read', 'artifact.write'],
-      limits: { timeout_ms: 10000, memory_mb: 128, output_mb: 8 },
-    },
-  ],
-  skills: [],
-  mcp_servers: [],
-  commands: [
-    {
-      id: 'archive',
-      title: 'Archive files',
-      description: 'Create an archive.',
-      required_actions: ['archive.extract'],
-    },
-  ],
-  versions: [
-    {
-      version: '0.2.0',
-      digest: `sha256:${'b'.repeat(64)}`,
-      signature_status: 'unsigned',
-      compatibility: 'compatible',
-      state: 'installed',
-      active: false,
-      created_at: '2026-07-16T00:00:00Z',
-    },
-    {
-      version: '0.1.0',
-      digest: plugin.digest,
-      signature_status: 'unsigned',
-      compatibility: 'compatible',
-      state: 'installed',
-      active: true,
-      created_at: '2026-07-15T00:00:00Z',
-    },
-  ],
-}
-
-const visionDetail: PluginDetail = {
-  ...detail,
-  id: 'org.shejane.vision.cloud',
-  name: 'Vision Cloud',
-  execution_kind: 'managed_worker',
-  model_binding: null,
-  actions: [
-    {
-      ...detail.actions[0],
-      id: 'vision.analyze_images',
-      title: 'Analyze images',
-      capabilities: ['input.read', 'artifact.write', 'model.vision.invoke'],
-      determinism: 'nondeterministic',
-    },
-  ],
+  id: 'org.shejane.computer-use',
+  name: 'Computer Use',
+  description: 'Control this Mac with screenshots, mouse, and keyboard.',
+  execution_kind: 'builtin',
+  enabled: false,
 }
 
 describe('PluginsView', () => {
@@ -116,6 +60,7 @@ describe('PluginsView', () => {
     )
 
     expect(await screen.findByText('Archive fixture')).toBeInTheDocument()
+    expect(screen.getByText('Create deterministic archives.')).toBeInTheDocument()
     expect(screen.queryByText('dev.shejane.fixture.archive')).not.toBeInTheDocument()
     expect(screen.queryByText('unsigned')).not.toBeInTheDocument()
     expect(screen.queryByText('WASI')).not.toBeInTheDocument()
@@ -166,62 +111,128 @@ describe('PluginsView', () => {
     expect(screen.getByText('Computer Use')).toBeInTheDocument()
   })
 
-  it('labels the Computer Use host adapter as built-in', async () => {
-    const computerUse = {
-      ...detail,
-      id: 'org.shejane.computer-use',
-      name: 'Computer Use',
-      execution_kind: 'builtin' as const,
-    }
-    render(
-      <I18nProvider>
-        <PluginsView
-          listPlugins={vi.fn().mockResolvedValue([computerUse])}
-          getPlugin={vi.fn().mockResolvedValue(computerUse)}
-        />
-      </I18nProvider>,
-    )
-
-    fireEvent.click(await screen.findByRole('button', { name: '查看 Computer Use 的详情' }))
-    expect(await screen.findByText('Built-in')).toBeInTheDocument()
-  })
-
-  it('opens details from the plugin name and runs toggle, rollback, and remove commands', async () => {
+  it('shows the description without opening details and runs toggle and remove commands', async () => {
     const listPlugins = vi.fn().mockResolvedValue([plugin])
-    const getPlugin = vi.fn().mockResolvedValue(detail)
     const setEnabled = vi.fn().mockResolvedValue(undefined)
-    const rollbackPlugin = vi.fn().mockResolvedValue(undefined)
     const removePlugin = vi.fn().mockResolvedValue(undefined)
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     render(
       <I18nProvider>
         <PluginsView
           listPlugins={listPlugins}
-          getPlugin={getPlugin}
           setEnabled={setEnabled}
-          rollbackPlugin={rollbackPlugin}
           removePlugin={removePlugin}
         />
       </I18nProvider>,
     )
 
-    const openDetails = await screen.findByRole('button', { name: '查看 Archive fixture 的详情' })
-    expect(openDetails).toHaveTextContent('Archive fixture')
-    expect(screen.queryByRole('button', { name: '更新' })).not.toBeInTheDocument()
-    fireEvent.click(openDetails)
-    expect(await screen.findByText('Create deterministic archives.')).toBeInTheDocument()
-    expect(screen.getByText('application/zip')).toBeInTheDocument()
+    const name = await screen.findByText('Archive fixture')
+    expect(screen.getByText('Create deterministic archives.')).toBeInTheDocument()
+    fireEvent.click(name)
+    expect(screen.queryByRole('button', { name: '查看 Archive fixture 的详情' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('switch', { name: '切换插件：Archive fixture' }))
     await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(plugin, false))
-
-    fireEvent.click(screen.getByRole('button', { name: '回滚到 0.2.0' }))
-    await waitFor(() => expect(rollbackPlugin).toHaveBeenCalledWith(detail, detail.versions[0].digest))
 
     const remove = screen.getByRole('button', { name: '移除插件：Archive fixture' })
     expect(remove).not.toHaveTextContent('移除')
     fireEvent.click(remove)
     await waitFor(() => expect(removePlugin).toHaveBeenCalledWith(plugin))
+  })
+
+  it('keeps the fixed Computer Use capability and starts its one-step setup before enabling', async () => {
+    const readiness: PluginReadinessSnapshot = {
+      state: 'action_required',
+      revision: 2,
+      step: 'screen_recording',
+      action_id: 'request_screen_recording',
+      can_recheck: false,
+    }
+    const awaitingUser: PluginReadinessSnapshot = {
+      state: 'awaiting_user',
+      revision: 3,
+      step: 'screen_recording',
+      action_id: 'open_screen_recording_settings',
+      can_recheck: true,
+    }
+    const getReadiness = vi.fn().mockResolvedValue(readiness)
+    const advanceSetup = vi.fn().mockResolvedValue({
+      type: 'plugin.setup.advance',
+      command_id: 'cmd-setup',
+      plugin_id: computerUsePlugin.id,
+      readiness: awaitingUser,
+    })
+    const removePlugin = vi.fn().mockResolvedValue(undefined)
+    const setEnabled = vi.fn().mockResolvedValue(undefined)
+    render(
+      <I18nProvider>
+        <PluginsView
+          listPlugins={vi.fn().mockResolvedValue([computerUsePlugin])}
+          getReadiness={getReadiness}
+          advanceSetup={advanceSetup}
+          setEnabled={setEnabled}
+          removePlugin={removePlugin}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('switch', { name: '切换插件：Computer Use' }))
+    expect(await screen.findByRole('dialog', { name: '设置 Computer Use' })).toBeInTheDocument()
+    expect(getReadiness).toHaveBeenCalledWith(computerUsePlugin)
+    expect(screen.queryByRole('button', { name: '移除插件：Computer Use' })).not.toBeInTheDocument()
+    expect(setEnabled).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '允许屏幕录制' }))
+    await waitFor(() => expect(advanceSetup).toHaveBeenCalledWith(
+      computerUsePlugin,
+      readiness,
+      'request_screen_recording',
+    ))
+    expect(await screen.findByRole('button', { name: '打开系统设置' })).toBeInTheDocument()
+    expect(setEnabled).not.toHaveBeenCalled()
+  })
+
+  it('rechecks permission state when the user returns from System Settings', async () => {
+    const awaitingUser: PluginReadinessSnapshot = {
+      state: 'awaiting_user',
+      revision: 6,
+      step: 'accessibility',
+      action_id: 'open_accessibility_settings',
+      can_recheck: true,
+    }
+    const setEnabled = vi.fn().mockResolvedValue(undefined)
+    const advanceSetup = vi.fn().mockResolvedValue({
+      type: 'plugin.setup.advance',
+      command_id: 'cmd-recheck',
+      plugin_id: computerUsePlugin.id,
+      readiness: {
+        state: 'ready',
+        revision: 7,
+        can_recheck: false,
+      },
+    })
+    render(
+      <I18nProvider>
+        <PluginsView
+          listPlugins={vi.fn().mockResolvedValue([computerUsePlugin])}
+          getReadiness={vi.fn().mockResolvedValue(awaitingUser)}
+          advanceSetup={advanceSetup}
+          setEnabled={setEnabled}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('switch', { name: '切换插件：Computer Use' }))
+    await screen.findByRole('dialog', { name: '设置 Computer Use' })
+    fireEvent.focus(window)
+
+    await waitFor(() => expect(advanceSetup).toHaveBeenCalledWith(
+      computerUsePlugin,
+      awaitingUser,
+      'recheck',
+    ))
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(computerUsePlugin, true))
+    expect(screen.queryByRole('dialog', { name: '设置 Computer Use' })).not.toBeInTheDocument()
   })
 
   it('hides retired plugins from the installed catalog', async () => {
@@ -262,43 +273,6 @@ describe('PluginsView', () => {
     fireEvent.click(screen.getByRole('button', { name: '导入插件' }))
     await waitFor(() => expect(installPlugin).toHaveBeenNthCalledWith(1, '/tmp/archive.shejane-plugin', false))
     await waitFor(() => expect(installPlugin).toHaveBeenNthCalledWith(2, '/tmp/archive.shejane-plugin', true))
-  })
-
-  it('binds an explicit image-capable model for a Vision plugin', async () => {
-    const bindVisionModel = vi.fn().mockResolvedValue(undefined)
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    render(
-      <I18nProvider>
-        <PluginsView
-          listPlugins={vi.fn().mockResolvedValue([visionDetail])}
-          getPlugin={vi.fn().mockResolvedValue(visionDetail)}
-          visionModels={[
-            {
-              id: 'local:vision:vision-a',
-              label: 'Vision A',
-              vendor: 'Vision Provider',
-            },
-          ]}
-          bindVisionModel={bindVisionModel}
-        />
-      </I18nProvider>,
-    )
-
-    fireEvent.click(await screen.findByRole('button', { name: '查看 Vision Cloud 的详情' }))
-    fireEvent.change(await screen.findByRole('combobox', { name: '选择视觉模型' }), {
-      target: { value: 'local:vision:vision-a' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: '绑定模型' }))
-
-    await waitFor(() =>
-      expect(bindVisionModel).toHaveBeenCalledWith(
-        visionDetail,
-        'local:vision:vision-a',
-      ),
-    )
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('local:vision:vision-a'),
-    )
   })
 
   it('projects a pending command and surfaces its rejection', async () => {

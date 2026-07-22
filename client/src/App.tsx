@@ -57,6 +57,7 @@ import { createLocalID, LocalConversationStore } from './shared/local-data/local
 import type { AgentTimelineItem, ChatMessage, ChatMode, Conversation, ConversationProject, ConversationWorkspace, LocalAttachmentRef, LocalFileRef, OpenDocument } from './shared/local-data/types'
 import {
   authorizeLocalWorkspace,
+  advanceLocalPluginSetupCommand,
   answerLocalQuestionCommand,
   cancelLocalRunCommand,
   clearLocalMemory,
@@ -78,6 +79,7 @@ import {
   getLocalArtifact,
   getLocalArtifactContent,
   getLocalPlugin,
+  getLocalPluginReadiness,
   getLocalSkillFile,
   listAuthorizedWorkspaces,
   listInstalledSkills,
@@ -2935,18 +2937,7 @@ function AppContent() {
             <PluginsView
               embedded
               refreshVersion={pluginCatalogVersion}
-              visionModels={models
-                .filter((model) => model.imageInputs)
-                .map((model) => ({
-                  id: model.id,
-                  label: model.label,
-                  vendor: model.vendor ?? '',
-                }))}
               listPlugins={listPluginsForView}
-              getPlugin={(pluginId) => {
-                if (!runtimeConnection) return Promise.reject(new Error('Runtime unavailable'))
-                return getLocalPlugin(pluginId, runtimeConnection)
-              }}
               selectPackage={() => window.shejaneClient?.selectPluginPackage?.() ?? Promise.resolve(undefined)}
               installPlugin={(sourcePath, allowUnsigned) => {
                 const commandId = createLocalID('cmd')
@@ -2966,18 +2957,20 @@ function AppContent() {
                   input: { pluginId: plugin.id, expectedDigest: plugin.digest },
                 })
               }}
-              rollbackPlugin={(plugin, targetDigest) => {
+              getReadiness={(plugin) => {
+                if (!runtimeConnection) return Promise.reject(new Error('Runtime unavailable'))
+                return getLocalPluginReadiness(plugin.id, runtimeConnection)
+              }}
+              advanceSetup={(plugin, readiness, actionId) => {
+                if (!runtimeConnection) return Promise.reject(new Error('Runtime unavailable'))
                 const commandId = createLocalID('cmd')
-                return submitPluginCommand({
-                  type: 'plugin.rollback',
+                return advanceLocalPluginSetupCommand(
                   commandId,
-                  createdAt: new Date().toISOString(),
-                  input: {
-                    pluginId: plugin.id,
-                    targetDigest,
-                    expectedDigest: plugin.digest,
-                  },
-                })
+                  plugin.id as 'org.shejane.computer-use',
+                  readiness.revision,
+                  actionId,
+                  runtimeConnection,
+                )
               }}
               removePlugin={(plugin) => {
                 const commandId = createLocalID('cmd')
@@ -2986,20 +2979,6 @@ function AppContent() {
                   commandId,
                   createdAt: new Date().toISOString(),
                   input: { pluginId: plugin.id, expectedDigest: plugin.digest },
-                })
-              }}
-              bindVisionModel={(plugin, model) => {
-                const commandId = createLocalID('cmd')
-                return submitPluginCommand({
-                  type: 'plugin.model.bind',
-                  commandId,
-                  createdAt: new Date().toISOString(),
-                  input: {
-                    pluginId: plugin.id,
-                    bindingId: 'vision-default',
-                    model,
-                    expectedDigest: plugin.digest,
-                  },
                 })
               }}
             />

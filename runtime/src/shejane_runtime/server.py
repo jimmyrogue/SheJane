@@ -89,9 +89,12 @@ from .api_schemas import (
     PluginInstallCommandReceipt,
     PluginModelBindCommand,
     PluginModelBindCommandReceipt,
+    PluginReadinessSnapshot,
     PluginRemoveCommand,
     PluginRemoveCommandReceipt,
     PluginRollbackCommand,
+    PluginSetupAdvanceCommand,
+    PluginSetupAdvanceCommandReceipt,
     PluginStateCommandReceipt,
     PluginUpdateCommand,
     PluginVersionSwitchCommandReceipt,
@@ -721,6 +724,7 @@ async def lifespan(app: FastAPI):
         store=store,
         data_dir=settings.data_dir,
         runtime_version=__version__,
+        computer_use_package=settings.computer_use_package,
     )
     app.state.settings = settings
     app.state.checkpointer = checkpointer
@@ -1445,6 +1449,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail={"code": exc.code, "message": str(exc)},
             ) from exc
 
+    @app.get(
+        "/v1/plugins/{plugin_id}/readiness",
+        response_model=PluginReadinessSnapshot,
+    )
+    async def inspect_plugin_readiness(request: Request, plugin_id: str) -> dict[str, Any]:
+        if plugin_id != "org.shejane.computer-use":
+            raise HTTPException(status_code=404, detail="plugin readiness is unavailable")
+        registry: PluginRegistry = app.state.plugin_registry
+        try:
+            return await registry.computer_use_readiness(principal_id=request.state.principal_id)
+        except PluginRegistryError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+
     @app.post(
         "/v1/commands",
         response_model=(
@@ -1459,6 +1479,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             | PluginStateCommandReceipt
             | PluginVersionSwitchCommandReceipt
             | PluginRemoveCommandReceipt
+            | PluginSetupAdvanceCommandReceipt
         ),
     )
     async def accept_command(
@@ -1477,10 +1498,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             | PluginUpdateCommand
             | PluginRollbackCommand
             | PluginRemoveCommand
+            | PluginSetupAdvanceCommand
         ),
     ) -> dict[str, Any]:
         store: LocalStore = app.state.store
         coordinator: RunCoordinator = app.state.coordinator
+        if isinstance(body, PluginSetupAdvanceCommand):
+            registry: PluginRegistry = app.state.plugin_registry
+            try:
+                return await registry.advance_computer_use_setup(
+                    principal_id=request.state.principal_id,
+                    command_id=body.command_id,
+                    expected_revision=body.expected_revision,
+                    action_id=body.action_id,
+                )
+            except CommandConflictError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except PluginRegistryError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": str(exc)},
+                ) from exc
         if isinstance(body, PluginModelBindCommand):
             registry: PluginRegistry = app.state.plugin_registry
             async with coordinator._model_admission(

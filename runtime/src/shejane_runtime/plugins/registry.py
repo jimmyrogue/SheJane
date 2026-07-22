@@ -13,7 +13,13 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from ..store.sqlite import LocalStore, PluginStateError, PluginVersionConflictError
-from .computer_use import is_allowed_computer_use_package
+from .computer_use import (
+    COMPUTER_USE_PLUGIN_ID,
+    ComputerUseError,
+    ComputerUseReadiness,
+    ComputerUseService,
+    is_allowed_computer_use_package,
+)
 from .manifest import load_plugin_manifest
 from .package import (
     SIGNATURE_PATH,
@@ -50,11 +56,21 @@ class _PreparedPackage:
 
 
 class PluginRegistry:
-    def __init__(self, *, store: LocalStore, data_dir: Path, runtime_version: str) -> None:
+    def __init__(
+        self,
+        *,
+        store: LocalStore,
+        data_dir: Path,
+        runtime_version: str,
+        computer_use_package: Path | None = None,
+    ) -> None:
         self._store = store
         self._root = data_dir / "plugins"
+        self._data_dir = data_dir
         self._runtime_version = runtime_version
         self._runtime_assets = RuntimeAssetStore(data_dir)
+        self._computer_use_package = computer_use_package
+        self._computer_use_lock = asyncio.Lock()
 
     async def install_runtime_asset(
         self,
@@ -163,6 +179,7 @@ class PluginRegistry:
         source_path: str,
         allow_unsigned: bool,
         expected_package_digest: str | None,
+        allow_builtin: bool = False,
     ) -> _PreparedPackage:
         source = Path(source_path).expanduser()
         if source.suffix != ".shejane-plugin":
@@ -178,6 +195,12 @@ class PluginRegistry:
         try:
             extract_plugin_archive(source, package_root)
             manifest = load_plugin_manifest(package_root)
+            if manifest.id == COMPUTER_USE_PLUGIN_ID and not allow_builtin:
+                raise PluginRegistryError(
+                    "builtin_capability_managed",
+                    "Computer Use is managed by this SheJane Runtime",
+                    status_code=409,
+                )
             digest = canonical_package_digest(package_root)
             if expected_package_digest is not None and expected_package_digest != digest:
                 raise PluginRegistryError(
@@ -247,12 +270,11 @@ class PluginRegistry:
                 if not is_allowed_computer_use_package(
                     plugin_id=manifest.id,
                     version=manifest.version,
-                    digest=digest,
                     handler=manifest.runtime.execution.handler,
                 ):
                     raise PluginRegistryError(
                         "builtin_plugin_not_allowed",
-                        "Built-in plugins require an exact Runtime allowlisted package digest",
+                        "Built-in plugins must be supplied by this SheJane Runtime",
                         status_code=409,
                     )
                 if manifest.runtime.execution.platforms != [current_managed_worker_platform()]:
@@ -302,6 +324,7 @@ class PluginRegistry:
         expected_digest: str | None,
         allow_unsigned: bool,
     ) -> dict[str, Any]:
+        self._reject_builtin_mutation(plugin_id)
         command_payload: dict[str, Any] = {
             "type": "plugin.update",
             "plugin_id": plugin_id,
@@ -356,6 +379,7 @@ class PluginRegistry:
         target_digest: str,
         expected_digest: str | None,
     ) -> dict[str, Any]:
+        self._reject_builtin_mutation(plugin_id)
         try:
             receipt, _created = await self._store.rollback_plugin_command(
                 principal_id=principal_id,
@@ -377,6 +401,7 @@ class PluginRegistry:
         plugin_id: str,
         expected_digest: str | None,
     ) -> dict[str, Any]:
+        self._reject_builtin_mutation(plugin_id)
         try:
             receipt, _created = await self._store.remove_plugin_command(
                 principal_id=principal_id,
@@ -390,10 +415,12 @@ class PluginRegistry:
             raise PluginRegistryError(exc.code, str(exc), status_code=status_code) from exc
 
     async def list(self, *, principal_id: str) -> list[dict[str, Any]]:
+        await self._ensure_computer_use(principal_id)
         records = await self._store.list_plugins(principal_id=principal_id)
         return [_plugin_summary(record) for record in records]
 
     async def inspect(self, *, principal_id: str, plugin_id: str) -> dict[str, Any]:
+        await self._ensure_computer_use(principal_id)
         record = await self._store.get_plugin(principal_id=principal_id, plugin_id=plugin_id)
         if record is None:
             raise PluginRegistryError(
@@ -450,6 +477,15 @@ class PluginRegistry:
         expected_digest: str | None,
         enabled: bool,
     ) -> dict[str, Any]:
+        await self._ensure_computer_use(principal_id)
+        if plugin_id == COMPUTER_USE_PLUGIN_ID and enabled:
+            readiness = await self.computer_use_readiness(principal_id=principal_id)
+            if readiness["state"] != "ready":
+                raise PluginRegistryError(
+                    "plugin_setup_required",
+                    "Finish Computer Use setup before enabling it",
+                    status_code=409,
+                )
         command_type = "plugin.enable" if enabled else "plugin.disable"
         try:
             receipt, _created = await self._store.set_plugin_enabled_command(
@@ -464,6 +500,172 @@ class PluginRegistry:
         except PluginStateError as exc:
             status_code = 404 if exc.code == "plugin_not_found" else 409
             raise PluginRegistryError(exc.code, str(exc), status_code=status_code) from exc
+
+    async def computer_use_readiness(self, *, principal_id: str) -> dict[str, Any]:
+        package = await self._ensure_computer_use(principal_id)
+        if package is None:
+            return {
+                "state": "blocked",
+                "revision": 0,
+                "step": None,
+                "action_id": None,
+                "can_recheck": False,
+                "code": "unsupported_platform",
+            }
+        flow = await self._store.get_plugin_setup_flow(
+            principal_id=principal_id, plugin_id=COMPUTER_USE_PLUGIN_ID
+        )
+        try:
+            async with ComputerUseService(package, workspace_root=self._data_dir) as service:
+                return await ComputerUseReadiness(service).inspect(
+                    stage=str(flow["stage"]), revision=int(flow["revision"])
+                )
+        except ComputerUseError as exc:
+            raise PluginRegistryError(
+                "computer_use_readiness_failed", str(exc), status_code=503
+            ) from exc
+
+    async def advance_computer_use_setup(
+        self,
+        *,
+        principal_id: str,
+        command_id: str,
+        expected_revision: int,
+        action_id: str,
+    ) -> dict[str, Any]:
+        payload = {
+            "type": "plugin.setup.advance",
+            "plugin_id": COMPUTER_USE_PLUGIN_ID,
+            "expected_revision": expected_revision,
+            "action_id": action_id,
+        }
+        replay = await self._store.accepted_command_receipt(
+            principal_id=principal_id,
+            command_id=command_id,
+            command_type="plugin.setup.advance",
+            payload=payload,
+        )
+        if replay is not None:
+            return replay
+        package = await self._ensure_computer_use(principal_id)
+        if package is None:
+            raise PluginRegistryError(
+                "unsupported_platform",
+                "Computer Use is unavailable on this platform",
+                status_code=409,
+            )
+        flow = await self._store.get_plugin_setup_flow(
+            principal_id=principal_id, plugin_id=COMPUTER_USE_PLUGIN_ID
+        )
+        stage = str(flow["stage"])
+        if int(flow["revision"]) != expected_revision:
+            raise PluginRegistryError(
+                "plugin_setup_stale", "Computer Use setup state changed", status_code=409
+            )
+        next_stage = ComputerUseReadiness.stage_after(action_id, stage)
+        try:
+            async with ComputerUseService(package, workspace_root=self._data_dir) as service:
+                snapshot = await ComputerUseReadiness(service).advance(
+                    action_id=action_id,
+                    stage=stage,
+                    revision=expected_revision,
+                )
+        except ComputerUseError as exc:
+            raise PluginRegistryError(
+                "computer_use_setup_failed", str(exc), status_code=503
+            ) from exc
+        try:
+            advanced = await self._store.begin_plugin_setup_action(
+                principal_id=principal_id,
+                plugin_id=COMPUTER_USE_PLUGIN_ID,
+                expected_revision=expected_revision,
+                next_stage=next_stage,
+            )
+        except PluginStateError as exc:
+            raise PluginRegistryError(exc.code, str(exc), status_code=409) from exc
+        if int(snapshot["revision"]) != int(advanced["revision"]):
+            raise PluginRegistryError(
+                "plugin_setup_state_invalid", "Computer Use setup revision changed", status_code=500
+            )
+        receipt = {
+            "type": "plugin.setup.advance",
+            "command_id": command_id,
+            "plugin_id": COMPUTER_USE_PLUGIN_ID,
+            "readiness": snapshot,
+        }
+        return await self._store.record_command_receipt(
+            principal_id=principal_id,
+            command_id=command_id,
+            command_type="plugin.setup.advance",
+            payload=payload,
+            receipt=receipt,
+        )
+
+    async def _ensure_computer_use(self, principal_id: str) -> Path | None:
+        source = self._computer_use_package
+        if source is None or not source.is_file():
+            return None
+        async with self._computer_use_lock:
+            prepared = await asyncio.to_thread(
+                self._ingest_package,
+                str(source),
+                True,
+                None,
+                True,
+            )
+            current = await self._store.get_plugin(
+                principal_id=principal_id, plugin_id=COMPUTER_USE_PLUGIN_ID
+            )
+            payload = {
+                "type": "runtime.builtin.ensure",
+                "plugin_id": COMPUTER_USE_PLUGIN_ID,
+                "digest": prepared.digest,
+            }
+            try:
+                if current is None:
+                    await self._store.install_plugin_command(
+                        principal_id=principal_id,
+                        command_id=f"builtin-install:{prepared.digest}",
+                        command_payload=payload,
+                        manifest=prepared.manifest,
+                        digest=prepared.digest,
+                        signature_status="unsigned",
+                        signer_key_id=None,
+                        compatibility=prepared.compatibility,
+                        source="runtime_builtin",
+                        command_type="runtime.builtin.ensure",
+                        receipt_type="runtime.builtin.ensure",
+                    )
+                elif current["digest"] != prepared.digest:
+                    await self._store.update_plugin_command(
+                        principal_id=principal_id,
+                        command_id=f"builtin-update:{prepared.digest}",
+                        command_payload=payload,
+                        plugin_id=COMPUTER_USE_PLUGIN_ID,
+                        manifest=prepared.manifest,
+                        digest=prepared.digest,
+                        signature_status="unsigned",
+                        signer_key_id=None,
+                        compatibility=prepared.compatibility,
+                        source="runtime_builtin",
+                        command_type="runtime.builtin.ensure",
+                        receipt_type="runtime.builtin.ensure",
+                    )
+            except (PluginStateError, PluginVersionConflictError) as exc:
+                await self._discard_new_blob(prepared)
+                raise PluginRegistryError(
+                    "builtin_capability_unavailable", str(exc), status_code=409
+                ) from exc
+            return prepared.destination
+
+    @staticmethod
+    def _reject_builtin_mutation(plugin_id: str) -> None:
+        if plugin_id == COMPUTER_USE_PLUGIN_ID:
+            raise PluginRegistryError(
+                "builtin_capability_managed",
+                "Computer Use is managed by this SheJane Runtime",
+                status_code=409,
+            )
 
     async def bind_model(
         self,
@@ -497,6 +699,7 @@ def _plugin_summary(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": record["plugin_id"],
         "name": manifest["name"],
+        "description": manifest["description"],
         "version": record["version"],
         "digest": record["digest"],
         "publisher": {

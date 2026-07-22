@@ -11,6 +11,7 @@
 # notarization in a later phase).
 
 import sys
+import platform
 from importlib.util import find_spec
 from pathlib import Path
 from shutil import copy2
@@ -87,6 +88,13 @@ datas += [
     (str(path), "shejane_runtime/agent/prompts")
     for path in Path("src/shejane_runtime/agent/prompts").glob("*.md")
 ]
+if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+    computer_use_package = Path(
+        "plugins/computer-use/dist/computer-use-0.2.0-darwin-arm64.shejane-plugin"
+    )
+    if not computer_use_package.is_file():
+        raise SystemExit("Computer Use fixed capability package must be built before PyInstaller")
+    datas.append((str(computer_use_package), "builtin-plugins"))
 # uvicorn loads its loop / protocol / lifespan implementations dynamically.
 hiddenimports += collect_submodules("uvicorn")
 

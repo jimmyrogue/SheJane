@@ -31,6 +31,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="bundled Linux Managed Worker asset manifest",
     )
     parser.add_argument(
+        "--computer-use-package",
+        type=Path,
+        help="bundled fixed Computer Use capability package",
+    )
+    parser.add_argument(
         "--validate-managed-worker-vm-assets",
         action="store_true",
         help="validate the bundled macOS VM asset set and exit",
@@ -51,6 +56,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "data_dir": args.data_dir,
             "managed_worker_vm_assets": args.managed_worker_vm_assets,
             "managed_worker_linux_assets": args.managed_worker_linux_assets,
+            "computer_use_package": args.computer_use_package,
         }.items()
         if value is not None
     }

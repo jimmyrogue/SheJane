@@ -10,7 +10,6 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from shejane_runtime.plugins.computer_use import COMPUTER_USE_PLUGIN_DIGEST
 from shejane_runtime.plugins.package import canonical_package_digest
 
 ROOT = Path(__file__).resolve().parent
@@ -24,7 +23,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--platform", choices=PLATFORMS, required=True)
     parser.add_argument("--upstream", type=Path, required=True)
-    parser.add_argument("--version", default="0.1.0")
+    parser.add_argument("--version", default="0.2.0")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", args.version):
@@ -53,6 +52,8 @@ def main() -> None:
         payload.mkdir()
         build_bridge(upstream, payload / "bridge-server.mjs")
         copy_upstream_runtime(upstream, payload / "upstream")
+        patch_upstream_runtime(payload / "upstream")
+        build_native_helper(payload / "upstream", args.platform)
         manifest = (ROOT / ".shejane-plugin" / "plugin.template.json").read_text(encoding="utf-8")
         manifest = manifest.replace("__PLUGIN_VERSION__", args.version).replace(
             "__PLATFORM__", args.platform
@@ -61,11 +62,8 @@ def main() -> None:
             raise RuntimeError("plugin manifest contains an unresolved placeholder")
         (stage / ".shejane-plugin" / "plugin.json").write_text(manifest, encoding="utf-8")
         digest = canonical_package_digest(stage)
-        if digest != COMPUTER_USE_PLUGIN_DIGEST:
-            raise RuntimeError(
-                f"Computer Use package digest changed: expected {COMPUTER_USE_PLUGIN_DIGEST}, got {digest}"
-            )
         pack(stage, args.output)
+        print(digest)
 
 
 def build_bridge(upstream: Path, output: Path) -> None:
@@ -108,13 +106,108 @@ def copy_upstream_runtime(upstream: Path, destination: Path) -> None:
         "native/macos/agent_cursor.swift",
         "native/macos/agent_cursor_motion.swift",
         "native/macos/bridge.swift",
-        "prebuilt/macos/arm64/bridge",
     )
     for relative in paths:
         source = upstream / relative
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+
+
+def patch_upstream_runtime(upstream: Path) -> None:
+    bridge = upstream / "native/macos/bridge.swift"
+    source = bridge.read_text(encoding="utf-8")
+    source = source.replace(
+        'case "registerPermissions":\n\t\t\treturn try registerPermissions()',
+        'case "registerPermissions":\n\t\t\treturn try registerPermissions(request)',
+    )
+    old = """\tprivate func registerPermissions() throws -> [String: Any] {
+\t\tlet options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+\t\tlet accessibility = AXIsProcessTrustedWithOptions(options)
+\t\tif #available(macOS 10.15, *) {
+\t\t\t_ = CGRequestScreenCaptureAccess()
+\t\t}
+\t\tlet capturable = screenRecordingCapturable()
+\t\treturn [
+\t\t\t\"accessibility\": accessibility,
+\t\t\t\"screenRecording\": capturable,
+\t\t\t\"screenRecordingCapturable\": capturable,
+\t\t]
+\t}
+"""
+    new = """\tprivate func registerPermissions(_ request: [String: Any]) throws -> [String: Any] {
+\t\tlet kind = request[\"kind\"] as? String
+\t\tguard kind == nil || kind == \"accessibility\" || kind == \"screenRecording\" else {
+\t\t\tthrow BridgeFailure(message: \"Unknown permission kind '\\(kind!)'\", code: \"invalid_args\")
+\t\t}
+\t\tlet accessibility: Bool
+\t\tif kind == nil || kind == \"accessibility\" {
+\t\t\tlet options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+\t\t\taccessibility = AXIsProcessTrustedWithOptions(options)
+\t\t} else {
+\t\t\taccessibility = AXIsProcessTrusted()
+\t\t}
+\t\tif kind == nil || kind == \"screenRecording\", #available(macOS 10.15, *) {
+\t\t\t_ = CGRequestScreenCaptureAccess()
+\t\t}
+\t\tlet capturable = screenRecordingCapturable()
+\t\treturn [
+\t\t\t\"accessibility\": accessibility,
+\t\t\t\"screenRecording\": capturable,
+\t\t\t\"screenRecordingCapturable\": capturable,
+\t\t]
+\t}
+"""
+    if old not in source:
+        raise RuntimeError("pinned macOS permission bridge changed")
+    bridge.write_text(source.replace(old, new), encoding="utf-8")
+
+    setup = upstream / "scripts/setup-helper.mjs"
+    setup_source = setup.read_text(encoding="utf-8")
+    marker = "<key>LSMinimumSystemVersion</key><string>14.0</string>"
+    usage = (
+        marker
+        + "\\n<key>NSScreenCaptureUsageDescription</key>"
+        + "<string>SheJane uses screen capture only when Computer Use is enabled.</string>"
+    )
+    if marker not in setup_source:
+        raise RuntimeError("pinned helper Info.plist template changed")
+    setup.write_text(setup_source.replace(marker, usage), encoding="utf-8")
+
+
+def build_native_helper(upstream: Path, platform: str) -> None:
+    if platform != "darwin/arm64":
+        raise RuntimeError(f"unsupported Computer Use platform: {platform}")
+    output = upstream / "prebuilt/macos/arm64/bridge"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="computer-use-swift-cache-") as cache:
+        subprocess.run(
+            [
+                "xcrun",
+                "swiftc",
+                "-target",
+                "arm64-apple-macosx14.0",
+                "-module-cache-path",
+                cache,
+                "-O",
+                "-framework",
+                "ApplicationServices",
+                "-framework",
+                "AppKit",
+                "-framework",
+                "ScreenCaptureKit",
+                "-framework",
+                "Foundation",
+                "-framework",
+                "SwiftUI",
+                str(upstream / "native/macos/agent_cursor.swift"),
+                str(upstream / "native/macos/agent_cursor_motion.swift"),
+                str(upstream / "native/macos/bridge.swift"),
+                "-o",
+                str(output),
+            ],
+            check=True,
+        )
 
 
 def pack(source: Path, output: Path) -> None:

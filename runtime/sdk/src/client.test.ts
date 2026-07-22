@@ -393,6 +393,51 @@ describe('SheJaneRuntimeClient', () => {
     })
   })
 
+  it('reads and advances the fixed Computer Use setup flow', async () => {
+    const pluginId = 'org.shejane.computer-use' as const
+    const readiness = {
+      state: 'action_required' as const,
+      revision: 4,
+      step: 'screen_recording' as const,
+      action_id: 'request_screen_recording' as const,
+      can_recheck: false,
+    }
+    const receipt = {
+      type: 'plugin.setup.advance' as const,
+      command_id: 'cmd-setup',
+      plugin_id: pluginId,
+      readiness: { ...readiness, state: 'awaiting_user' as const, revision: 5 },
+    }
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(readiness), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(receipt), { status: 200 }))
+    const client = new SheJaneRuntimeClient({
+      baseURL: 'http://127.0.0.1:17371',
+      token: 'runtime-token',
+      fetcher,
+    })
+
+    await expect(client.getPluginReadiness(pluginId)).resolves.toEqual(readiness)
+    await expect(client.advancePluginSetup(
+      'cmd-setup',
+      pluginId,
+      readiness.revision,
+      readiness.action_id,
+    )).resolves.toEqual(receipt)
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      `http://127.0.0.1:17371/v1/plugins/${pluginId}/readiness`,
+      { method: 'GET', headers: { Authorization: 'Bearer runtime-token' } },
+    )
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({
+      type: 'plugin.setup.advance',
+      command_id: 'cmd-setup',
+      plugin_id: pluginId,
+      expected_revision: 4,
+      action_id: 'request_screen_recording',
+    })
+  })
+
   it('parses durable events and the terminal sentinel across one buffer', () => {
     const parsed = parseAgentSSEBuffer(
       'data: {"event_type":"run.completed","run_id":"run-1","seq":4}\n\ndata: [DONE]\n\n',

@@ -1161,6 +1161,56 @@ class PluginStateCommandReceipt(BaseModel):
     enabled: bool
 
 
+class PluginReadinessSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["ready", "action_required", "awaiting_user", "blocked"]
+    revision: int = Field(ge=0)
+    step: Literal["install_helper", "screen_recording", "accessibility"] | None = None
+    action_id: (
+        Literal[
+            "install_helper",
+            "request_screen_recording",
+            "open_screen_recording_settings",
+            "request_accessibility",
+            "open_accessibility_settings",
+        ]
+        | None
+    ) = None
+    can_recheck: bool
+    code: str | None = None
+
+
+class PluginSetupAdvanceCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.setup.advance"]
+    command_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    )
+    plugin_id: Literal["org.shejane.computer-use"]
+    expected_revision: int = Field(ge=0)
+    action_id: Literal[
+        "install_helper",
+        "request_screen_recording",
+        "open_screen_recording_settings",
+        "request_accessibility",
+        "open_accessibility_settings",
+        "recheck",
+    ]
+
+
+class PluginSetupAdvanceCommandReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["plugin.setup.advance"]
+    command_id: str
+    plugin_id: Literal["org.shejane.computer-use"]
+    readiness: PluginReadinessSnapshot
+
+
 class PluginVersionSwitchCommandReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1217,6 +1267,7 @@ class PluginSummary(BaseModel):
 
     id: str
     name: str
+    description: str
     version: str
     digest: str
     publisher: PluginPublisherSummary
@@ -1278,7 +1329,6 @@ class PluginVersionSummary(BaseModel):
 
 
 class PluginDetail(PluginSummary):
-    description: str
     license: str | None = None
     actions: list[PluginActionSummary]
     skills: list[PluginPathContributionSummary]

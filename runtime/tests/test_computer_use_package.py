@@ -9,19 +9,169 @@ from typing import Any
 import pytest
 
 from shejane_runtime.plugins.computer_use import (
-    COMPUTER_USE_PLUGIN_DIGEST,
     COMPUTER_USE_PLUGIN_ID,
     COMPUTER_USE_PLUGIN_VERSION,
     ComputerUseActionExecutor,
     ComputerUseError,
+    ComputerUseReadiness,
     ComputerUseService,
     is_allowed_computer_use_package,
 )
 from shejane_runtime.plugins.manifest import load_plugin_manifest
-from shejane_runtime.store.sqlite import LocalStore
+from shejane_runtime.store.sqlite import LocalStore, PluginStateError
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "computer-use"
+
+
+class FakeReadinessService:
+    def __init__(self) -> None:
+        self.installed = False
+        self.ready = False
+        self.accessibility = False
+        self.screen_recording = False
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def call(
+        self, action: str, arguments: dict[str, Any], *, timeout_ms: int
+    ) -> dict[str, Any]:
+        assert timeout_ms == 120_000
+        self.calls.append((action, arguments))
+        if action == "readiness.inspect":
+            return {
+                "installed": self.installed,
+                "helper_ready": self.ready,
+                "helper_identity_valid": self.ready,
+                "accessibility": self.accessibility,
+                "screen_recording": self.screen_recording,
+            }
+        if action == "readiness.install":
+            self.installed = True
+            self.ready = True
+            return {}
+        if action == "readiness.recheck":
+            return {}
+        if action in {"readiness.request_permission", "readiness.open_settings"}:
+            return {}
+        raise AssertionError(action)
+
+
+@pytest.mark.asyncio
+async def test_computer_use_readiness_advances_one_user_permission_at_a_time() -> None:
+    service = FakeReadinessService()
+    readiness = ComputerUseReadiness(service)  # type: ignore[arg-type]
+
+    initial = await readiness.inspect(stage="idle", revision=0)
+    assert initial == {
+        "state": "action_required",
+        "revision": 0,
+        "step": "install_helper",
+        "action_id": "install_helper",
+        "can_recheck": False,
+    }
+
+    screen = await readiness.advance(action_id="install_helper", stage="idle", revision=0)
+    assert screen["step"] == "screen_recording"
+    assert screen["action_id"] == "request_screen_recording"
+
+    awaiting_screen = await readiness.advance(
+        action_id="request_screen_recording", stage="idle", revision=1
+    )
+    assert awaiting_screen == {
+        "state": "awaiting_user",
+        "revision": 2,
+        "step": "screen_recording",
+        "action_id": "open_screen_recording_settings",
+        "can_recheck": True,
+    }
+    assert ("readiness.request_permission", {"kind": "screenRecording"}) in service.calls
+    assert ("readiness.request_permission", {"kind": "accessibility"}) not in service.calls
+
+    service.screen_recording = True
+    accessibility = await readiness.advance(
+        action_id="recheck", stage="screen_requested", revision=2
+    )
+    assert accessibility["step"] == "accessibility"
+    assert accessibility["action_id"] == "request_accessibility"
+
+    awaiting_accessibility = await readiness.advance(
+        action_id="request_accessibility", stage="idle", revision=3
+    )
+    assert awaiting_accessibility["step"] == "accessibility"
+    assert awaiting_accessibility["can_recheck"] is True
+    assert ("readiness.request_permission", {"kind": "accessibility"}) in service.calls
+
+    service.accessibility = True
+    ready = await readiness.advance(
+        action_id="recheck", stage="accessibility_requested", revision=4
+    )
+    assert ready == {
+        "state": "ready",
+        "revision": 5,
+        "step": None,
+        "action_id": None,
+        "can_recheck": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_computer_use_readiness_inspection_never_repeats_permission_requests() -> None:
+    service = FakeReadinessService()
+    service.installed = True
+    service.ready = True
+    readiness = ComputerUseReadiness(service)  # type: ignore[arg-type]
+
+    first = await readiness.inspect(stage="screen_requested", revision=7)
+    second = await readiness.inspect(stage="screen_requested", revision=7)
+
+    assert first == second
+    assert first["state"] == "awaiting_user"
+    assert {action for action, _arguments in service.calls} == {"readiness.inspect"}
+
+
+@pytest.mark.asyncio
+async def test_computer_use_readiness_accepts_a_step_completed_outside_shejane() -> None:
+    service = FakeReadinessService()
+    service.installed = True
+    service.ready = True
+    service.screen_recording = True
+    readiness = ComputerUseReadiness(service)  # type: ignore[arg-type]
+
+    snapshot = await readiness.advance(
+        action_id="request_screen_recording", stage="idle", revision=2
+    )
+
+    assert snapshot["revision"] == 3
+    assert snapshot["step"] == "accessibility"
+    assert ("readiness.request_permission", {"kind": "screenRecording"}) not in service.calls
+
+
+@pytest.mark.asyncio
+async def test_computer_use_setup_flow_rejects_stale_user_actions(tmp_path: Path) -> None:
+    store = await LocalStore.open(tmp_path / "runtime.sqlite3")
+    try:
+        assert await store.get_plugin_setup_flow(
+            principal_id="local", plugin_id=COMPUTER_USE_PLUGIN_ID
+        ) == {"stage": "idle", "revision": 0, "updated_at": None}
+
+        advanced = await store.begin_plugin_setup_action(
+            principal_id="local",
+            plugin_id=COMPUTER_USE_PLUGIN_ID,
+            expected_revision=0,
+            next_stage="screen_requested",
+        )
+        assert advanced["stage"] == "screen_requested"
+        assert advanced["revision"] == 1
+
+        with pytest.raises(PluginStateError, match="plugin setup state changed"):
+            await store.begin_plugin_setup_action(
+                principal_id="local",
+                plugin_id=COMPUTER_USE_PLUGIN_ID,
+                expected_revision=0,
+                next_stage="screen_requested",
+            )
+    finally:
+        await store.close()
 
 
 def test_computer_use_manifest_exposes_state_scoped_desktop_actions(tmp_path: Path) -> None:
@@ -39,8 +189,6 @@ def test_computer_use_manifest_exposes_state_scoped_desktop_actions(tmp_path: Pa
     assert parsed.runtime.execution.kind == "builtin"
     assert parsed.runtime.execution.handler == "computer_use"
     assert [action.id for action in parsed.contributions.actions] == [
-        "setup",
-        "status",
         "find_roots",
         "observe_ui",
         "search_ui",
@@ -55,14 +203,14 @@ def test_computer_use_manifest_exposes_state_scoped_desktop_actions(tmp_path: Pa
     ).capabilities == ["computer.control"]
 
 
-def test_computer_use_builtin_requires_the_exact_audited_package() -> None:
+def test_computer_use_builtin_requires_the_fixed_runtime_identity() -> None:
     identity = {
         "plugin_id": COMPUTER_USE_PLUGIN_ID,
         "version": COMPUTER_USE_PLUGIN_VERSION,
         "handler": "computer_use",
     }
-    assert is_allowed_computer_use_package(digest=COMPUTER_USE_PLUGIN_DIGEST, **identity)
-    assert not is_allowed_computer_use_package(digest="sha256:" + "0" * 64, **identity)
+    assert is_allowed_computer_use_package(**identity)
+    assert not is_allowed_computer_use_package(**{**identity, "version": "9.9.9"})
 
 
 @pytest.mark.asyncio

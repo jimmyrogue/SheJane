@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { I18nProvider } from '@/shared/i18n/i18n'
 import { Composer } from './Composer'
 import { pluginCommandToken, pluginToken, skillToken } from '../skillDraft'
-import type { InstalledSkill, PluginDetail } from '@/runtime/client'
+import type { InstalledSkill, McpServerInfo, PluginDetail } from '@/runtime/client'
 
 afterEach(() => {
   cleanup()
@@ -15,6 +15,20 @@ const sampleSkills: InstalledSkill[] = [
   { name: 'hunt', description: 'Diagnose before you fix', path: '/s/hunt/SKILL.md' },
   { name: 'write', description: 'Strip AI writing patterns', path: '/s/write/SKILL.md' },
 ]
+
+const sampleMcpServers: McpServerInfo[] = [{
+  name: 'github',
+  transport: 'stdio',
+  source: 'shejane',
+  source_path: '/u/.shejane/mcp-servers.json',
+  command: 'npx',
+  args: [],
+  env_keys: [],
+  cwd: null,
+  url: null,
+  status: 'idle',
+  tool_count: 0,
+}]
 
 const archiveDigest = `sha256:${'a'.repeat(64)}`
 const archivePlugin: PluginDetail = {
@@ -61,6 +75,7 @@ function Harness({
   onSend = vi.fn(),
   onAppendInstruction,
   listSkills = vi.fn().mockResolvedValue(sampleSkills),
+  listMcpServers = vi.fn().mockResolvedValue(sampleMcpServers),
   listPlugins = vi.fn().mockResolvedValue([archivePlugin]),
   onDraft = vi.fn(),
   projectName,
@@ -77,6 +92,7 @@ function Harness({
   onSend?: () => void
   onAppendInstruction?: () => void
   listSkills?: () => Promise<InstalledSkill[]>
+  listMcpServers?: () => Promise<McpServerInfo[]>
   listPlugins?: () => Promise<PluginDetail[]>
   onDraft?: (value: string) => void
   projectName?: string
@@ -103,6 +119,7 @@ function Harness({
         onSend={onSend}
         onAppendInstruction={onAppendInstruction}
         listSkills={listSkills}
+        listMcpServers={listMcpServers}
         listPlugins={listPlugins}
         mode="local:test:model"
         onModeChange={vi.fn()}
@@ -208,6 +225,21 @@ describe('Composer (Lexical skill editor)', () => {
         expectedDigest: archivePlugin.digest,
       })),
     )
+  })
+
+  it('orders slash menu groups as functions, plugin commands, skills, then MCP', async () => {
+    prepareTypeaheadLayout()
+    render(<Harness />)
+    const editor = screen.getByRole('textbox')
+    fireEvent.input(editor, { inputType: 'insertText', data: '/' })
+
+    await screen.findByText('插件命令')
+    const menu = screen.getByRole('listbox', { name: 'Skill' })
+    expect(menu.parentElement).toHaveClass('composer')
+    expect(
+      Array.from(menu.querySelectorAll('.composer-menu-group'))
+        .map((group) => group.textContent),
+    ).toEqual(['功能', '插件命令', 'Skill', 'MCP'])
   })
 
   it('selects an @ plugin with the keyboard', async () => {

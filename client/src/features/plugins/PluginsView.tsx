@@ -1,62 +1,95 @@
-import { useCallback, useEffect, useState } from 'react'
-import { IconBox, IconRefresh, IconSearch, IconTrash, IconUpload, IconX } from '@tabler/icons-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { IconBox, IconCheck, IconRefresh, IconSearch, IconTrash, IconUpload } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/shared/i18n/i18n'
 import {
   RuntimeHTTPError,
-  parseRuntimeModelSpec,
-  type PluginDetail,
+  type PluginReadinessSnapshot,
+  type PluginSetupActionID,
+  type PluginSetupAdvanceCommandReceipt,
   type PluginSummary,
-  type RuntimeModelSpec,
 } from '@/runtime/client'
 
-interface VisionModelOption {
-  id: RuntimeModelSpec
-  label: string
-  vendor: string
+type SetupActionID = PluginSetupActionID
+const COMPUTER_USE_PLUGIN_ID = 'org.shejane.computer-use'
+
+interface ComputerUseSetup {
+  plugin: PluginSummary
+  readiness: PluginReadinessSnapshot
+  busy: boolean
+  error?: string
+}
+
+function setupDescriptionKey(readiness: PluginReadinessSnapshot) {
+  if (readiness.state === 'ready') return 'plugins.setup.description.ready.unknown' as const
+  if (!readiness.step) return 'plugins.setup.description.blocked.unknown' as const
+  if (readiness.step === 'install_helper') {
+    return readiness.state === 'action_required'
+      ? 'plugins.setup.description.action_required.install_helper' as const
+      : 'plugins.setup.description.blocked.install_helper' as const
+  }
+  if (readiness.step === 'screen_recording') {
+    if (readiness.state === 'action_required') {
+      return 'plugins.setup.description.action_required.screen_recording' as const
+    }
+    return readiness.state === 'awaiting_user'
+      ? 'plugins.setup.description.awaiting_user.screen_recording' as const
+      : 'plugins.setup.description.blocked.screen_recording' as const
+  }
+  if (readiness.state === 'action_required') {
+    return 'plugins.setup.description.action_required.accessibility' as const
+  }
+  return readiness.state === 'awaiting_user'
+    ? 'plugins.setup.description.awaiting_user.accessibility' as const
+    : 'plugins.setup.description.blocked.accessibility' as const
 }
 
 export interface PluginsViewProps {
   listPlugins: () => Promise<PluginSummary[]>
   embedded?: boolean
   refreshVersion?: number
-  visionModels?: VisionModelOption[]
-  getPlugin?: (pluginId: string) => Promise<PluginDetail>
   selectPackage?: () => Promise<string | undefined>
   installPlugin?: (sourcePath: string, allowUnsigned: boolean) => Promise<unknown>
   setEnabled?: (plugin: PluginSummary, enabled: boolean) => Promise<unknown>
-  rollbackPlugin?: (plugin: PluginSummary, targetDigest: string) => Promise<unknown>
   removePlugin?: (plugin: PluginSummary) => Promise<unknown>
-  bindVisionModel?: (plugin: PluginDetail, model: RuntimeModelSpec) => Promise<unknown>
-}
-
-function executionLabel(kind: PluginSummary['execution_kind']): string {
-  return kind === 'wasi' ? 'WASI' : kind === 'managed_worker' ? 'Managed Worker' : 'Built-in'
+  getReadiness?: (plugin: PluginSummary) => Promise<PluginReadinessSnapshot>
+  advanceSetup?: (
+    plugin: PluginSummary,
+    readiness: PluginReadinessSnapshot,
+    actionID: SetupActionID,
+  ) => Promise<PluginSetupAdvanceCommandReceipt>
 }
 
 export function PluginsView({
   listPlugins,
   embedded = false,
   refreshVersion,
-  visionModels = [],
-  getPlugin,
   selectPackage,
   installPlugin,
   setEnabled,
-  rollbackPlugin,
   removePlugin,
-  bindVisionModel,
+  getReadiness,
+  advanceSetup,
 }: PluginsViewProps) {
   const { t } = useI18n()
   const [plugins, setPlugins] = useState<PluginSummary[]>([])
-  const [detail, setDetail] = useState<PluginDetail>()
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [query, setQuery] = useState('')
+  const [setup, setSetup] = useState<ComputerUseSetup>()
+  const autoRecheckRevision = useRef<number>()
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -74,17 +107,13 @@ export function PluginsView({
     void refresh()
   }, [refresh, refreshVersion])
 
-  const reloadDetail = useCallback(async () => {
-    if (detail && getPlugin) setDetail(await getPlugin(detail.id))
-  }, [detail, getPlugin])
-
   const mutate = useCallback(
     async (key: string, action: () => Promise<unknown>) => {
       setBusy(key)
       setError(undefined)
       try {
         await action()
-        await Promise.all([refresh(), reloadDetail()])
+        await refresh()
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause))
         throw cause
@@ -92,7 +121,7 @@ export function PluginsView({
         setBusy(undefined)
       }
     },
-    [refresh, reloadDetail],
+    [refresh],
   )
 
   const withUnsignedConfirmation = useCallback(
@@ -121,24 +150,83 @@ export function PluginsView({
     )
   }
 
-  const showDetail = async (plugin: PluginSummary) => {
-    if (!getPlugin) return
-    setBusy(`detail:${plugin.id}`)
-    setError(undefined)
-    try {
-      setDetail(await getPlugin(plugin.id))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(undefined)
+  const completeSetup = useCallback(
+    async (plugin: PluginSummary) => {
+      if (!plugin.enabled) await setEnabled?.(plugin, true)
+      setSetup(undefined)
+      await refresh()
+    },
+    [refresh, setEnabled],
+  )
+
+  const openSetup = useCallback(
+    async (plugin: PluginSummary) => {
+      if (!getReadiness) return
+      setBusy(`setup:${plugin.id}`)
+      setError(undefined)
+      try {
+        const readiness = await getReadiness(plugin)
+        if (readiness.state === 'ready') {
+          await completeSetup(plugin)
+          return
+        }
+        autoRecheckRevision.current = undefined
+        setSetup({ plugin, readiness, busy: false })
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      } finally {
+        setBusy(undefined)
+      }
+    },
+    [completeSetup, getReadiness],
+  )
+
+  const advanceComputerUseSetup = useCallback(
+    async (actionID: SetupActionID) => {
+      if (!setup || !advanceSetup) return
+      const current = setup
+      setSetup({ ...current, busy: true, error: undefined })
+      try {
+        const receipt = await advanceSetup(current.plugin, current.readiness, actionID)
+        if (receipt.readiness.state === 'ready') {
+          await completeSetup(current.plugin)
+          return
+        }
+        setSetup({ plugin: current.plugin, readiness: receipt.readiness, busy: false })
+      } catch (cause) {
+        setSetup({
+          ...current,
+          busy: false,
+          error: cause instanceof Error ? cause.message : String(cause),
+        })
+      }
+    },
+    [advanceSetup, completeSetup, setup],
+  )
+
+  useEffect(() => {
+    if (!setup?.readiness.can_recheck || setup.busy || !advanceSetup) return
+    const revision = setup.readiness.revision
+    const recheckOnFocus = () => {
+      if (autoRecheckRevision.current === revision) return
+      autoRecheckRevision.current = revision
+      void advanceComputerUseSetup('recheck')
     }
-  }
+    window.addEventListener('focus', recheckOnFocus)
+    return () => window.removeEventListener('focus', recheckOnFocus)
+  }, [advanceComputerUseSetup, advanceSetup, setup])
+
+  const setupActionLabel = setup?.readiness.action_id
+    ? t(`plugins.setup.action.${setup.readiness.action_id}`)
+    : setup?.readiness.can_recheck
+      ? t('plugins.setup.action.recheck')
+      : undefined
 
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const installedPlugins = plugins.filter((plugin) => !plugin.retired)
   const filteredPlugins = normalizedQuery
     ? installedPlugins.filter((plugin) =>
-        [plugin.name, plugin.id, plugin.publisher.name]
+        [plugin.name, plugin.description, plugin.id, plugin.publisher.name]
           .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)),
       )
     : installedPlugins
@@ -206,22 +294,19 @@ export function PluginsView({
               {filteredPlugins.map((plugin) => (
                 <article className="skill-card plugin-card" role="listitem" key={plugin.id}>
                   <div className="skill-card-head">
-                    <button
-                      type="button"
-                      className="skill-card-title plugin-card-title-button"
-                      aria-label={t('plugins.viewDetails', { name: plugin.name })}
-                      onClick={() => void showDetail(plugin)}
-                      disabled={!getPlugin || Boolean(busy)}
-                    >
+                    <div className="skill-card-title">
                       <span className="skill-card-icon" aria-hidden="true">
                         <IconBox size={15} />
                       </span>
                       <span className="skill-card-name">{plugin.name}</span>
-                    </button>
+                    </div>
                     <span className="plugin-version">v{plugin.version}</span>
                   </div>
+                  <div className="skill-card-text">
+                    <div className="skill-card-desc">{plugin.description}</div>
+                  </div>
                   <div className="skill-card-footer">
-                    {removePlugin ? (
+                    {removePlugin && plugin.execution_kind !== 'builtin' ? (
                       <Button
                         type="button"
                         size="icon-sm"
@@ -231,10 +316,8 @@ export function PluginsView({
                         title={t('plugins.remove')}
                         onClick={() => {
                           if (!window.confirm(t('plugins.confirmRemove', { name: plugin.name }))) return
-                          void (async () => {
-                            await mutate(`remove:${plugin.id}`, () => removePlugin(plugin))
-                            if (detail?.id === plugin.id) setDetail(undefined)
-                          })().catch(() => undefined)
+                          void mutate(`remove:${plugin.id}`, () => removePlugin(plugin))
+                            .catch(() => undefined)
                         }}
                         disabled={Boolean(busy)}
                       >
@@ -244,11 +327,14 @@ export function PluginsView({
                     {setEnabled ? (
                       <Switch
                         checked={plugin.enabled}
-                        onCheckedChange={(enabled) =>
-                          void mutate(`enabled:${plugin.id}`, () =>
-                            setEnabled(plugin, enabled),
-                          ).catch(() => undefined)
-                        }
+                        onCheckedChange={(enabled) => {
+                          if (enabled && plugin.id === COMPUTER_USE_PLUGIN_ID && getReadiness) {
+                            void openSetup(plugin)
+                            return
+                          }
+                          void mutate(`enabled:${plugin.id}`, () => setEnabled(plugin, enabled))
+                            .catch(() => undefined)
+                        }}
                         disabled={Boolean(busy) || plugin.compatibility === 'incompatible'}
                         aria-label={t('plugins.toggleAria', { name: plugin.name })}
                         title={plugin.compatibility === 'incompatible'
@@ -262,185 +348,67 @@ export function PluginsView({
             </div>
           )}
 
-          {detail ? (
-            <PluginDetails
-              plugin={detail}
-              busy={Boolean(busy)}
-              visionModels={visionModels}
-              onClose={() => setDetail(undefined)}
-              onRollback={
-                rollbackPlugin
-                  ? (targetDigest) =>
-                      mutate(`rollback:${detail.id}`, () => rollbackPlugin(detail, targetDigest))
-                  : undefined
-              }
-              onBindVisionModel={
-                bindVisionModel
-                  ? (model) =>
-                      mutate(`model:${detail.id}`, () => bindVisionModel(detail, model))
-                  : undefined
-              }
-            />
-          ) : null}
         </div>
       </div>
-    </section>
-  )
-}
 
-function PluginDetails({
-  plugin,
-  busy,
-  visionModels,
-  onClose,
-  onRollback,
-  onBindVisionModel,
-}: {
-  plugin: PluginDetail
-  busy: boolean
-  visionModels: VisionModelOption[]
-  onClose: () => void
-  onRollback?: (targetDigest: string) => Promise<unknown>
-  onBindVisionModel?: (model: RuntimeModelSpec) => Promise<unknown>
-}) {
-  const { t } = useI18n()
-  const requiresVisionModel = plugin.actions.some((action) =>
-    action.capabilities.includes('model.vision.invoke'),
-  )
-  const [selectedModel, setSelectedModel] = useState<RuntimeModelSpec | ''>(() =>
-    parseRuntimeModelSpec(plugin.model_binding?.requested_model ?? '') ?? '',
-  )
+      <Dialog
+        open={Boolean(setup)}
+        onOpenChange={(open) => {
+          if (!open && !setup?.busy) setSetup(undefined)
+        }}
+      >
+        {setup ? (
+          <DialogContent className="computer-use-setup-dialog" showCloseButton={!setup.busy}>
+            <DialogHeader>
+              <div className="computer-use-setup-kicker">
+                {t('plugins.setup.progress', {
+                  current: !setup.readiness.step || setup.readiness.step === 'install_helper'
+                    ? 1
+                    : setup.readiness.step === 'screen_recording'
+                      ? 2
+                      : 3,
+                })}
+              </div>
+              <DialogTitle>{t('plugins.setup.title', { name: setup.plugin.name })}</DialogTitle>
+              <DialogDescription>
+                {t(setupDescriptionKey(setup.readiness))}
+              </DialogDescription>
+            </DialogHeader>
 
-  useEffect(() => {
-    setSelectedModel(parseRuntimeModelSpec(plugin.model_binding?.requested_model ?? '') ?? '')
-  }, [plugin.id, plugin.model_binding?.requested_model])
+            {setup.readiness.state === 'ready' ? (
+              <div className="computer-use-setup-ready">
+                <IconCheck size={16} aria-hidden="true" />
+                {t('plugins.setup.ready')}
+              </div>
+            ) : null}
+            {setup.error ? <div className="computer-use-setup-error" role="alert">{setup.error}</div> : null}
 
-  return (
-    <section className="plugin-detail" aria-label={t('plugins.detailTitle', { name: plugin.name })}>
-      <div className="plugin-detail-head">
-        <div>
-          <h2>{plugin.name}</h2>
-          <code>{plugin.id}</code>
-        </div>
-        <Button type="button" size="icon-sm" variant="ghost" onClick={onClose} aria-label={t('plugins.closeDetails')}>
-          <IconX aria-hidden="true" />
-        </Button>
-      </div>
-      <p>{plugin.description}</p>
-      <dl className="plugin-detail-facts">
-        <div><dt>{t('plugins.publisher')}</dt><dd>{plugin.publisher.name}</dd></div>
-        <div><dt>{t('plugins.execution')}</dt><dd>{executionLabel(plugin.execution_kind)}</dd></div>
-        <div><dt>{t('plugins.signature')}</dt><dd>{plugin.signature_status}</dd></div>
-        <div><dt>{t('plugins.digest')}</dt><dd><code>{plugin.digest}</code></dd></div>
-      </dl>
-
-      {requiresVisionModel ? (
-        <>
-          <h3>{t('plugins.visionModel')}</h3>
-          <div className="plugin-model-binding">
-            <p>
-              {plugin.model_binding
-                ? t('plugins.visionModel.current', {
-                    model: plugin.model_binding.requested_model,
-                  })
-                : t('plugins.visionModel.unconfigured')}
-            </p>
-            <select
-              aria-label={t('plugins.visionModel.select')}
-              value={selectedModel}
-              onChange={(event) =>
-                setSelectedModel(event.target.value as RuntimeModelSpec | '')
-              }
-              disabled={busy || !onBindVisionModel}
-            >
-              <option value="">{t('plugins.visionModel.placeholder')}</option>
-              {visionModels.map((model) => (
-                <option value={model.id} key={model.id}>
-                  {model.label} · {model.vendor}
-                </option>
-              ))}
-            </select>
-            {onBindVisionModel ? (
+            <DialogFooter className="computer-use-setup-actions">
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
-                disabled={busy || !selectedModel}
-                onClick={() => {
-                  if (
-                    selectedModel &&
-                    window.confirm(t('plugins.visionModel.confirm', { model: selectedModel }))
-                  ) {
-                    void onBindVisionModel(selectedModel).catch(() => undefined)
-                  }
-                }}
+                variant="ghost"
+                onClick={() => setSetup(undefined)}
+                disabled={setup.busy}
               >
-                {t('plugins.visionModel.bind')}
+                {t('plugins.setup.later')}
               </Button>
-            ) : null}
-          </div>
-        </>
-      ) : null}
-
-      <h3>{t('plugins.versions')}</h3>
-      <div className="plugin-version-list">
-        {plugin.versions.map((version) => (
-          <div className="plugin-version-row" key={version.digest}>
-            <span>v{version.version}{version.active ? ` · ${t('plugins.active')}` : ''}</span>
-            <code>{version.digest.slice(0, 20)}…</code>
-            {!version.active && onRollback && version.compatibility === 'compatible' ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                aria-label={t('plugins.rollbackTo', { version: version.version })}
-                disabled={busy}
-                onClick={() => void onRollback(version.digest).catch(() => undefined)}
-              >
-                {t('plugins.rollback')}
-              </Button>
-            ) : null}
-          </div>
-        ))}
-      </div>
-
-      <h3>{t('plugins.actions')}</h3>
-      {plugin.actions.length === 0 ? <p>{t('plugins.none')}</p> : plugin.actions.map((action) => (
-        <article className="plugin-contribution" key={action.id}>
-          <strong>{action.title}</strong>
-          <code>{action.id}</code>
-          <p>{action.description}</p>
-          <div className="plugin-tags">
-            {[...action.consumes, ...action.produces, ...action.capabilities].map((item) => <span key={item}>{item}</span>)}
-          </div>
-          <small>{action.limits.timeout_ms} ms · {action.limits.memory_mb} MiB · {action.limits.output_mb} MiB output</small>
-        </article>
-      ))}
-
-      <h3>{t('plugins.commands')}</h3>
-      {plugin.commands.length === 0 ? <p>{t('plugins.none')}</p> : plugin.commands.map((command) => (
-        <article className="plugin-contribution" key={command.id}>
-          <strong>{command.title}</strong>
-          <code>/{command.id}</code>
-          <p>{command.description}</p>
-        </article>
-      ))}
-
-      <h3>{t('plugins.skills')}</h3>
-      {plugin.skills.length === 0 ? <p>{t('plugins.none')}</p> : plugin.skills.map((skill) => (
-        <article className="plugin-contribution" key={skill.id}>
-          <strong>{skill.id}</strong>
-          <code>{skill.path}</code>
-        </article>
-      ))}
-
-      <h3>{t('plugins.mcpServers')}</h3>
-      {plugin.mcp_servers.length === 0 ? <p>{t('plugins.none')}</p> : plugin.mcp_servers.map((server) => (
-        <article className="plugin-contribution" key={server.id}>
-          <strong>{server.id}</strong>
-          <code>{server.path}</code>
-        </article>
-      ))}
+              {setupActionLabel ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void advanceComputerUseSetup(
+                    setup.readiness.action_id ?? 'recheck',
+                  )}
+                  disabled={setup.busy}
+                >
+                  {setupActionLabel}
+                </Button>
+              ) : null}
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </section>
   )
 }

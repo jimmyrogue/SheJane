@@ -16,8 +16,6 @@
   },
   "contributions": {
     "actions": [
-      {"id":"setup","title":"Set up Computer Use","description":"Install the pinned macOS helper and register Accessibility and Screen Recording permission entries.","input_schema":"actions/empty.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["external"],"determinism":"nondeterministic","capabilities":["computer.setup"],"limits":{"timeout_ms":120000,"memory_mb":256,"output_mb":4}},
-      {"id":"status","title":"Check Computer Use","description":"Check helper installation, protocol, and macOS permission status.","input_schema":"actions/empty.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
       {"id":"find_roots","title":"Find UI roots","description":"Find a bounded ranked set of controllable desktop roots with stable refs.","input_schema":"actions/find_roots.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
       {"id":"observe_ui","title":"Observe UI","description":"Capture one desktop root and return a bounded outline plus its immutable stateId.","input_schema":"actions/observe_ui.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["computer.observe"],"limits":{"timeout_ms":30000,"memory_mb":512,"output_mb":16}},
       {"id":"search_ui","title":"Search UI","description":"Search the complete cached outline owned by one stateId.","input_schema":"actions/search_ui.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read"],"determinism":"input_stable","capabilities":["computer.observe"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":4}},
@@ -28,7 +26,7 @@
       {"id":"wait_for","title":"Wait for UI","description":"Wait for a precise scoped UI condition and return the successor state.","input_schema":"actions/wait_for.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["computer.observe"],"limits":{"timeout_ms":65000,"memory_mb":256,"output_mb":8}}
     ],
     "commands": [
-      {"id":"computer-use","title":"Use desktop apps","description":"Set up, inspect, and operate a macOS desktop app.","instructions":"commands/computer-use.md","required_actions":["setup","status","find_roots","observe_ui","search_ui","expand_ui","inspect_ui","act_ui","read_text","wait_for"]}
+      {"id":"computer-use","title":"Use desktop apps","description":"Inspect and operate a macOS desktop app after the user enables Computer Use.","instructions":"commands/computer-use.md","required_actions":["find_roots","observe_ui","search_ui","expand_ui","inspect_ui","act_ui","read_text","wait_for"]}
     ]
   }
 }
