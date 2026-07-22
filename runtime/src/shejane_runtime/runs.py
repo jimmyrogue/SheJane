@@ -2534,6 +2534,9 @@ class RunCoordinator:
                             event_type="run.failed",
                             payload=completion_failure,
                         )
+                    final_draft = _assistant_draft_from_state(snapshot.values, run_id=run_id)
+                    if final_draft is not None:
+                        await self.store.update_assistant_draft(run_id=run_id, **final_draft)
                     draft = await self.store.get_assistant_draft(run_id)
                     if draft is None:
                         raise ExecutionSettlementError("final assistant draft is missing")
@@ -3317,6 +3320,72 @@ def _assistant_draft_from_update(payload: Any) -> dict[str, Any] | None:
                 "tool_calls": tool_calls,
             }
     return None
+
+
+def _assistant_draft_from_state(state: Any, *, run_id: str) -> dict[str, Any] | None:
+    """Build one user-visible answer from the current run's top-level model rounds."""
+    if not isinstance(state, dict):
+        return None
+    messages = state.get("messages")
+    if not isinstance(messages, list):
+        return None
+
+    start: int | None = None
+    for index in range(len(messages) - 1, -1, -1):
+        kwargs = getattr(messages[index], "additional_kwargs", None)
+        if (
+            isinstance(kwargs, dict)
+            and kwargs.get("runtime_kind") == "task_input"
+            and kwargs.get("runtime_run_id") == run_id
+        ):
+            start = index + 1
+            break
+    if start is None:
+        return None
+
+    assistant_messages = [
+        message for message in messages[start:] if getattr(message, "type", None) == "ai"
+    ]
+    if not assistant_messages:
+        return None
+
+    final_message = assistant_messages[-1]
+    visible_messages = [
+        message
+        for message in assistant_messages
+        if message is final_message or getattr(message, "tool_calls", None)
+    ]
+    content_parts = [
+        content.strip()
+        for message in visible_messages
+        if (content := _assistant_content_text(getattr(message, "content", None))).strip()
+    ]
+    tool_calls = [
+        dict(item)
+        for item in (getattr(final_message, "tool_calls", None) or [])
+        if isinstance(item, dict)
+    ]
+    identity = [
+        {
+            "id": getattr(message, "id", None),
+            "content": _assistant_content_text(getattr(message, "content", None)),
+            "tool_calls": list(getattr(message, "tool_calls", None) or []),
+        }
+        for message in visible_messages
+    ]
+    return {
+        "message_key": hashlib.sha256(
+            json.dumps(
+                identity,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode()
+        ).hexdigest(),
+        "content": "\n\n".join(content_parts),
+        "tool_calls": tool_calls,
+    }
 
 
 def _assistant_content_text(content: Any) -> str:

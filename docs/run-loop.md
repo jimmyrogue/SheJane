@@ -187,7 +187,7 @@ MCP Server 只从 Runtime 自有配置读取，不会隐式启动 Claude Desktop
   │     │       ▼                                                                  │     │
   │     │   返回 llm.delta × N  +  llm.tool_call  +  llm.done                      │     │
   │     │       ↓ 完整结束时结算 token 用量；中断或重启标记结果不明     │     │
-  │     │       ↓ 顶层完整 AIMessage 按版本写入 local_assistant_drafts               │     │
+  │     │       ↓ 顶层 AIMessage 按版本写入草稿；终态合并本轮工具前正文与最终回答      │     │
   │     │       ↓                                                                  │     │
 │     │ after_model：仅 CompletionRouter 可决定最终候选、修复或明确失败          │     │
 │     │  • 需要用户补充信息的正文提问会有界修复为 user.ask，不提交伪终态       │     │
