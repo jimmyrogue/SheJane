@@ -213,7 +213,10 @@ function requestNewChat() {
 }
 
 function configureApplicationMenu() {
-  configureApplicationMenuForPlatform(Menu, process.platform, currentLocale, { onNewChat: requestNewChat })
+  configureApplicationMenuForPlatform(Menu, process.platform, currentLocale, {
+    onCheckForUpdates: () => void checkClientUpdate(),
+    onNewChat: requestNewChat,
+  })
 }
 
 function refreshTrayMenu() {

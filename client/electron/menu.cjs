@@ -10,6 +10,7 @@ function applicationMenuTemplateForPlatform(platform, locale, actions = {}) {
       label: labels.appName,
       submenu: [
         { label: labels.about, role: 'about' },
+        { label: labels.checkForUpdates, click: actions.onCheckForUpdates },
         { type: 'separator' },
         { label: labels.newChat, accelerator: 'Cmd+N', click: actions.onNewChat },
         { type: 'separator' },

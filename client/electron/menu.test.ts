@@ -12,7 +12,7 @@ const {
   windowMenuOptionsForPlatform,
 } = require('./menu.cjs') as {
   appNameForLocale: (locale: string) => string
-  applicationMenuTemplateForPlatform: (platform: NodeJS.Platform, locale: 'zh' | 'en') => unknown[] | null
+  applicationMenuTemplateForPlatform: (platform: NodeJS.Platform, locale: 'zh' | 'en', actions?: Record<string, () => void>) => Array<{ submenu?: Array<{ label?: string, click?: () => void }> }> | null
   desktopText: (locale: string, key: string, params?: Record<string, unknown>) => string
   fileContextMenuTemplate: (platform: NodeJS.Platform, locale: 'zh' | 'en', canPreview: boolean, actions: Record<string, () => void>) => Array<{ label?: string, enabled?: boolean, click?: () => void }>
   normalizeDesktopLocale: (locale: string) => 'zh' | 'en'
@@ -37,6 +37,17 @@ describe('Electron menu policy', () => {
     expect(zhMenu).not.toMatch(/\bFile\b|\bEdit\b|\bView\b|\bWindow\b|\bHelp\b/)
     expect(enMenu).toContain('New Chat')
     expect(enMenu).toContain('Hide SheJane')
+  })
+
+  it('checks for updates from the macOS application menu', () => {
+    const checked: string[] = []
+    const menu = applicationMenuTemplateForPlatform('darwin', 'zh', {
+      onCheckForUpdates: () => checked.push('update'),
+    })
+    const item = menu?.[0].submenu?.find(entry => entry.label === '检查更新…')
+
+    item?.click?.()
+    expect(checked).toEqual(['update'])
   })
 
   it('normalizes system locales and localizes main-process strings', () => {

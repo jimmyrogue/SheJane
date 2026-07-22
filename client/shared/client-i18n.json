@@ -3,6 +3,7 @@
     "appName": "石间",
     "menu": {
       "about": "关于{appName}",
+      "checkForUpdates": "检查更新…",
       "close": "关闭窗口",
       "copy": "复制",
       "cut": "剪切",
@@ -59,6 +60,7 @@
     "appName": "SheJane",
     "menu": {
       "about": "About {appName}",
+      "checkForUpdates": "Check for Updates…",
       "close": "Close Window",
       "copy": "Copy",
       "cut": "Cut",
