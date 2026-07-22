@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { IconBox, IconRefresh, IconUpload, IconX } from '@tabler/icons-react'
+import { IconBox, IconRefresh, IconSearch, IconTrash, IconUpload, IconX } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { useI18n } from '@/shared/i18n/i18n'
 import {
   RuntimeHTTPError,
@@ -18,17 +20,13 @@ interface VisionModelOption {
 
 export interface PluginsViewProps {
   listPlugins: () => Promise<PluginSummary[]>
+  embedded?: boolean
   refreshVersion?: number
   visionModels?: VisionModelOption[]
   getPlugin?: (pluginId: string) => Promise<PluginDetail>
   selectPackage?: () => Promise<string | undefined>
   installPlugin?: (sourcePath: string, allowUnsigned: boolean) => Promise<unknown>
   setEnabled?: (plugin: PluginSummary, enabled: boolean) => Promise<unknown>
-  updatePlugin?: (
-    plugin: PluginSummary,
-    sourcePath: string,
-    allowUnsigned: boolean,
-  ) => Promise<unknown>
   rollbackPlugin?: (plugin: PluginSummary, targetDigest: string) => Promise<unknown>
   removePlugin?: (plugin: PluginSummary) => Promise<unknown>
   bindVisionModel?: (plugin: PluginDetail, model: RuntimeModelSpec) => Promise<unknown>
@@ -40,13 +38,13 @@ function executionLabel(kind: PluginSummary['execution_kind']): string {
 
 export function PluginsView({
   listPlugins,
+  embedded = false,
   refreshVersion,
   visionModels = [],
   getPlugin,
   selectPackage,
   installPlugin,
   setEnabled,
-  updatePlugin,
   rollbackPlugin,
   removePlugin,
   bindVisionModel,
@@ -58,6 +56,7 @@ export function PluginsView({
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
+  const [query, setQuery] = useState('')
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -135,21 +134,43 @@ export function PluginsView({
     }
   }
 
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const installedPlugins = plugins.filter((plugin) => !plugin.retired)
+  const filteredPlugins = normalizedQuery
+    ? installedPlugins.filter((plugin) =>
+        [plugin.name, plugin.id, plugin.publisher.name]
+          .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)),
+      )
+    : installedPlugins
+
   return (
     <section className="workspace skills-view plugins-view">
-      <header className="topbar topbar-page">
-        <div className="chat-toolbar-title">{t('plugins.title')}</div>
-      </header>
+      {!embedded ? (
+        <header className="topbar topbar-page">
+          <div className="chat-toolbar-title">{t('plugins.title')}</div>
+        </header>
+      ) : null}
 
       <div className="skills-scroll">
         <div className="skills-content">
           <div className="skills-toolbar">
-            <p className="plugins-intro">{t('plugins.intro')}</p>
-            <div className="plugins-toolbar-actions">
+            <div className="skills-search">
+              <IconSearch className="skills-search-icon" size={15} aria-hidden="true" />
+              <Input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t('plugins.searchPlaceholder')}
+                aria-label={t('plugins.searchPlaceholder')}
+              />
+            </div>
+            <div className="skills-toolbar-actions">
               {selectPackage && installPlugin ? (
                 <Button
                   type="button"
                   size="sm"
+                  variant="ghost"
+                  className="skills-new-button"
                   onClick={() => void importPlugin().catch(() => undefined)}
                   disabled={Boolean(busy)}
                 >
@@ -176,102 +197,64 @@ export function PluginsView({
 
           {failed ? (
             <div className="skills-section-empty">{t('plugins.loadError')}</div>
-          ) : !loading && plugins.length === 0 ? (
-            <div className="skills-section-empty">{t('plugins.empty')}</div>
+          ) : installedPlugins.length === 0 ? (
+            loading ? null : <div className="skills-section-empty">{t('plugins.empty')}</div>
+          ) : filteredPlugins.length === 0 ? (
+            <div className="skills-section-empty">{t('plugins.notFound')}</div>
           ) : (
             <div className="skills-grid" role="list">
-              {plugins.map((plugin) => (
+              {filteredPlugins.map((plugin) => (
                 <article className="skill-card plugin-card" role="listitem" key={plugin.id}>
                   <div className="skill-card-head">
-                    <div className="skill-card-title">
+                    <button
+                      type="button"
+                      className="skill-card-title plugin-card-title-button"
+                      aria-label={t('plugins.viewDetails', { name: plugin.name })}
+                      onClick={() => void showDetail(plugin)}
+                      disabled={!getPlugin || Boolean(busy)}
+                    >
                       <span className="skill-card-icon" aria-hidden="true">
                         <IconBox size={15} />
                       </span>
                       <span className="skill-card-name">{plugin.name}</span>
-                    </div>
+                    </button>
                     <span className="plugin-version">v{plugin.version}</span>
                   </div>
-                  <code className="plugin-id">{plugin.id}</code>
-                  <div className="plugin-meta">
-                    <span>{executionLabel(plugin.execution_kind)}</span>
-                    <span>{plugin.signature_status}</span>
-                  </div>
                   <div className="skill-card-footer">
-                    <span className="skill-card-kind">{plugin.publisher.name}</span>
-                    <span className={`plugin-status${plugin.enabled ? ' enabled' : ''}`}>
-                      {plugin.retired
-                        ? t('plugins.status.retired')
-                        : plugin.compatibility === 'incompatible'
-                          ? t('plugins.status.incompatible')
-                          : plugin.enabled
-                            ? t('plugins.status.enabled')
-                            : t('plugins.status.disabled')}
-                    </span>
-                  </div>
-                  <div className="plugin-card-actions">
-                    {getPlugin ? (
+                    {removePlugin ? (
                       <Button
                         type="button"
-                        size="sm"
+                        size="icon-sm"
                         variant="ghost"
-                        aria-label={t('plugins.viewDetails', { name: plugin.name })}
-                        onClick={() => void showDetail(plugin)}
-                        disabled={Boolean(busy)}
-                      >
-                        {t('plugins.details')}
-                      </Button>
-                    ) : null}
-                    {setEnabled && !plugin.retired && plugin.compatibility === 'compatible' ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          void mutate(`enabled:${plugin.id}`, () =>
-                            setEnabled(plugin, !plugin.enabled),
-                          ).catch(() => undefined)
-                        }
-                        disabled={Boolean(busy)}
-                      >
-                        {plugin.enabled ? t('plugins.disable') : t('plugins.enable')}
-                      </Button>
-                    ) : null}
-                    {updatePlugin && selectPackage && !plugin.retired ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          void (async () => {
-                            const sourcePath = await selectPackage()
-                            if (!sourcePath) return
-                            await mutate(`update:${plugin.id}`, () =>
-                              withUnsignedConfirmation((allowUnsigned) =>
-                                updatePlugin(plugin, sourcePath, allowUnsigned),
-                              ),
-                            )
-                          })().catch(() => undefined)
-                        }
-                        disabled={Boolean(busy)}
-                      >
-                        {t('plugins.update')}
-                      </Button>
-                    ) : null}
-                    {removePlugin && !plugin.retired ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
+                        className="plugin-remove-button"
+                        aria-label={t('plugins.removeAria', { name: plugin.name })}
+                        title={t('plugins.remove')}
                         onClick={() => {
                           if (!window.confirm(t('plugins.confirmRemove', { name: plugin.name }))) return
-                          void mutate(`remove:${plugin.id}`, () => removePlugin(plugin)).catch(
-                            () => undefined,
-                          )
+                          void (async () => {
+                            await mutate(`remove:${plugin.id}`, () => removePlugin(plugin))
+                            if (detail?.id === plugin.id) setDetail(undefined)
+                          })().catch(() => undefined)
                         }}
                         disabled={Boolean(busy)}
                       >
-                        {t('plugins.remove')}
+                        <IconTrash size={15} aria-hidden="true" />
                       </Button>
+                    ) : null}
+                    {setEnabled ? (
+                      <Switch
+                        checked={plugin.enabled}
+                        onCheckedChange={(enabled) =>
+                          void mutate(`enabled:${plugin.id}`, () =>
+                            setEnabled(plugin, enabled),
+                          ).catch(() => undefined)
+                        }
+                        disabled={Boolean(busy) || plugin.compatibility === 'incompatible'}
+                        aria-label={t('plugins.toggleAria', { name: plugin.name })}
+                        title={plugin.compatibility === 'incompatible'
+                          ? t('plugins.status.incompatible')
+                          : undefined}
+                      />
                     ) : null}
                   </div>
                 </article>

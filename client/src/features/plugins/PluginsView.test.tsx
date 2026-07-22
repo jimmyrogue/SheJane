@@ -116,33 +116,80 @@ describe('PluginsView', () => {
     )
 
     expect(await screen.findByText('Archive fixture')).toBeInTheDocument()
-    expect(screen.getByText('dev.shejane.fixture.archive')).toBeInTheDocument()
-    expect(screen.getByText('已启用')).toBeInTheDocument()
+    expect(screen.queryByText('dev.shejane.fixture.archive')).not.toBeInTheDocument()
+    expect(screen.queryByText('unsigned')).not.toBeInTheDocument()
+    expect(screen.queryByText('WASI')).not.toBeInTheDocument()
+    expect(screen.queryByText('SheJane')).not.toBeInTheDocument()
+    expect(screen.queryByText('已启用')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '刷新插件' }))
     await waitFor(() => expect(listPlugins).toHaveBeenCalledTimes(2))
   })
 
-  it('labels the Computer Use host adapter as built-in', async () => {
+  it('keeps the current catalog visible while refreshing', async () => {
+    let finishRefresh: (plugins: PluginSummary[]) => void = () => undefined
+    const listPlugins = vi
+      .fn()
+      .mockResolvedValueOnce([plugin])
+      .mockImplementationOnce(() => new Promise<PluginSummary[]>((resolve) => {
+        finishRefresh = resolve
+      }))
+    render(
+      <I18nProvider>
+        <PluginsView listPlugins={listPlugins} />
+      </I18nProvider>,
+    )
+
+    expect(await screen.findByText('Archive fixture')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '刷新插件' }))
+    await waitFor(() => expect(listPlugins).toHaveBeenCalledTimes(2))
+    expect(screen.getByText('Archive fixture')).toBeInTheDocument()
+
+    finishRefresh([plugin])
+    await waitFor(() => expect(screen.getByText('Archive fixture')).toBeInTheDocument())
+  })
+
+  it('filters plugins without exposing hidden technical metadata', async () => {
     render(
       <I18nProvider>
         <PluginsView
           listPlugins={vi.fn().mockResolvedValue([
-            { ...plugin, id: 'org.shejane.computer-use', name: 'Computer Use', execution_kind: 'builtin' },
+            plugin,
+            { ...plugin, id: 'org.shejane.computer-use', name: 'Computer Use' },
           ])}
         />
       </I18nProvider>,
     )
 
-    expect(await screen.findByText('Computer Use')).toBeInTheDocument()
-    expect(screen.getByText('Built-in')).toBeInTheDocument()
+    await screen.findByText('Archive fixture')
+    fireEvent.change(screen.getByLabelText('搜索插件'), { target: { value: 'computer' } })
+    expect(screen.queryByText('Archive fixture')).not.toBeInTheDocument()
+    expect(screen.getByText('Computer Use')).toBeInTheDocument()
   })
 
-  it('shows details and runs enable, update, rollback, and remove commands', async () => {
+  it('labels the Computer Use host adapter as built-in', async () => {
+    const computerUse = {
+      ...detail,
+      id: 'org.shejane.computer-use',
+      name: 'Computer Use',
+      execution_kind: 'builtin' as const,
+    }
+    render(
+      <I18nProvider>
+        <PluginsView
+          listPlugins={vi.fn().mockResolvedValue([computerUse])}
+          getPlugin={vi.fn().mockResolvedValue(computerUse)}
+        />
+      </I18nProvider>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: '查看 Computer Use 的详情' }))
+    expect(await screen.findByText('Built-in')).toBeInTheDocument()
+  })
+
+  it('opens details from the plugin name and runs toggle, rollback, and remove commands', async () => {
     const listPlugins = vi.fn().mockResolvedValue([plugin])
     const getPlugin = vi.fn().mockResolvedValue(detail)
-    const selectPackage = vi.fn().mockResolvedValue('/tmp/archive.shejane-plugin')
     const setEnabled = vi.fn().mockResolvedValue(undefined)
-    const updatePlugin = vi.fn().mockResolvedValue(undefined)
     const rollbackPlugin = vi.fn().mockResolvedValue(undefined)
     const removePlugin = vi.fn().mockResolvedValue(undefined)
     vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -151,30 +198,43 @@ describe('PluginsView', () => {
         <PluginsView
           listPlugins={listPlugins}
           getPlugin={getPlugin}
-          selectPackage={selectPackage}
           setEnabled={setEnabled}
-          updatePlugin={updatePlugin}
           rollbackPlugin={rollbackPlugin}
           removePlugin={removePlugin}
         />
       </I18nProvider>,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: '查看 Archive fixture 的详情' }))
+    const openDetails = await screen.findByRole('button', { name: '查看 Archive fixture 的详情' })
+    expect(openDetails).toHaveTextContent('Archive fixture')
+    expect(screen.queryByRole('button', { name: '更新' })).not.toBeInTheDocument()
+    fireEvent.click(openDetails)
     expect(await screen.findByText('Create deterministic archives.')).toBeInTheDocument()
     expect(screen.getByText('application/zip')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '禁用' }))
+    fireEvent.click(screen.getByRole('switch', { name: '切换插件：Archive fixture' }))
     await waitFor(() => expect(setEnabled).toHaveBeenCalledWith(plugin, false))
-
-    fireEvent.click(screen.getByRole('button', { name: '更新' }))
-    await waitFor(() => expect(updatePlugin).toHaveBeenCalledWith(plugin, '/tmp/archive.shejane-plugin', false))
 
     fireEvent.click(screen.getByRole('button', { name: '回滚到 0.2.0' }))
     await waitFor(() => expect(rollbackPlugin).toHaveBeenCalledWith(detail, detail.versions[0].digest))
 
-    fireEvent.click(screen.getByRole('button', { name: '移除' }))
+    const remove = screen.getByRole('button', { name: '移除插件：Archive fixture' })
+    expect(remove).not.toHaveTextContent('移除')
+    fireEvent.click(remove)
     await waitFor(() => expect(removePlugin).toHaveBeenCalledWith(plugin))
+  })
+
+  it('hides retired plugins from the installed catalog', async () => {
+    render(
+      <I18nProvider>
+        <PluginsView
+          listPlugins={vi.fn().mockResolvedValue([{ ...plugin, retired: true, enabled: false }])}
+        />
+      </I18nProvider>,
+    )
+
+    expect(await screen.findByText('还没有安装插件。')).toBeInTheDocument()
+    expect(screen.queryByText('Archive fixture')).not.toBeInTheDocument()
   })
 
   it('retries an unsigned local install only after explicit confirmation', async () => {
@@ -257,12 +317,12 @@ describe('PluginsView', () => {
       </I18nProvider>,
     )
 
-    const disable = await screen.findByRole('button', { name: '禁用' })
-    fireEvent.click(disable)
-    await waitFor(() => expect(disable).toBeDisabled())
+    const toggle = await screen.findByRole('switch', { name: '切换插件：Archive fixture' })
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).toBeDisabled())
     rejectCommand(new Error('Runtime rejected plugin command'))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Runtime rejected plugin command')
-    expect(disable).not.toBeDisabled()
+    expect(toggle).not.toBeDisabled()
   })
 })

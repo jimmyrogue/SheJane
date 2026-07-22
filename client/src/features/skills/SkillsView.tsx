@@ -18,6 +18,7 @@ import type { InstalledSkill, SkillCatalog, SkillFile, SkillRoot, SkillWriteRequ
 
 export interface SkillsViewProps {
   listInstalled: () => Promise<SkillCatalog>
+  embedded?: boolean
   onCreateSkill?: (input: SkillWriteRequest) => Promise<void>
   onLoadSkill?: (name: string) => Promise<SkillFile>
   onUpdateSkill?: (name: string, input: SkillWriteRequest) => Promise<void>
@@ -83,6 +84,7 @@ function defaultSkillContent(name: string, description: string): string {
 
 export function SkillsView({
   listInstalled,
+  embedded = false,
   onCreateSkill,
   onLoadSkill,
   onUpdateSkill,
@@ -208,11 +210,13 @@ export function SkillsView({
 
   return (
     <section className="workspace skills-view">
-      <header className="topbar topbar-page">
-        <div className="chat-toolbar-title">
-          <span>{t('skills.title')}</span>
-        </div>
-      </header>
+      {!embedded ? (
+        <header className="topbar topbar-page">
+          <div className="chat-toolbar-title">
+            <span>{t('skills.title')}</span>
+          </div>
+        </header>
+      ) : null}
 
       <div className="skills-scroll">
         <div className="skills-content">
@@ -228,18 +232,6 @@ export function SkillsView({
               />
             </div>
             <div className="skills-toolbar-actions">
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="skills-refresh-button"
-                onClick={() => void refresh()}
-                disabled={loading}
-                aria-label={t('skills.refresh')}
-                title={t('skills.refresh')}
-              >
-                <IconRefresh size={14} aria-hidden="true" />
-              </Button>
               {canEditSkills ? (
                 <Button
                   type="button"
@@ -263,6 +255,18 @@ export function SkillsView({
                   {t('skills.newSkill')}
                 </Button>
               ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="skills-refresh-button"
+                onClick={() => void refresh()}
+                disabled={loading}
+                aria-label={t('skills.refresh')}
+                title={t('skills.refresh')}
+              >
+                <IconRefresh size={14} aria-hidden="true" />
+              </Button>
             </div>
           </div>
 
@@ -356,9 +360,7 @@ export function SkillsView({
                           </div>
                           <div className="skill-card-name">{skill.name}</div>
                         </div>
-                        <span className="skill-card-status" aria-label={t('skills.statusReady')}>
-                          <span aria-hidden="true" />
-                        </span>
+                        <IconCheck className="skill-card-check" size={14} aria-label={t('skills.statusReady')} />
                       </div>
                       <div className="skill-card-text">
                         {skill.description ? (
@@ -394,9 +396,7 @@ export function SkillsView({
                               </Button>
                             ) : null}
                           </div>
-                        ) : (
-                          <IconCheck className="skill-card-check" size={14} aria-hidden="true" />
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   ))}

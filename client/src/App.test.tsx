@@ -33,6 +33,24 @@ describe('desktop shell', () => {
     expect(screen.queryByText('注册')).not.toBeInTheDocument()
   })
 
+  it('groups Skill, MCP, and installed plugins under one Plugins workspace', async () => {
+    render(<App />)
+
+    expect(screen.queryByRole('button', { name: 'Skill' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'MCP' })).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: '插件' }))
+
+    expect((await screen.findAllByRole('tab')).map((tab) => tab.textContent)).toEqual(['插件', 'Skill', 'MCP'])
+    expect(screen.getByRole('tab', { name: '插件' })).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP' }))
+    expect(screen.getByRole('tab', { name: 'MCP' })).toHaveAttribute('aria-selected', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '插件' }))
+    expect(screen.getByRole('tab', { name: 'MCP' })).toHaveAttribute('aria-selected', 'true')
+  })
+
   it('detects Runtime offline and recovery without remounting the Client', async () => {
     vi.useFakeTimers()
     let runtimeOnline = true

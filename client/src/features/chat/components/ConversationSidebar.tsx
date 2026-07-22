@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  IconAffiliate,
   IconBox,
   IconDots,
   IconDownload,
@@ -12,7 +11,6 @@ import {
   IconSearch,
   IconSettings,
   IconTrash,
-  IconTool,
   IconUpload,
   IconX,
 } from '@tabler/icons-react'
@@ -64,9 +62,7 @@ export function ConversationSidebar({
   onDeleteConversation,
   onCollapseSidebar,
   isDesktop = true,
-  onOpenSkills,
   onOpenPlugins,
-  onOpenMcp,
   onOpenSettings,
   activeView = 'chat',
   searchRequestVersion = 0,
@@ -85,13 +81,11 @@ export function ConversationSidebar({
   /** Electron build flag. The web build has no local runtime, so local-agent
    *  pages are hidden when false. */
   isDesktop?: boolean
-  onOpenSkills?: () => void
   onOpenPlugins?: () => void
-  onOpenMcp?: () => void
   /** Navigate to the full 设置 page. Runtime, agent configuration, and data
    *  all live there now (the old account dropdown + agent-settings dialog). */
   onOpenSettings?: () => void
-  activeView?: 'chat' | 'skills' | 'plugins' | 'mcp' | 'settings'
+  activeView?: 'chat' | 'plugins' | 'settings'
   searchRequestVersion?: number
   resizeHandle?: ReactNode
 }) {
@@ -385,28 +379,12 @@ export function ConversationSidebar({
         {isDesktop ? (
           <div className="sidebar-footer-nav" aria-label={t('sidebar.section.tools')}>
             <button
-              className={`sidebar-settings-trigger sidebar-footer-link${activeView === 'skills' ? ' active' : ''}`}
-              type="button"
-              onClick={() => onOpenSkills?.()}
-            >
-              <IconTool size={14} />
-              <span>{t('sidebar.skills')}</span>
-            </button>
-            <button
               className={`sidebar-settings-trigger sidebar-footer-link${activeView === 'plugins' ? ' active' : ''}`}
               type="button"
               onClick={() => onOpenPlugins?.()}
             >
               <IconBox size={14} />
               <span>{t('sidebar.plugins')}</span>
-            </button>
-            <button
-              className={`sidebar-settings-trigger sidebar-footer-link${activeView === 'mcp' ? ' active' : ''}`}
-              type="button"
-              onClick={() => onOpenMcp?.()}
-            >
-              <IconAffiliate size={14} />
-              <span>{t('sidebar.mcp')}</span>
             </button>
           </div>
         ) : null}

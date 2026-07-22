@@ -82,8 +82,8 @@ describe('ConversationSidebar', () => {
 
     // Section labels in document order: 已固定 (when there are pins),
     // 对话 (the unified list — projects and casual chats share that one
-    // list, sorted by recency). The v4 shell moves Skills and MCP to
-    // the footer island instead of a labeled top nav section.
+    // list, sorted by recency). Runtime capabilities now share one
+    // Plugins entry in the footer instead of three parallel links.
     const sectionLabels = Array.from(container.querySelectorAll('.sidebar-section-label')) as HTMLElement[]
     const labelTexts = sectionLabels.map((el) => el.textContent?.trim())
     expect(labelTexts).toEqual(['已固定', '对话'])
@@ -98,16 +98,16 @@ describe('ConversationSidebar', () => {
     expect(sectionLabels[1].compareDocumentPosition(recentConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(sectionLabels[1].compareDocumentPosition(projectConversation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
-    expect(screen.getByRole('button', { name: 'Skill' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '插件' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Skill' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'MCP' })).not.toBeInTheDocument()
 
     expect(screen.getAllByTitle('更多 固定对话')).toHaveLength(1)
     expect(screen.getAllByTitle('更多 普通对话')).toHaveLength(1)
     expect(screen.getAllByTitle('更多 我的项目')).toHaveLength(1)
   })
 
-  it('hides the skills/plugins/MCP footer nav on the web build (no local runtime)', () => {
+  it('hides the plugins footer nav on the web build (no local runtime)', () => {
     // The web build (window.shejaneClient undefined → isDesktop=false) can't
     // run skills/connections, so those footer actions must not render. 设置
     // stays (it now navigates to the full settings page).
@@ -125,14 +125,12 @@ describe('ConversationSidebar', () => {
           onRenameConversation={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
-          onOpenSkills={vi.fn()}
-          onOpenMcp={vi.fn()}
           onOpenSettings={onOpenSettings}
         />
       </I18nProvider>,
     )
 
-    // Local-runtime footer actions (Skill + MCP) are gone on web.
+    // The local-runtime Plugins workspace is gone on web.
     expect(screen.queryByText('工具')).not.toBeInTheDocument()
     expect(screen.queryByText('Skill')).not.toBeInTheDocument()
     expect(screen.queryByText('插件')).not.toBeInTheDocument()
@@ -178,11 +176,8 @@ describe('ConversationSidebar', () => {
     expect(handlers.onDeleteConversation).toHaveBeenCalledWith('target-chat')
   })
 
-  it('marks the Skills nav as active when activeView is "skills"', () => {
-    // After the redesign the only persistent workspace nav item is
-    // Skills (the "对话" / "项目" buttons are gone — switching back to
-    // chat is done by clicking any conversation row, which fires
-    // onSelectConversation in App.tsx and also sets mainView='chat').
+  it('opens and marks the Plugins workspace as active', () => {
+    const onOpenPlugins = vi.fn()
     render(
       <I18nProvider>
         <ConversationSidebar
@@ -195,13 +190,15 @@ describe('ConversationSidebar', () => {
           onRenameConversation={vi.fn()}
           onDeleteConversation={vi.fn()}
           onCollapseSidebar={vi.fn()}
-          onOpenSkills={vi.fn()}
-          activeView="skills"
+          onOpenPlugins={onOpenPlugins}
+          activeView="plugins"
         />
       </I18nProvider>,
     )
-    const skillsItem = screen.getByRole('button', { name: 'Skill' })
-    expect(skillsItem.className).toContain('active')
+    const pluginsItem = screen.getByRole('button', { name: '插件' })
+    expect(pluginsItem.className).toContain('active')
+    fireEvent.click(pluginsItem)
+    expect(onOpenPlugins).toHaveBeenCalledTimes(1)
   })
 
   describe('search', () => {
@@ -297,7 +294,7 @@ function sidebarElement(
         onRenameConversation={handlers.onRenameConversation ?? vi.fn()}
         onDeleteConversation={handlers.onDeleteConversation ?? vi.fn()}
         onCollapseSidebar={vi.fn()}
-        onOpenSkills={handlers.onOpenSkills ?? vi.fn()}
+        onOpenPlugins={handlers.onOpenPlugins ?? vi.fn()}
       />
     </I18nProvider>
   )
@@ -307,7 +304,7 @@ interface ConversationSidebarHandlers {
   onTogglePinConversation: (conversationID: string) => void
   onRenameConversation: (conversationID: string, title: string) => void
   onDeleteConversation: (conversationID: string) => void
-  onOpenSkills: () => void
+  onOpenPlugins: () => void
 }
 
 function emptyConversation(id: string, title: string, overrides: Partial<Conversation> = {}): Conversation {

@@ -1,5 +1,5 @@
 import { IconDownload, IconLayoutSidebarLeftExpand, IconTrash, IconX } from '@tabler/icons-react'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -43,6 +43,7 @@ import { ConversationSidebar } from './features/chat/components/ConversationSide
 import { PendingApprovalBar } from './features/chat/components/PendingApprovalBar'
 import { PendingPlanApprovalBar } from './features/chat/components/PendingPlanApprovalBar'
 import { PendingQuestionBar } from './features/chat/components/PendingQuestionBar'
+import { PluginsHub, type PluginsHubTab } from './features/plugins/PluginsHub'
 import { advancedSettingsFromRuntime, advancedSettingsPatchToRuntime } from './features/settings/runtimeSettings'
 import { findConversationPendingApproval } from './features/chat/pendingApproval'
 import { findConversationPendingPlanApproval } from './features/chat/pendingPlanApproval'
@@ -363,7 +364,8 @@ function AppContent() {
   const [sidebarMotion, setSidebarMotion] = useState<'idle' | 'closing' | 'opening'>('idle')
   const [agentSettings, setAgentSettings] = useState<Required<AgentSettings>>(readAgentSettings)
   const [runtimeSettingsConfig, setRuntimeSettingsConfig] = useState<RuntimeConnection | null>(null)
-  const [mainView, setMainView] = useState<'chat' | 'skills' | 'plugins' | 'mcp' | 'settings'>('chat')
+  const [mainView, setMainView] = useState<'chat' | 'plugins' | 'settings'>('chat')
+  const [pluginsTab, setPluginsTab] = useState<PluginsHubTab>('plugins')
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [sidebarSearchRequestVersion, setSidebarSearchRequestVersion] = useState(0)
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
@@ -372,6 +374,22 @@ function AppContent() {
   const [modelCatalogVersion, setModelCatalogVersion] = useState(0)
   const [runtime, setRuntime] = useState<RuntimeProbe | null>(null)
   const [runtimeConnection, setRuntimeConnection] = useState<RuntimeConnection | null>(null)
+  const listInstalledSkillsForView = useCallback(
+    () => runtimeConnection
+      ? listInstalledSkills(runtimeConnection)
+      : Promise.resolve({ skills: [], roots: [] }),
+    [runtimeConnection],
+  )
+  const listPluginsForView = useCallback(
+    () => runtimeConnection ? listLocalPlugins(runtimeConnection) : Promise.resolve([]),
+    [runtimeConnection],
+  )
+  const listMcpServersForView = useCallback(
+    () => runtimeConnection
+      ? listMcpServers(runtimeConnection)
+      : Promise.resolve({ servers: [], sources_scanned: [] }),
+    [runtimeConnection],
+  )
   const [pendingWorkspace, setPendingWorkspace] = useState<ConversationWorkspace | undefined>()
   /** Project (= workspace) the user picked in the composer before a
    *  conversation existed. Drained when `sendMessage` creates the
@@ -2846,9 +2864,7 @@ function AppContent() {
             onDeleteConversation={(conversationID) => void deleteConversationData(conversationID)}
             onCollapseSidebar={collapseSidebar}
             isDesktop={isDesktop}
-            onOpenSkills={() => setMainView('skills')}
             onOpenPlugins={() => setMainView('plugins')}
-            onOpenMcp={() => setMainView('mcp')}
             onOpenSettings={() => setMainView('settings')}
             activeView={mainView}
             searchRequestVersion={sidebarSearchRequestVersion}
@@ -2883,17 +2899,15 @@ function AppContent() {
             </div>
           ) : null}
 
-          {/* `key={mainView}` remounts this wrapper on view change so the
-              `.view-transition` enter animation fires on every switch. */}
-          <div className="view-transition" key={mainView}>
+          <div className="view-transition">
           <Suspense fallback={null}>
-          {mainView === 'skills' ? (
+          {mainView === 'plugins' ? (
+            <PluginsHub activeTab={pluginsTab} onTabChange={setPluginsTab}>
+            <Suspense fallback={null}>
+            {pluginsTab === 'skills' ? (
             <SkillsView
-              listInstalled={() =>
-                runtimeConnection
-                  ? listInstalledSkills(runtimeConnection)
-                  : Promise.resolve({ skills: [], roots: [] })
-              }
+              embedded
+              listInstalled={listInstalledSkillsForView}
               onCreateSkill={async (input) => {
                 if (!runtimeConnection) return
                 await createLocalSkill(input, runtimeConnection)
@@ -2917,8 +2931,9 @@ function AppContent() {
                 }
               }}
             />
-          ) : mainView === 'plugins' ? (
+          ) : pluginsTab === 'plugins' ? (
             <PluginsView
+              embedded
               refreshVersion={pluginCatalogVersion}
               visionModels={models
                 .filter((model) => model.imageInputs)
@@ -2927,9 +2942,7 @@ function AppContent() {
                   label: model.label,
                   vendor: model.vendor ?? '',
                 }))}
-              listPlugins={() =>
-                runtimeConnection ? listLocalPlugins(runtimeConnection) : Promise.resolve([])
-              }
+              listPlugins={listPluginsForView}
               getPlugin={(pluginId) => {
                 if (!runtimeConnection) return Promise.reject(new Error('Runtime unavailable'))
                 return getLocalPlugin(pluginId, runtimeConnection)
@@ -2951,20 +2964,6 @@ function AppContent() {
                   commandId,
                   createdAt: new Date().toISOString(),
                   input: { pluginId: plugin.id, expectedDigest: plugin.digest },
-                })
-              }}
-              updatePlugin={(plugin, sourcePath, allowUnsigned) => {
-                const commandId = createLocalID('cmd')
-                return submitPluginCommand({
-                  type: 'plugin.update',
-                  commandId,
-                  createdAt: new Date().toISOString(),
-                  input: {
-                    pluginId: plugin.id,
-                    sourcePath,
-                    expectedDigest: plugin.digest,
-                    allowUnsigned,
-                  },
                 })
               }}
               rollbackPlugin={(plugin, targetDigest) => {
@@ -3004,13 +3003,10 @@ function AppContent() {
                 })
               }}
             />
-          ) : mainView === 'mcp' ? (
+          ) : (
             <MCPView
-              listCatalog={() =>
-                runtimeConnection
-                  ? listMcpServers(runtimeConnection)
-                  : Promise.resolve({ servers: [], sources_scanned: [] })
-              }
+              embedded
+              listCatalog={listMcpServersForView}
               disabledServers={agentSettings.mcpDisabled}
               onDisabledChange={(next) => {
                 const updated: Required<AgentSettings> = { ...agentSettings, mcpDisabled: next }
@@ -3036,6 +3032,9 @@ function AppContent() {
                 }
               }}
             />
+          )}
+            </Suspense>
+            </PluginsHub>
           ) : mainView === 'settings' ? (
             <SettingsView
               isDesktop={isDesktop}

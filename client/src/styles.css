@@ -7302,6 +7302,7 @@ select {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
   width: 100%;
 }
 
@@ -7550,6 +7551,7 @@ select {
 }
 
 .skills-new-button {
+  width: 124px;
   height: 34px;
   gap: 6px;
   border-radius: var(--sj-r-m, 10px);
@@ -7635,27 +7637,6 @@ select {
   font-weight: 500;
 }
 
-.skill-card-status {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-  width: 34px;
-  height: 20px;
-  border-radius: 10px;
-  background: var(--sj-ink, #2B2A28);
-}
-
-.skill-card-status span {
-  position: absolute;
-  top: 2px;
-  left: 16px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--sj-paper-raised, #FFFFFF);
-  box-shadow: var(--sj-shadow-1, 0 1px 2px rgba(43, 42, 40, 0.04));
-}
-
 .skills-view .skill-card-text {
   flex: 1 1 auto;
 }
@@ -7698,62 +7679,63 @@ select {
   text-align: center;
 }
 
-.plugins-intro {
-  flex: 1 1 auto;
-  margin: 0;
-  color: var(--sj-ink-soft, #6F6B63);
-  font-size: 13px;
-}
-
 .plugin-card {
   min-width: 0;
 }
 
-.plugin-version,
-.plugin-status {
+.skills-view .plugin-card {
+  min-height: 104px;
+}
+
+.plugin-card-title-button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plugin-card-title-button:disabled {
+  cursor: default;
+}
+
+.plugin-card-title-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--sj-ink, #2B2A28) 20%, transparent);
+  outline-offset: 3px;
+}
+
+.plugin-version {
   flex: none;
+}
+
+.plugin-version {
   color: var(--sj-ink-soft, #6F6B63);
   font-size: 11px;
 }
 
-.plugin-id {
-  overflow: hidden;
+.plugin-remove-button {
   color: var(--sj-ink-faint, #A8A39A);
-  font-family: var(--sj-font-mono, "SF Mono", ui-monospace, monospace);
-  font-size: 10.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.plugin-meta {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: flex-start;
-  gap: 6px;
-  color: var(--sj-ink-faint, #A8A39A);
-  font-size: 10.5px;
+.plugin-remove-button:hover {
+  color: var(--destructive);
 }
 
-.plugin-meta span + span::before {
-  content: "·";
-  margin-right: 6px;
+.plugin-card .skill-card-footer {
+  justify-content: space-between;
+  margin-top: auto;
 }
 
-.plugin-status.enabled {
-  color: var(--sj-moss, #5E7A6E);
+.plugin-card .skill-card-footer [data-slot="switch"] {
+  margin-left: auto;
 }
 
-.plugins-toolbar-actions,
-.plugin-card-actions,
 .plugin-tags {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-}
-
-.plugin-card-actions {
-  margin-top: 4px;
 }
 
 .plugins-error {
@@ -7969,10 +7951,16 @@ select {
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 10px;
-  background: var(--surface-muted, rgba(0, 0, 0, 0.03));
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.07));
-  transition: opacity 120ms ease, background 120ms ease;
+  border: 1px solid var(--sj-line, #E8E5DE);
+  border-radius: var(--sj-r-m, 10px);
+  background: var(--sj-paper-raised, #FFFFFF);
+  box-shadow: var(--sj-shadow-1, 0 1px 2px rgba(43, 42, 40, 0.04));
+  transition: opacity 120ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.mcp-row:hover {
+  border-color: var(--sj-line-strong, #D9D5CC);
+  box-shadow: var(--sj-shadow-2, 0 2px 8px rgba(43, 42, 40, 0.06), 0 1px 2px rgba(43, 42, 40, 0.04));
 }
 
 .mcp-row[data-disabled] {
@@ -7984,9 +7972,9 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
   /* Monochrome — no indigo. Paper-and-ink only (design rule). */
   background: var(--sj-paper-sunken, #F3F1EC);
   color: var(--sj-ink-soft, #6F6B63);
@@ -8009,7 +7997,7 @@ select {
 
 .mcp-row-name {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-primary);
 }
 
@@ -8546,9 +8534,8 @@ select {
   padding: 8px 10px 10px;
 }
 
-/* The footer's own border-top is the single divider; the base rule's
-   per-item hairline drew a line between every 技能/MCP/连接/设置 row, which the
-   v4 footer doesn't want. */
+/* The footer's own border-top is the single divider; Plugins and Settings
+   read as two quiet peer rows without per-item separators. */
 .sidebar-settings-trigger::before {
   display: none;
 }
@@ -8654,7 +8641,7 @@ select {
   color: var(--text-tertiary);
 }
 
-/* 技能 / MCP / 连接 / 设置 share the prototype's PageShell header: an in-flow
+/* Plugins and Settings share the prototype's PageShell header: an in-flow
    (not floating) centered title with a bottom hairline, content below it.
    Distinct from the chat header, which floats over the paper with no rule. */
 .topbar-page {
@@ -8678,6 +8665,66 @@ select {
   position: absolute;
   right: 24px;
   bottom: 12px;
+}
+
+.plugins-hub-header {
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 0;
+}
+
+.plugins-hub-tabs {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  align-self: center;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.plugins-hub-tab {
+  position: relative;
+  min-width: 72px;
+  min-height: 34px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--sj-r-s, 6px) var(--sj-r-s, 6px) 0 0;
+  background: transparent;
+  color: var(--sj-ink-soft, #6F6B63);
+  padding: 7px 14px 9px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.plugins-hub-tab:hover {
+  background: var(--sj-paper-sunken, #F3F1EC);
+  color: var(--sj-ink, #2B2A28);
+}
+
+.plugins-hub-tab[aria-selected='true'] {
+  border-bottom-color: var(--sj-ink, #2B2A28);
+  color: var(--sj-ink, #2B2A28);
+  font-weight: 600;
+}
+
+.plugins-hub-tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--sj-ink, #2B2A28) 28%, transparent);
+  outline-offset: -2px;
+}
+
+.plugins-hub-panel {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.plugins-hub-panel > .workspace {
+  flex: 1 1 0;
+  height: auto;
+}
+
+.mcp-toolbar {
+  justify-content: space-between;
 }
 
 /* Guarantee the page body owns the scroll under the in-flow header. */

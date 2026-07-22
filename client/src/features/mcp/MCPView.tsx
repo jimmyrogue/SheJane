@@ -19,6 +19,7 @@ import type { McpServerCatalog, McpServerInfo, McpServerWriteRequest } from '@/r
 
 export interface MCPViewProps {
   listCatalog: () => Promise<McpServerCatalog>
+  embedded?: boolean
   /** Names the user explicitly disabled. The switch is OFF for names
    *  in this set; flipping it removes (or adds) the name. We track
    *  *disabled* rather than *enabled* so newly discovered servers
@@ -118,6 +119,7 @@ function requestFromForm(form: McpFormState): McpServerWriteRequest {
 
 export function MCPView({
   listCatalog,
+  embedded = false,
   disabledServers,
   onDisabledChange,
   onCreateServer,
@@ -241,38 +243,55 @@ export function MCPView({
   const filteredEmpty = totalCount > 0 && filteredServers.length === 0
 
   return (
-    <section className="workspace">
-      <header className="topbar topbar-page">
-        <div className="chat-toolbar-title">
-          <span>{t('mcp.title')}</span>
-        </div>
-        <div className="skills-topbar-actions">
-          {onCreateServer ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={openCreate}
-            >
-              <IconPlus size={14} aria-hidden="true" />
-              {t('mcp.addServer')}
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => void refresh()}
-            disabled={loading}
-          >
-            <IconRefresh size={14} aria-hidden="true" />
-            {t('mcp.refresh')}
-          </Button>
-        </div>
-      </header>
+    <section className="workspace skills-view">
+      {!embedded ? (
+        <header className="topbar topbar-page">
+          <div className="chat-toolbar-title">
+            <span>{t('mcp.title')}</span>
+          </div>
+        </header>
+      ) : null}
 
       <div className="skills-scroll">
         <div className="skills-content">
+          <div className="skills-toolbar mcp-toolbar">
+            <div className="skills-search">
+              <IconSearch className="skills-search-icon" size={15} aria-hidden="true" />
+              <Input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t('mcp.searchPlaceholder')}
+                aria-label={t('mcp.searchPlaceholder')}
+              />
+            </div>
+            <div className="skills-toolbar-actions">
+              {onCreateServer ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="skills-new-button"
+                  onClick={openCreate}
+                >
+                  <IconPlus size={14} aria-hidden="true" />
+                  {t('mcp.addServer')}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="skills-refresh-button"
+                onClick={() => void refresh()}
+                disabled={loading}
+                aria-label={t('mcp.refresh')}
+                title={t('mcp.refresh')}
+              >
+                <IconRefresh size={14} aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
           {editor ? (
             <form className="resource-editor-form" onSubmit={(event) => void submitEditor(event)}>
               <div className="resource-editor-grid">
@@ -334,19 +353,6 @@ export function MCPView({
                 </Button>
               </div>
             </form>
-          ) : null}
-
-          {totalCount > 0 ? (
-            <div className="skills-search">
-              <IconSearch className="skills-search-icon" size={15} aria-hidden="true" />
-              <Input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t('mcp.searchPlaceholder')}
-                aria-label={t('mcp.searchPlaceholder')}
-              />
-            </div>
           ) : null}
 
           {filteredEmpty ? <p className="skills-not-found">{t('mcp.notFound')}</p> : null}
