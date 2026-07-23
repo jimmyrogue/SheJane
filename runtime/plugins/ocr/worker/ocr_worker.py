@@ -196,6 +196,25 @@ def engine_environment(temporary: Path) -> dict[str, str]:
     }
 
 
+def safe_engine_error_type(raw: bytes) -> str | None:
+    prefix = "OCR engine failed: "
+    for line in reversed(raw.decode("ascii", errors="ignore").splitlines()):
+        diagnostic = line.strip()
+        if diagnostic.startswith(prefix):
+            error_type = diagnostic.removeprefix(prefix)
+        elif ": " in diagnostic:
+            error_type = diagnostic.split(": ", 1)[0]
+        else:
+            continue
+        if (
+            error_type.isidentifier()
+            and len(error_type) <= 100
+            and error_type.endswith(("Error", "Exception"))
+        ):
+            return error_type
+    return None
+
+
 def run_engine(command: list[str], temporary: Path) -> None:
     process = subprocess.Popen(
         command,
@@ -235,12 +254,8 @@ def run_engine(command: list[str], temporary: Path) -> None:
         raise OcrActionError("resource_exhausted", f"OCR engine {overflow[0]} exceeded its limit")
     if returncode != 0:
         message = "OCR engine could not process the selected images"
-        diagnostic = stderr.decode("ascii", errors="ignore").strip()
-        prefix = "OCR engine failed: "
-        if diagnostic.startswith(prefix):
-            error_type = diagnostic.removeprefix(prefix)
-            if error_type.isidentifier() and len(error_type) <= 100:
-                message = f"{message} ({error_type})"
+        if error_type := safe_engine_error_type(stderr):
+            message = f"{message} ({error_type})"
         elif returncode:
             message = (
                 f"OCR engine exited 0x{returncode & 0xFFFFFFFF:08X}; "

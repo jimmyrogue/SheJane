@@ -38,6 +38,7 @@ def fake_asset(tmp_path: Path) -> RuntimeAssetHandle:
         """import json, pathlib, sys
 request = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 if request["inputs"][0]["id"] == "engine-failure":
+    print("ONNX Runtime warning without sensitive data", file=sys.stderr)
     print("OCR engine failed: RuntimeError", file=sys.stderr)
     raise SystemExit(2)
 if request["inputs"][0]["id"] == "native-failure":
