@@ -10,6 +10,7 @@ from shejane_runtime.plugins.browser_qa import (
     BrowserQAActionExecutor,
     BrowserQAError,
     BrowserQAService,
+    windows_extended_path,
 )
 from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle
 
@@ -37,6 +38,20 @@ def invocation(action_id: str, arguments: dict[str, object]) -> dict[str, object
         "arguments": arguments,
         "limits": {"timeout_ms": 30_000, "memory_mb": 1024, "output_mb": 8},
     }
+
+
+def test_browser_qa_uses_extended_paths_on_windows() -> None:
+    assert windows_extended_path(
+        r"C:\Users\Jane\AppData\Roaming\SheJane\browsers",
+        platform_name="nt",
+    ) == r"\\?\C:\Users\Jane\AppData\Roaming\SheJane\browsers"
+    assert windows_extended_path(
+        r"\\server\share\SheJane\browsers",
+        platform_name="nt",
+    ) == r"\\?\UNC\server\share\SheJane\browsers"
+    assert windows_extended_path("/tmp/shejane/browsers", platform_name="posix") == (
+        "/tmp/shejane/browsers"
+    )
 
 
 @pytest.mark.asyncio

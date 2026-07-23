@@ -20,6 +20,15 @@ BROWSER_QA_PLUGIN_VERSION = "0.1.0"
 MAX_PROXY_HEADER_BYTES = 64 * 1024
 
 
+def windows_extended_path(path: Path | str, *, platform_name: str = os.name) -> str:
+    value = str(path)
+    if platform_name != "nt" or value.startswith("\\\\?\\"):
+        return value
+    if value.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + value.lstrip("\\")
+    return "\\\\?\\" + value
+
+
 def is_allowed_browser_qa_package(*, plugin_id: str, version: str, handler: str) -> bool:
     return (
         plugin_id == BROWSER_QA_PLUGIN_ID
@@ -181,10 +190,10 @@ class BrowserQAService(ComputerUseService):
     def _extra_environment(self) -> dict[str, str]:
         browsers = self._runtime_asset.payload / "browsers"
         return {
-            "SHEJANE_BROWSER_QA_PROFILE": str(self._profile_root),
+            "SHEJANE_BROWSER_QA_PROFILE": windows_extended_path(self._profile_root),
             "SHEJANE_BROWSER_QA_PROXY": self._proxy.url,
             "SHEJANE_BROWSER_QA_HEADLESS": "1" if self._headless else "0",
-            "PLAYWRIGHT_BROWSERS_PATH": str(browsers),
+            "PLAYWRIGHT_BROWSERS_PATH": windows_extended_path(browsers),
         }
 
     async def aclose(self) -> None:
