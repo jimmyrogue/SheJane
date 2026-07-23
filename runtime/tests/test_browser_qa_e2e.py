@@ -206,6 +206,7 @@ async def test_browser_qa_real_chromium_open_act_observe_and_screenshot(
         package,
         workspace_root=tmp_path,
         profile_root=tmp_path / "profile",
+        browser_runtime_root=tmp_path / "browser-runtime",
         runtime_asset=runtime_asset,
         headless=True,
     )

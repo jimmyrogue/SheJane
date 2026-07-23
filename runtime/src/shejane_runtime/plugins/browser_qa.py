@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import shutil
 import signal
+import tempfile
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -18,6 +20,7 @@ from .runtime_assets import RuntimeAssetHandle
 BROWSER_QA_PLUGIN_ID = "org.shejane.browser-qa"
 BROWSER_QA_PLUGIN_VERSION = "0.1.0"
 MAX_PROXY_HEADER_BYTES = 64 * 1024
+RUNTIME_ALIAS_DIGEST_CHARS = 32
 
 
 def windows_extended_path(path: Path | str, *, platform_name: str = os.name) -> str:
@@ -27,6 +30,58 @@ def windows_extended_path(path: Path | str, *, platform_name: str = os.name) -> 
     if value.startswith("\\\\"):
         return "\\\\?\\UNC\\" + value.lstrip("\\")
     return "\\\\?\\" + value
+
+
+def _runtime_alias_matches(marker: Path, digest: str) -> bool:
+    try:
+        return marker.read_text(encoding="utf-8").strip() == digest
+    except OSError:
+        return False
+
+
+def prepare_browser_runtime(
+    source: Path,
+    alias_root: Path,
+    digest: str,
+    *,
+    platform_name: str = os.name,
+) -> Path:
+    if platform_name != "nt":
+        return source.resolve(strict=False)
+    source = source.resolve(strict=True)
+    identity = digest.removeprefix("sha256:")
+    if len(identity) != 64:
+        raise BrowserQAError("Browser QA Runtime Asset identity is invalid")
+    destination = alias_root / identity[:RUNTIME_ALIAS_DIGEST_CHARS]
+    marker = destination / ".shejane-runtime-digest"
+    if destination.exists():
+        if not _runtime_alias_matches(marker, digest):
+            raise BrowserQAError("Browser QA Runtime alias identity changed")
+        return destination
+
+    alias_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=alias_root))
+    try:
+        for item in sorted(source.rglob("*")):
+            if item.is_symlink():
+                raise BrowserQAError("Browser QA Runtime Asset contains a symlink")
+            target = staging / item.relative_to(source)
+            if item.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif item.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.link(item, target)
+            else:
+                raise BrowserQAError("Browser QA Runtime Asset contains an invalid entry")
+        (staging / marker.name).write_text(digest + "\n", encoding="utf-8")
+        try:
+            staging.rename(destination)
+        except OSError:
+            if not destination.is_dir() or not _runtime_alias_matches(marker, digest):
+                raise BrowserQAError("Browser QA Runtime alias identity changed") from None
+        return destination
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def is_allowed_browser_qa_package(*, plugin_id: str, version: str, handler: str) -> bool:
@@ -173,6 +228,7 @@ class BrowserQAService(ComputerUseService):
         *,
         workspace_root: Path,
         profile_root: Path,
+        browser_runtime_root: Path,
         runtime_asset: RuntimeAssetHandle,
         headless: bool = False,
     ) -> None:
@@ -181,6 +237,11 @@ class BrowserQAService(ComputerUseService):
         self._profile_root.mkdir(parents=True, exist_ok=True)
         self._headless = headless
         self._runtime_asset = runtime_asset
+        self._browsers_root = prepare_browser_runtime(
+            runtime_asset.payload / "browsers",
+            browser_runtime_root,
+            runtime_asset.digest,
+        )
         self._proxy = BrowserNetworkProxy()
 
     async def _ensure_process(self) -> asyncio.subprocess.Process:
@@ -188,12 +249,11 @@ class BrowserQAService(ComputerUseService):
         return await super()._ensure_process()
 
     def _extra_environment(self) -> dict[str, str]:
-        browsers = self._runtime_asset.payload / "browsers"
         return {
             "SHEJANE_BROWSER_QA_PROFILE": windows_extended_path(self._profile_root),
             "SHEJANE_BROWSER_QA_PROXY": self._proxy.url,
             "SHEJANE_BROWSER_QA_HEADLESS": "1" if self._headless else "0",
-            "PLAYWRIGHT_BROWSERS_PATH": windows_extended_path(browsers),
+            "PLAYWRIGHT_BROWSERS_PATH": str(self._browsers_root),
         }
 
     async def aclose(self) -> None:

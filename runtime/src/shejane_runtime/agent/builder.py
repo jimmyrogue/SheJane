@@ -1076,6 +1076,7 @@ async def build_agent(
                     action.package_root,
                     workspace_root=Path(workspace_root) if workspace_root else settings.data_dir,
                     profile_root=settings.data_dir / "browser-qa" / "profiles" / workspace_identity,
+                    browser_runtime_root=settings.data_dir / "browser-qa" / "runtime",
                     runtime_asset=action.runtime_assets[0],
                     headless=settings.browser_headless,
                 )

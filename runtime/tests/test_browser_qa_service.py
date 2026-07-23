@@ -10,6 +10,7 @@ from shejane_runtime.plugins.browser_qa import (
     BrowserQAActionExecutor,
     BrowserQAError,
     BrowserQAService,
+    prepare_browser_runtime,
     windows_extended_path,
 )
 from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle
@@ -41,16 +42,51 @@ def invocation(action_id: str, arguments: dict[str, object]) -> dict[str, object
 
 
 def test_browser_qa_uses_extended_paths_on_windows() -> None:
-    assert windows_extended_path(
-        r"C:\Users\Jane\AppData\Roaming\SheJane\browsers",
-        platform_name="nt",
-    ) == r"\\?\C:\Users\Jane\AppData\Roaming\SheJane\browsers"
-    assert windows_extended_path(
-        r"\\server\share\SheJane\browsers",
-        platform_name="nt",
-    ) == r"\\?\UNC\server\share\SheJane\browsers"
+    assert (
+        windows_extended_path(
+            r"C:\Users\Jane\AppData\Roaming\SheJane\browsers",
+            platform_name="nt",
+        )
+        == r"\\?\C:\Users\Jane\AppData\Roaming\SheJane\browsers"
+    )
+    assert (
+        windows_extended_path(
+            r"\\server\share\SheJane\browsers",
+            platform_name="nt",
+        )
+        == r"\\?\UNC\server\share\SheJane\browsers"
+    )
     assert windows_extended_path("/tmp/shejane/browsers", platform_name="posix") == (
         "/tmp/shejane/browsers"
+    )
+
+
+def test_browser_qa_prepares_short_hardlinked_runtime_on_windows(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    executable = source / "chromium-1228" / "chrome-win64" / "chrome.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"browser")
+    digest = "sha256:" + "a" * 64
+
+    prepared = prepare_browser_runtime(
+        source,
+        tmp_path / "browser-runtime",
+        digest,
+        platform_name="nt",
+    )
+
+    linked = prepared / executable.relative_to(source)
+    assert linked.read_bytes() == b"browser"
+    assert linked.samefile(executable)
+    assert (prepared / ".shejane-runtime-digest").read_text(encoding="utf-8") == (digest + "\n")
+    assert (
+        prepare_browser_runtime(
+            source,
+            tmp_path / "browser-runtime",
+            digest,
+            platform_name="nt",
+        )
+        == prepared
     )
 
 
@@ -104,6 +140,7 @@ for await (const line of lines) {
         package,
         workspace_root=tmp_path,
         profile_root=profile,
+        browser_runtime_root=tmp_path / "browser-runtime",
         runtime_asset=runtime_asset(payload),
     )
 
