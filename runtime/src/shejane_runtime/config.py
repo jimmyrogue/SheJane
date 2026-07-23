@@ -44,11 +44,7 @@ def default_browser_qa_package() -> Path | None:
     frozen_root = getattr(sys, "_MEIPASS", None)
     if not frozen_root:
         return None
-    package = (
-        Path(frozen_root)
-        / "builtin-plugins"
-        / f"browser-qa-0.1.0-{target}.shejane-plugin"
-    )
+    package = Path(frozen_root) / "builtin-plugins" / f"browser-qa-0.1.0-{target}.shejane-plugin"
     return package if package.is_file() else None
 
 

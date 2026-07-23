@@ -67,9 +67,7 @@ def test_browser_qa_manifest_exposes_only_bounded_actions() -> None:
 
 
 @pytest.mark.parametrize("target_platform", ["darwin/arm64", "windows/amd64"])
-def test_browser_qa_package_is_deterministic(
-    tmp_path: Path, target_platform: str
-) -> None:
+def test_browser_qa_package_is_deterministic(tmp_path: Path, target_platform: str) -> None:
     playwright = tmp_path / "playwright"
     playwright_core = tmp_path / "playwright-core"
     for root, name in (
@@ -155,6 +153,4 @@ def test_browser_qa_runtime_asset_is_deterministic_and_content_addressed(
     )
     assert installed.asset_id == "org.shejane.browser-qa.runtime"
     assert installed.version == "1.61.1+chromium1228.1"
-    assert (
-        installed.payload / "browsers" / "chromium-1228" / executable_name
-    ).is_file()
+    assert (installed.payload / "browsers" / "chromium-1228" / executable_name).is_file()

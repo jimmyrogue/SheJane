@@ -48,7 +48,9 @@ def test_windows_amd64_lock_freezes_native_rapidocr_dependencies() -> None:
     assert "pefile-2024.8.26-py3-none-any.whl" in package_names
     assert "pywin32_ctypes-0.2.3-py3-none-any.whl" in package_names
     assert any(name.endswith("-win_amd64.whl") for name in package_names)
-    assert not any("macholib" in name or "manylinux" in name or "macosx" in name for name in package_names)
+    assert not any(
+        "macholib" in name or "manylinux" in name or "macosx" in name for name in package_names
+    )
     for item in package_names:
         assert item
     for item in lock["packages"]:
@@ -73,35 +75,22 @@ def test_windows_builder_rejects_non_amd64_pe(tmp_path: Path) -> None:
 def test_windows_locked_package_names_resolve_to_canonical_pypi_projects() -> None:
     fetcher = load_fetcher()
 
-    assert (
-        fetcher.pypi_project("antlr4-python3-runtime-4.9.3.tar.gz")
-        == "antlr4-python3-runtime"
-    )
+    assert fetcher.pypi_project("antlr4-python3-runtime-4.9.3.tar.gz") == "antlr4-python3-runtime"
     assert (
         fetcher.pypi_project("opencv_python_headless-4.12.0.88-cp37-abi3-win_amd64.whl")
         == "opencv-python-headless"
     )
-    assert (
-        fetcher.pypi_project("pywin32_ctypes-0.2.3-py3-none-any.whl")
-        == "pywin32-ctypes"
-    )
+    assert fetcher.pypi_project("pywin32_ctypes-0.2.3-py3-none-any.whl") == "pywin32-ctypes"
     assert fetcher.pypi_version("antlr4-python3-runtime-4.9.3.tar.gz") == "4.9.3"
-    assert (
-        fetcher.pypi_version("onnxruntime-1.27.0-cp312-cp312-win_amd64.whl")
-        == "1.27.0"
-    )
+    assert fetcher.pypi_version("onnxruntime-1.27.0-cp312-cp312-win_amd64.whl") == "1.27.0"
 
 
 def test_frozen_windows_runtime_discovers_fixed_ocr_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    plugin = (
-        tmp_path / "builtin-plugins" / "ocr-0.1.0-windows-amd64.shejane-plugin"
-    )
+    plugin = tmp_path / "builtin-plugins" / "ocr-0.1.0-windows-amd64.shejane-plugin"
     asset = (
-        tmp_path
-        / "builtin-assets"
-        / "rapidocr-runtime-3.9.1-windows-amd64.shejane-runtime-asset"
+        tmp_path / "builtin-assets" / "rapidocr-runtime-3.9.1-windows-amd64.shejane-runtime-asset"
     )
     plugin.parent.mkdir()
     asset.parent.mkdir()

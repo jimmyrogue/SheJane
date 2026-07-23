@@ -19,9 +19,7 @@ from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle, RuntimeAs
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = REPO_ROOT / "runtime" / "plugins" / "ocr" / "worker" / "ocr_worker.py"
 ASSET_ENV = "SHEJANE_RAPIDOCR_RUNTIME_ASSET"
-DARWIN_BUILDER = (
-    REPO_ROOT / "runtime" / "plugins" / "ocr" / "runtime-assets" / "build_darwin.py"
-)
+DARWIN_BUILDER = REPO_ROOT / "runtime" / "plugins" / "ocr" / "runtime-assets" / "build_darwin.py"
 
 
 def test_darwin_codesign_targets_framework_bundle(tmp_path: Path) -> None:

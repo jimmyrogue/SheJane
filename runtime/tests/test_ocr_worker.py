@@ -376,8 +376,7 @@ async def test_ocr_worker_reports_bounded_engine_failure_type(tmp_path: Path) ->
     assert result["error"] == {
         "code": "ocr_failed",
         "message": (
-            "OCR engine could not process the selected images "
-            "(ImportError: onnxruntime.capi)"
+            "OCR engine could not process the selected images (ImportError: onnxruntime.capi)"
         ),
         "retryable": False,
     }
