@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ROOT = REPO_ROOT / "runtime" / "plugins" / "browser-qa"
 BUILDER = ROOT / "build_package.py"
 ASSET_BUILDER = ROOT / "build_runtime_asset.py"
+WINDOWS_BUILDER = REPO_ROOT / "scripts" / "build-browser-qa-windows-amd64.ps1"
 
 
 def test_browser_qa_package_uses_node_for_esbuild_on_windows(
@@ -31,6 +32,13 @@ def test_browser_qa_package_uses_node_for_esbuild_on_windows(
         "C:\\Node\\node.exe",
         str((REPO_ROOT / "node_modules" / "esbuild" / "bin" / "esbuild").resolve()),
     ]
+
+
+def test_windows_browser_qa_gate_uses_short_pytest_workspace() -> None:
+    script = WINDOWS_BUILDER.read_text(encoding="utf-8")
+
+    assert 'Join-Path $env:RUNNER_TEMP "sj-bq-test"' in script
+    assert "--basetemp $testRoot" in script
 
 
 def test_browser_qa_manifest_exposes_only_bounded_actions() -> None:

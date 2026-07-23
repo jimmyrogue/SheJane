@@ -90,7 +90,13 @@ try {
     $env:SHEJANE_TEST_BROWSER_QA_PACKAGE = $plugin
     $env:SHEJANE_TEST_BROWSER_QA_RUNTIME_ASSET = $firstAsset
     $env:SHEJANE_REQUIRE_FIXED_PLUGIN_E2E = "1"
-    uv run --project runtime python -m pytest -q runtime/tests/test_browser_qa_e2e.py
+    $testRoot = Join-Path $env:RUNNER_TEMP "sj-bq-test"
+    if (Test-Path $testRoot) {
+        throw "Windows Browser QA test workspace already exists: $testRoot"
+    }
+    uv run --project runtime python -m pytest -q `
+        --basetemp $testRoot `
+        runtime/tests/test_browser_qa_e2e.py
 
     Copy-Item $firstAsset (
         Join-Path $OutputDirectory `
