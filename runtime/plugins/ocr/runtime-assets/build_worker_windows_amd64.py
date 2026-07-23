@@ -69,6 +69,7 @@ def build_once(
     packages: list[Path],
     epoch: int,
 ) -> Path:
+    work.mkdir()
     env = offline_environment(work / "home", work / "tmp")
     environment = work / "venv"
     run([sys.executable, "-m", "venv", str(environment)], env=env)
