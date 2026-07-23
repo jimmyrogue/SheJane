@@ -37,6 +37,9 @@ def fake_asset(tmp_path: Path) -> RuntimeAssetHandle:
         binary,
         """import json, pathlib, sys
 request = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if request["inputs"][0]["id"] == "engine-failure":
+    print("OCR engine failed: RuntimeError", file=sys.stderr)
+    raise SystemExit(2)
 images = []
 for index, item in enumerate(request["inputs"], start=1):
     images.append({
@@ -330,6 +333,30 @@ async def test_ocr_worker_rejects_unexpected_engine_identity_without_artifacts(
     assert result["error"]["code"] == "engine_protocol_violation"
     assert result["artifacts"] == []
     assert not any(path.is_file() for path in output_root.rglob("*"))
+
+
+@pytest.mark.asyncio
+async def test_ocr_worker_reports_bounded_engine_failure_type(tmp_path: Path) -> None:
+    input_root, output_root, sources = image_sources(tmp_path)
+    failing_source = sources[0]
+    sources[0] = ("engine-failure", failing_source[1], failing_source[2])
+    executor = ManagedWorkerActionExecutor(
+        (sys.executable, str(WORKER)), runtime_assets=(fake_asset(tmp_path),)
+    )
+
+    result = await executor.invoke(
+        invocation(["engine-failure"], sources),
+        input_root=input_root,
+        output_root=output_root,
+    )
+
+    assert result["status"] == "failed", result
+    assert result["error"] == {
+        "code": "ocr_failed",
+        "message": "OCR engine could not process the selected images (RuntimeError)",
+        "retryable": False,
+    }
+    assert result["artifacts"] == []
 
 
 @pytest.mark.asyncio

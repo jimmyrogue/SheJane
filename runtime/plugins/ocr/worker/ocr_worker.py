@@ -206,6 +206,7 @@ def run_engine(command: list[str], temporary: Path) -> None:
     )
     assert process.stdout is not None and process.stderr is not None
     overflow: list[str] = []
+    stderr = bytearray()
 
     def drain(name: str, stream: Any, limit: int) -> None:
         size = 0
@@ -218,6 +219,8 @@ def run_engine(command: list[str], temporary: Path) -> None:
                 except ProcessLookupError:
                     pass
                 return
+            if name == "stderr":
+                stderr.extend(data)
 
     threads = [
         threading.Thread(target=drain, args=("stdout", process.stdout, 64 * 1024)),
@@ -231,7 +234,14 @@ def run_engine(command: list[str], temporary: Path) -> None:
     if overflow:
         raise OcrActionError("resource_exhausted", f"OCR engine {overflow[0]} exceeded its limit")
     if returncode != 0:
-        raise OcrActionError("ocr_failed", "OCR engine could not process the selected images")
+        message = "OCR engine could not process the selected images"
+        diagnostic = stderr.decode("ascii", errors="ignore").strip()
+        prefix = "OCR engine failed: "
+        if diagnostic.startswith(prefix):
+            error_type = diagnostic.removeprefix(prefix)
+            if error_type.isidentifier() and len(error_type) <= 100:
+                message = f"{message} ({error_type})"
+        raise OcrActionError("ocr_failed", message)
 
 
 def finite_number(value: Any, *, minimum: float, maximum: float) -> float:
