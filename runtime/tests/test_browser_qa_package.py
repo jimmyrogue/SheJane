@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ROOT = REPO_ROOT / "runtime" / "plugins" / "browser-qa"
 BUILDER = ROOT / "build_package.py"
 ASSET_BUILDER = ROOT / "build_runtime_asset.py"
+
+
+def test_browser_qa_package_uses_node_for_esbuild_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = runpy.run_path(str(BUILDER))
+    with monkeypatch.context() as patch:
+        patch.setattr(builder["shutil"], "which", lambda name: "C:\\Node\\node.exe")
+        command = builder["esbuild_command"](platform_name="nt")
+
+    assert command == [
+        "C:\\Node\\node.exe",
+        str((REPO_ROOT / "node_modules" / "esbuild" / "bin" / "esbuild").resolve()),
+    ]
 
 
 def test_browser_qa_manifest_exposes_only_bounded_actions() -> None:

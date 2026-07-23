@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import stat
@@ -14,6 +15,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parents[2]
 PLAYWRIGHT_VERSION = "1.61.1"
+
+
+def esbuild_command(*, platform_name: str = os.name) -> list[str]:
+    executable = (REPO_ROOT / "node_modules" / "esbuild" / "bin" / "esbuild").resolve(
+        strict=True
+    )
+    if platform_name != "nt":
+        return [str(executable)]
+    node = shutil.which("node")
+    if node is None:
+        raise RuntimeError("Node.js is required to build Browser QA on Windows")
+    return [node, str(executable)]
 
 
 def main() -> None:
@@ -57,9 +70,7 @@ def main() -> None:
             shutil.copytree(source, modules / name, symlinks=True)
         subprocess.run(
             [
-                "pnpm",
-                "exec",
-                "esbuild",
+                *esbuild_command(),
                 str(ROOT / "bridge" / "bridge-server.ts"),
                 "--bundle",
                 "--platform=node",
