@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const {
+  BUNDLED_RUNTIME_START_TIMEOUT_MS,
   installUpdateAfterRuntimeStop,
   isPortConflictError,
   startRuntimeWithPortRetry,
@@ -11,6 +12,7 @@ const {
   waitForRuntimeReady,
   waitForRuntimeProcessClose,
 } = require('./runtime-process.cjs') as {
+  BUNDLED_RUNTIME_START_TIMEOUT_MS: number
   installUpdateAfterRuntimeStop: (options: {
     stopRuntime: () => Promise<void>
     quitAndInstall: (isSilent: boolean, isForceRunAfter: boolean) => void
@@ -54,6 +56,23 @@ function runtimeProcess(kill: (signal: string) => boolean) {
 }
 
 describe('Electron local Runtime process lifecycle', () => {
+  it('allows a cold bundled Runtime to install fixed assets before readiness', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const child = { exitCode: null }
+    const ready = vi.fn().mockResolvedValue(true)
+
+    await expect(startRuntimeWithPortRetry({
+      start: async () => child,
+      ready,
+      retryable: () => false,
+      stop: async () => undefined,
+    })).resolves.toBe(child)
+    expect(BUNDLED_RUNTIME_START_TIMEOUT_MS).toBe(120_000)
+    expect(ready).toHaveBeenCalledWith(child, BUNDLED_RUNTIME_START_TIMEOUT_MS)
+    vi.useRealTimers()
+  })
+
   it('stops the bundled Runtime before handing quit control to the updater', async () => {
     let finishRuntimeStop!: () => void
     const stopRuntime = vi.fn(() => new Promise<void>((resolve) => {

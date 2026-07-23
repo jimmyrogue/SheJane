@@ -1,4 +1,5 @@
 const REQUIRED_RUNTIME_CAPABILITIES = ['agent.run', 'agent.stream']
+const BUNDLED_RUNTIME_START_TIMEOUT_MS = 120000
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -28,7 +29,7 @@ function waitForRuntimeProcessClose(child, timeoutMs = 2000) {
 
 async function startRuntimeWithPortRetry({
   maxAttempts = 3,
-  timeoutMs = 30000,
+  timeoutMs = BUNDLED_RUNTIME_START_TIMEOUT_MS,
   start,
   ready,
   retryable,
@@ -164,6 +165,7 @@ async function installUpdateAfterRuntimeStop({ stopRuntime, quitAndInstall }) {
 }
 
 module.exports = {
+  BUNDLED_RUNTIME_START_TIMEOUT_MS,
   installUpdateAfterRuntimeStop,
   isPortConflictError,
   startRuntimeWithPortRetry,

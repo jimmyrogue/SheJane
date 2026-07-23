@@ -19,6 +19,8 @@ if (!isMacOSApp && !isWindowsExecutable) {
 }
 
 const wait = (milliseconds) => new Promise((done) => setTimeout(done, milliseconds))
+const PACKAGED_RUNTIME_START_TIMEOUT_MS = 180_000
+const PROCESS_EXIT_TIMEOUT_MS = 10_000
 
 async function waitUntil(check, { timeoutMs, failure }) {
   const deadline = Date.now() + timeoutMs
@@ -63,6 +65,7 @@ let appProcess
 let runtimePid = 0
 let stdout = ''
 let stderr = ''
+let primaryError = null
 
 try {
   await access(resourcesPath, constants.R_OK)
@@ -132,7 +135,10 @@ try {
         throw error
       }
     },
-    { timeoutMs: 60_000, failure: 'packaged app did not publish its Runtime handoff' },
+    {
+      timeoutMs: PACKAGED_RUNTIME_START_TIMEOUT_MS,
+      failure: 'packaged app did not publish its Runtime handoff',
+    },
   )
   if (
     handoff.schema !== 1 ||
@@ -187,6 +193,7 @@ try {
   )
   process.stdout.write(`packaged Client Runtime smoke passed: ${basename(packagedPath)}\n`)
 } catch (error) {
+  primaryError = error
   if (stdout) {
     process.stderr.write(`packaged app stdout:\n${stdout}\n`)
   }
@@ -195,11 +202,50 @@ try {
   }
   throw error
 } finally {
-  if (appProcess?.exitCode === null) {
-    appProcess.kill('SIGKILL')
+  const cleanupErrors = []
+  try {
+    if (appProcess?.exitCode === null) {
+      appProcess.kill('SIGKILL')
+      await waitUntil(
+        async () => appProcess.exitCode !== null,
+        {
+          timeoutMs: PROCESS_EXIT_TIMEOUT_MS,
+          failure: 'packaged app did not exit after smoke cleanup kill',
+        },
+      )
+    }
+  } catch (cleanupError) {
+    cleanupErrors.push(cleanupError)
   }
-  if (runtimePid > 0 && processExists(runtimePid)) {
-    process.kill(runtimePid, 'SIGKILL')
+  try {
+    if (runtimePid > 0 && processExists(runtimePid)) {
+      process.kill(runtimePid, 'SIGKILL')
+      await waitUntil(
+        async () => !processExists(runtimePid),
+        {
+          timeoutMs: PROCESS_EXIT_TIMEOUT_MS,
+          failure: 'packaged Runtime did not exit after smoke cleanup kill',
+        },
+      )
+    }
+  } catch (cleanupError) {
+    cleanupErrors.push(cleanupError)
   }
-  await rm(temporaryRoot, { recursive: true, force: true })
+  try {
+    await rm(temporaryRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 100,
+    })
+  } catch (cleanupError) {
+    cleanupErrors.push(cleanupError)
+  }
+  if (cleanupErrors.length > 0) {
+    const cleanupFailure = new AggregateError(cleanupErrors, 'packaged smoke cleanup failed')
+    if (primaryError === null) {
+      throw cleanupFailure
+    }
+    process.stderr.write(`packaged smoke cleanup warning: ${cleanupFailure}\n`)
+  }
 }
