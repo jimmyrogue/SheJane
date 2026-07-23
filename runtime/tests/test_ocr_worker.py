@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import runpy
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +24,22 @@ from shejane_runtime.tools.runtime import RuntimeToolExecution
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = REPO_ROOT / "runtime" / "plugins" / "ocr" / "worker" / "ocr_worker.py"
 PLUGIN_ROOT = REPO_ROOT / "runtime" / "plugins" / "ocr"
+
+
+def test_ocr_worker_protocol_uses_utf8_bytes_for_multilingual_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = runpy.run_path(str(WORKER))
+    protocol_input = SimpleNamespace(buffer=io.BytesIO('{"text":"石间 OCR"}\n'.encode()))
+    protocol_output = SimpleNamespace(buffer=io.BytesIO())
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdin", protocol_input)
+        patch.setattr(sys, "stdout", protocol_output)
+        assert worker["receive"]() == {"text": "石间 OCR"}
+        worker["send"]({"text": "石间 OCR"})
+
+    assert protocol_output.buffer.getvalue() == '{"text":"石间 OCR"}\n'.encode()
 
 
 def executable(path: Path, source: str) -> None:

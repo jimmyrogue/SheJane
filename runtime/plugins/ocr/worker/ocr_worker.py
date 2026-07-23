@@ -42,9 +42,16 @@ class OcrActionError(ValueError):
         self.code = code
 
 
+def receive() -> dict[str, Any]:
+    return json.loads(sys.stdin.buffer.readline())
+
+
 def send(value: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+    frame = (
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    sys.stdout.buffer.write(frame)
+    sys.stdout.buffer.flush()
 
 
 def response(request_id: int, result: Any) -> None:
@@ -522,7 +529,7 @@ def invoke(invocation: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
-    initialize = json.loads(sys.stdin.readline())
+    initialize = receive()
     response(
         initialize["id"],
         {
@@ -533,9 +540,9 @@ def main() -> None:
             "sandboxed": os.environ.get("SHEJANE_PLUGIN_SANDBOXED") == "1",
         },
     )
-    request = json.loads(sys.stdin.readline())
+    request = receive()
     response(request["id"], invoke(request["params"]))
-    shutdown = json.loads(sys.stdin.readline())
+    shutdown = receive()
     response(shutdown["id"], {})
 
 
