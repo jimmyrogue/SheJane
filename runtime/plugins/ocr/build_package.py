@@ -53,7 +53,7 @@ def main() -> None:
                 target.relative_to(worker)
             except (FileNotFoundError, OSError, ValueError):
                 parser.error("--worker contains an unsafe entry")
-            if not target.is_file():
+            if not (target.is_file() or target.is_dir()):
                 parser.error("--worker contains an unsafe entry")
             continue
         if not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)):

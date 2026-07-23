@@ -107,6 +107,75 @@ def test_ocr_package_rejects_managed_worker_platforms(tmp_path: Path) -> None:
     assert "invalid choice: 'linux/arm64'" in completed.stderr
 
 
+def test_ocr_package_materializes_safe_macos_framework_links(tmp_path: Path) -> None:
+    worker = tmp_path / "ocr-worker"
+    worker.mkdir()
+    (worker / "ocr-worker").write_bytes(b"worker")
+    framework = worker / "_internal" / "Python.framework"
+    version = framework / "Versions" / "3.12"
+    version.mkdir(parents=True)
+    (version / "Python").write_bytes(b"python-runtime")
+    (framework / "Versions" / "Current").symlink_to("3.12", target_is_directory=True)
+    (framework / "Python").symlink_to("Versions/Current/Python")
+    output = tmp_path / "ocr.shejane-plugin"
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(BUILDER),
+            "--platform",
+            "darwin/arm64",
+            "--runtime-asset-digest",
+            "sha256:" + "a" * 64,
+            "--worker",
+            str(worker),
+            "--output",
+            str(output),
+        ],
+        check=True,
+    )
+
+    extracted = tmp_path / "extracted"
+    extract_plugin_archive(output, extracted)
+    copied_framework = extracted / "payload" / "_internal" / "Python.framework"
+    assert not any(path.is_symlink() for path in copied_framework.rglob("*"))
+    assert (copied_framework / "Python").read_bytes() == b"python-runtime"
+    assert (copied_framework / "Versions" / "Current" / "Python").read_bytes() == (
+        b"python-runtime"
+    )
+
+
+def test_ocr_package_rejects_directory_link_outside_worker(tmp_path: Path) -> None:
+    worker = tmp_path / "ocr-worker"
+    worker.mkdir()
+    (worker / "ocr-worker").write_bytes(b"worker")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_bytes(b"secret")
+    (worker / "_internal").symlink_to(outside, target_is_directory=True)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(BUILDER),
+            "--platform",
+            "darwin/arm64",
+            "--runtime-asset-digest",
+            "sha256:" + "a" * 64,
+            "--worker",
+            str(worker),
+            "--output",
+            str(tmp_path / "ocr.shejane-plugin"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "--worker contains an unsafe entry" in completed.stderr
+
+
 def test_release_does_not_package_builtin_ocr_as_a_linux_worker() -> None:
     workflow = (REPO_ROOT / ".github" / "workflows" / "release-client.yml").read_text(
         encoding="utf-8"
