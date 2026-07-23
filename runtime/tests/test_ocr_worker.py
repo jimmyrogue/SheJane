@@ -40,6 +40,8 @@ request = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 if request["inputs"][0]["id"] == "engine-failure":
     print("OCR engine failed: RuntimeError", file=sys.stderr)
     raise SystemExit(2)
+if request["inputs"][0]["id"] == "native-failure":
+    raise SystemExit(9)
 images = []
 for index, item in enumerate(request["inputs"], start=1):
     images.append({
@@ -356,6 +358,26 @@ async def test_ocr_worker_reports_bounded_engine_failure_type(tmp_path: Path) ->
         "message": "OCR engine could not process the selected images (RuntimeError)",
         "retryable": False,
     }
+    assert result["artifacts"] == []
+
+
+@pytest.mark.asyncio
+async def test_ocr_worker_reports_silent_engine_exit_code(tmp_path: Path) -> None:
+    input_root, output_root, sources = image_sources(tmp_path)
+    failing_source = sources[0]
+    sources[0] = ("native-failure", failing_source[1], failing_source[2])
+    executor = ManagedWorkerActionExecutor(
+        (sys.executable, str(WORKER)), runtime_assets=(fake_asset(tmp_path),)
+    )
+
+    result = await executor.invoke(
+        invocation(["native-failure"], sources),
+        input_root=input_root,
+        output_root=output_root,
+    )
+
+    assert result["status"] == "failed", result
+    assert result["error"]["message"].endswith("(exit 0x00000009)")
     assert result["artifacts"] == []
 
 

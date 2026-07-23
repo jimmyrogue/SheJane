@@ -241,6 +241,8 @@ def run_engine(command: list[str], temporary: Path) -> None:
             error_type = diagnostic.removeprefix(prefix)
             if error_type.isidentifier() and len(error_type) <= 100:
                 message = f"{message} ({error_type})"
+        elif returncode:
+            message = f"{message} (exit 0x{returncode & 0xFFFFFFFF:08X})"
         raise OcrActionError("ocr_failed", message)
 
 
