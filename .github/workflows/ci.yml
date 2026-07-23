@@ -160,6 +160,28 @@ jobs:
             exit $exitCode
           }
 
+  windows-ocr:
+    name: Windows AMD64 OCR production gate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install Runtime test dependencies
+        working-directory: runtime
+        run: uv sync --frozen
+
+      - name: Build and execute locked Windows OCR artifacts
+        shell: pwsh
+        run: |
+          ./scripts/build-ocr-windows-amd64.ps1 `
+            -OutputDirectory "$env:RUNNER_TEMP/shejane-ocr-output"
+
   # Full black-box Runtime E2E. The repository script owns isolation, startup,
   # readiness, cleanup and failure logs so local and CI runs cannot drift.
   #

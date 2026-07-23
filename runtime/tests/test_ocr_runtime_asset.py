@@ -19,6 +19,22 @@ WORKER = REPO_ROOT / "runtime" / "plugins" / "ocr" / "worker" / "ocr_worker.py"
 ASSET_ENV = "SHEJANE_RAPIDOCR_RUNTIME_ASSET"
 
 
+def font(size: int, *candidates: str) -> ImageFont.FreeTypeFont:
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.is_file():
+            return ImageFont.truetype(str(path), size)
+    raise AssertionError(f"required test font is unavailable: {candidates}")
+
+
+def optional_font(size: int, *candidates: str) -> ImageFont.FreeTypeFont | None:
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.is_file():
+            return ImageFont.truetype(str(path), size)
+    return None
+
+
 def install_asset(data_dir: Path, archive: Path) -> RuntimeAssetHandle:
     return RuntimeAssetStore(data_dir).install(
         archive,
@@ -81,8 +97,13 @@ def invocation(source: Path) -> dict[str, object]:
 
 def write_text_image(path: Path) -> None:
     image = Image.new("RGB", (1200, 240), "white")
-    font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 72)
-    ImageDraw.Draw(image).text((30, 70), "SheJane OCR 2026", font=font, fill="black")
+    text_font = font(
+        72,
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    )
+    ImageDraw.Draw(image).text((30, 70), "SheJane OCR 2026", font=text_font, fill="black")
     image.save(path, format="PNG", optimize=False)
 
 
@@ -106,15 +127,39 @@ def multi_invocation(sources: list[Path]) -> dict[str, object]:
     return request
 
 
-def write_quality_images(base: Path, rotated: Path) -> None:
-    cjk_font = ImageFont.truetype("/System/Library/Fonts/Hiragino Sans GB.ttc", 64)
-    latin_font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 56)
-    handwriting_font = ImageFont.truetype(
-        "/System/Library/Fonts/Supplemental/Comic Sans MS.ttf", 54
+def write_quality_images(base: Path, rotated: Path) -> tuple[str, ...]:
+    cjk_font = optional_font(
+        64,
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyhbd.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
+    )
+    latin_font = font(
+        56,
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    )
+    handwriting_font = font(
+        54,
+        "/System/Library/Fonts/Supplemental/Comic Sans MS.ttf",
+        "C:/Windows/Fonts/comic.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "C:/Windows/Fonts/arial.ttf",
     )
     image = Image.new("RGB", (1400, 800), "white")
     drawing = ImageDraw.Draw(image)
-    drawing.text((40, 40), "石间 OCR 测试 2026", font=cjk_font, fill="black")
+    if cjk_font is None:
+        heading = "SHEJANE OCR TEST 2026"
+        heading_font = latin_font
+        heading_marker = "shejaneocrtest2026"
+    else:
+        heading = "石间 OCR 测试 2026"
+        heading_font = cjk_font
+        heading_marker = "石间ocr测试2026"
+    drawing.text((40, 40), heading, font=heading_font, fill="black")
     drawing.text((40, 170), "LOW CONTRAST TEXT", font=latin_font, fill=(145, 145, 145))
     drawing.text((40, 320), "LEFT COLUMN", font=latin_font, fill="black")
     drawing.text((760, 320), "RIGHT COLUMN", font=latin_font, fill="black")
@@ -124,6 +169,14 @@ def write_quality_images(base: Path, rotated: Path) -> None:
     rotated_image = Image.new("RGB", (1000, 220), "white")
     ImageDraw.Draw(rotated_image).text((40, 65), "ROTATED 180", font=latin_font, fill="black")
     rotated_image.rotate(180).save(rotated, format="PNG", optimize=False)
+    return (
+        heading_marker,
+        "lowcontrasttext",
+        "leftcolumn",
+        "rightcolumn",
+        "handwritingsample",
+        "rotated180",
+    )
 
 
 @pytest.mark.asyncio
@@ -171,7 +224,7 @@ async def test_real_rapidocr_asset_multilingual_layout_and_rotation_gate(
     base = input_root / "source" / "quality.png"
     rotated = input_root / "source" / "rotated.png"
     base.parent.mkdir(parents=True)
-    write_quality_images(base, rotated)
+    expected_markers = write_quality_images(base, rotated)
     output_root = tmp_path / "output"
     output_root.mkdir()
 
@@ -182,14 +235,7 @@ async def test_real_rapidocr_asset_multilingual_layout_and_rotation_gate(
     assert result["status"] == "succeeded", result
     recognized = [image["full_text"] for image in result["output"]["images"]]
     normalized = " ".join(recognized).replace(" ", "").casefold()
-    for expected in (
-        "石间ocr测试2026",
-        "lowcontrasttext",
-        "leftcolumn",
-        "rightcolumn",
-        "handwritingsample",
-        "rotated180",
-    ):
+    for expected in expected_markers:
         assert expected in normalized, recognized
 
 

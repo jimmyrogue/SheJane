@@ -214,27 +214,32 @@ async def invoke_managed_worker(
         process_options: dict[str, Any] = {}
         if vm_lease_fd is not None:
             process_options["pass_fds"] = (vm_lease_fd,)
+        process_environment = {
+            "PATH": os.defpath,
+            "PYTHONUTF8": "1",
+            "ELECTRON_RUN_AS_NODE": "1",
+            "SHEJANE_PLUGIN_INPUT_ROOT": str(input_root),
+            "SHEJANE_PLUGIN_OUTPUT_ROOT": str(output_root),
+            "SHEJANE_PLUGIN_ACCESS_ISOLATED": "1" if access_isolated else "0",
+            "SHEJANE_PLUGIN_RESOURCE_ISOLATED": "1" if resource_isolated else "0",
+            "SHEJANE_PLUGIN_SANDBOXED": "1" if sandboxed else "0",
+            "SHEJANE_PLUGIN_RUNTIME_ASSETS": json.dumps(
+                {asset.asset_id: str(asset.payload) for asset in ordered_assets},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+        if os.name == "nt":
+            for name in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP"):
+                if value := os.environ.get(name):
+                    process_environment[name] = value
         process = await asyncio.create_subprocess_exec(
             *command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={
-                "PATH": os.defpath,
-                "PYTHONUTF8": "1",
-                "ELECTRON_RUN_AS_NODE": "1",
-                "SHEJANE_PLUGIN_INPUT_ROOT": str(input_root),
-                "SHEJANE_PLUGIN_OUTPUT_ROOT": str(output_root),
-                "SHEJANE_PLUGIN_ACCESS_ISOLATED": "1" if access_isolated else "0",
-                "SHEJANE_PLUGIN_RESOURCE_ISOLATED": "1" if resource_isolated else "0",
-                "SHEJANE_PLUGIN_SANDBOXED": "1" if sandboxed else "0",
-                "SHEJANE_PLUGIN_RUNTIME_ASSETS": json.dumps(
-                    {asset.asset_id: str(asset.payload) for asset in ordered_assets},
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-            },
+            env=process_environment,
             cwd=(str(package_root) if package_root is not None and vm_resources is None else None),
             start_new_session=os.name != "nt",
             limit=max_frame_bytes + 1,

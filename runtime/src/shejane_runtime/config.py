@@ -57,17 +57,27 @@ def default_browser_qa_runtime_asset() -> Path | None:
 
 
 def default_ocr_package() -> Path | None:
-    if sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+    machine = platform.machine().lower()
+    if sys.platform == "darwin" and machine in {"arm64", "aarch64"}:
+        target = "darwin-arm64"
+    elif sys.platform == "win32" and machine in {"amd64", "x86_64"}:
+        target = "windows-amd64"
+    else:
         return None
     frozen_root = getattr(sys, "_MEIPASS", None)
     if not frozen_root:
         return None
-    package = Path(frozen_root) / "builtin-plugins" / "ocr-0.1.0-darwin-arm64.shejane-plugin"
+    package = Path(frozen_root) / "builtin-plugins" / f"ocr-0.1.0-{target}.shejane-plugin"
     return package if package.is_file() else None
 
 
 def default_ocr_runtime_asset() -> Path | None:
-    if sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+    machine = platform.machine().lower()
+    if sys.platform == "darwin" and machine in {"arm64", "aarch64"}:
+        target = "darwin-arm64"
+    elif sys.platform == "win32" and machine in {"amd64", "x86_64"}:
+        target = "windows-amd64"
+    else:
         return None
     frozen_root = getattr(sys, "_MEIPASS", None)
     if not frozen_root:
@@ -75,7 +85,7 @@ def default_ocr_runtime_asset() -> Path | None:
     asset = (
         Path(frozen_root)
         / "builtin-assets"
-        / "rapidocr-runtime-3.9.1-darwin-arm64.shejane-runtime-asset"
+        / f"rapidocr-runtime-3.9.1-{target}.shejane-runtime-asset"
     )
     return asset if asset.is_file() else None
 

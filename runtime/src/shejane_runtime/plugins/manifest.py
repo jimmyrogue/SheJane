@@ -67,7 +67,7 @@ ManagedWorkerPlatform = Literal[
     "windows/arm64",
     "windows/amd64",
 ]
-HostPlatform = Literal["darwin/arm64"]
+HostPlatform = Literal["darwin/arm64", "windows/amd64"]
 
 
 def _package_path(value: str) -> str:

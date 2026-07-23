@@ -14,7 +14,7 @@ The platform supports two public developer-selected execution types and one rese
 
 - `wasi`: capability-oriented WebAssembly/WASI execution with no ambient host access;
 - `managed_worker`: native local executable supervised out of process and, for untrusted code, enclosed by a platform-specific OS isolation adapter.
-- `builtin`: selects an audited Runtime-owned host adapter and exact canonical package digest. Currently limited to `computer_use`; modified package bytes fail installation and P6 revalidation.
+- `builtin`: selects an audited Runtime-owned host adapter and exact canonical package digest. Currently limited to the fixed `computer_use`, `browser_qa`, and `ocr` identities; modified package bytes fail installation and P6 revalidation.
 
 Both use the same manifest and Action protocol. Publisher identity, signature validity, execution type, capability grant, and platform isolation status are independent facts.
 

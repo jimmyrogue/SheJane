@@ -71,6 +71,33 @@ pathlib.Path(sys.argv[2]).write_text(json.dumps(response), encoding="utf-8")
     )
 
 
+def test_windows_ocr_executor_selects_native_worker_entrypoint(tmp_path: Path) -> None:
+    package_root = tmp_path / "package"
+    entrypoint = package_root / "payload" / "ocr-worker.exe"
+    entrypoint.parent.mkdir(parents=True)
+    entrypoint.write_bytes(b"MZ")
+    asset_root = tmp_path / "asset"
+    payload = asset_root / "payload"
+    payload.mkdir(parents=True)
+    sbom = asset_root / "sbom.json"
+    sbom.write_text("{}", encoding="utf-8")
+    asset = RuntimeAssetHandle(
+        asset_id="org.rapidocr.runtime",
+        version="3.9.1+ppocrv6-medium.1",
+        platform="windows/amd64",
+        digest="sha256:" + "a" * 64,
+        root=asset_root,
+        payload=payload,
+        license="Apache-2.0",
+        source_url="https://github.com/RapidAI/RapidOCR",
+        sbom=sbom,
+    )
+
+    executor = OCRActionExecutor(package_root, asset)
+
+    assert executor._executor.command == (str(entrypoint),)
+
+
 def invocation(
     input_ids: list[str],
     sources: list[tuple[str, Path, str]],

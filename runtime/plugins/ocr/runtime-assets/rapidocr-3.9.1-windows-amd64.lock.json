@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "asset_id": "org.rapidocr.runtime",
+  "asset_version": "3.9.1+ppocrv6-medium.1",
+  "platform": "windows/amd64",
+  "python_version": "3.12",
+  "build_tools": {
+    "python": "3.12.10",
+    "pyinstaller": "6.21.0"
+  },
+  "source_date_epoch": 1784160000,
+  "packages": [
+    {"filename":"altgraph-0.17.5-py2.py3-none-any.whl","size_bytes":21228,"sha256":"f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597"},
+    {"filename":"antlr4-python3-runtime-4.9.3.tar.gz","size_bytes":117034,"sha256":"f224469b4168294902bb1efa80a8bf7855f24c99aef99cbefc1bcd3cce77881b"},
+    {"filename":"certifi-2026.6.17-py3-none-any.whl","size_bytes":133289,"sha256":"2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db"},
+    {"filename":"charset_normalizer-3.4.9-cp312-cp312-win_amd64.whl","size_bytes":162557,"sha256":"4b3dac63058cc36820b0dd072f89898604e2d39686fe05321729d00d8ac185a0"},
+    {"filename":"colorlog-6.10.1-py3-none-any.whl","size_bytes":11743,"sha256":"2d7e8348291948af66122cff006c9f8da6255d224e7cf8e37d8de2df3bad8c9c"},
+    {"filename":"flatbuffers-25.12.19-py2.py3-none-any.whl","size_bytes":26661,"sha256":"7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4"},
+    {"filename":"idna-3.18-py3-none-any.whl","size_bytes":65455,"sha256":"7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2"},
+    {"filename":"numpy-2.2.6-cp312-cp312-win_amd64.whl","size_bytes":12614190,"sha256":"c1f9540be57940698ed329904db803cf7a402f3fc200bfe599334c9bd84a40b2"},
+    {"filename":"omegaconf-2.3.1-py3-none-any.whl","size_bytes":79502,"sha256":"3d701d14e9a8828f1edd28bb70b725908b34277cdd72cf7d6a83f94dadc6b6a0"},
+    {"filename":"onnxruntime-1.27.0-cp312-cp312-win_amd64.whl","size_bytes":13358769,"sha256":"20c321cf187ba496e648acf6b4cf90b4d398b0d17c2a77fdaeba365b908cc1c1"},
+    {"filename":"opencv_python_headless-4.12.0.88-cp37-abi3-win_amd64.whl","size_bytes":38923559,"sha256":"86b413bdd6c6bf497832e346cd5371995de148e579b9774f8eba686dee3f5528"},
+    {"filename":"packaging-26.2-py3-none-any.whl","size_bytes":100195,"sha256":"5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"},
+    {"filename":"pefile-2024.8.26-py3-none-any.whl","size_bytes":74766,"sha256":"76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f"},
+    {"filename":"pillow-12.3.0-cp312-cp312-win_amd64.whl","size_bytes":7227137,"sha256":"a2b55dd6b2a4c4b7d87ffa56bdb33fdc5fdb9a462173861a7bc097f17d91cb09"},
+    {"filename":"protobuf-7.35.1-cp310-abi3-win_amd64.whl","size_bytes":439996,"sha256":"230a75ddfc2de4806e56696ce9640c1cdfdb6543b7cfce98d42a4c0a0e7bdb87"},
+    {"filename":"pyclipper-1.4.0-cp312-cp312-win_amd64.whl","size_bytes":104619,"sha256":"d1e5498d883b706a4ce636247f0d830c6eb34a25b843a1b78e2c969754ca9037"},
+    {"filename":"pyinstaller-6.21.0-py3-none-win_amd64.whl","size_bytes":1397487,"sha256":"7fae06c494ce0ebfe6bd3055c0e409def884f63af2e3705d06bd431ad9237fc7"},
+    {"filename":"pyinstaller_hooks_contrib-2026.6-py3-none-any.whl","size_bytes":457159,"sha256":"fd13b8ac126b35361175edacd41a0d97080b75dd5f4b594ecefefff969509dd3"},
+    {"filename":"pywin32_ctypes-0.2.3-py3-none-any.whl","size_bytes":30756,"sha256":"8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8"},
+    {"filename":"pyyaml-6.0.3-cp312-cp312-win_amd64.whl","size_bytes":154003,"sha256":"5fcd34e47f6e0b794d17de1b4ff496c00986e1c83f7ab2fb8fcfe9616ff7477b"},
+    {"filename":"rapidocr-3.9.1-py3-none-any.whl","size_bytes":27274755,"sha256":"600885e4e94e0b427abad394fccb0ec1d3c9118a215ca435bf7680aeae0e292b"},
+    {"filename":"requests-2.34.2-py3-none-any.whl","size_bytes":73075,"sha256":"2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"},
+    {"filename":"setuptools-83.0.0-py3-none-any.whl","size_bytes":1008090,"sha256":"29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"},
+    {"filename":"shapely-2.1.2-cp312-cp312-win_amd64.whl","size_bytes":1722861,"sha256":"743044b4cfb34f9a67205cee9279feaf60ba7d02e69febc2afc609047cb49179"},
+    {"filename":"six-1.17.0-py2.py3-none-any.whl","size_bytes":11050,"sha256":"4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"},
+    {"filename":"tqdm-4.68.4-py3-none-any.whl","size_bytes":676612,"sha256":"5168118b2368f48c561afda8020fd79195b1bdb0bdf8086b88442c267a315dc2"},
+    {"filename":"urllib3-2.7.0-py3-none-any.whl","size_bytes":131087,"sha256":"9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"}
+  ]
+}

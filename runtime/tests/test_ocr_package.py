@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from shejane_runtime.plugins.manifest import PluginManifest, load_plugin_manifest
@@ -34,12 +35,24 @@ def test_ocr_manifest_and_action_schemas_are_strict() -> None:
             assert schema["additionalProperties"] is False
 
 
-def test_ocr_package_is_deterministic_and_preserves_onedir_worker(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("target_platform", "entrypoint", "library"),
+    [
+        ("darwin/arm64", "ocr-worker", "libpython.so"),
+        ("windows/amd64", "ocr-worker.exe", "python312.dll"),
+    ],
+)
+def test_ocr_package_is_deterministic_and_preserves_onedir_worker(
+    tmp_path: Path,
+    target_platform: str,
+    entrypoint: str,
+    library: str,
+) -> None:
     worker = tmp_path / "ocr-worker"
     worker.mkdir()
-    (worker / "ocr-worker").write_bytes(b"worker")
+    (worker / entrypoint).write_bytes(b"worker")
     (worker / "_internal").mkdir()
-    (worker / "_internal" / "libpython.so").write_bytes(b"library")
+    (worker / "_internal" / library).write_bytes(b"library")
     outputs = [tmp_path / "first.shejane-plugin", tmp_path / "second.shejane-plugin"]
     for output in outputs:
         subprocess.run(
@@ -47,7 +60,7 @@ def test_ocr_package_is_deterministic_and_preserves_onedir_worker(tmp_path: Path
                 sys.executable,
                 str(BUILDER),
                 "--platform",
-                "darwin/arm64",
+                target_platform,
                 "--runtime-asset-digest",
                 "sha256:" + "a" * 64,
                 "--worker",
@@ -62,6 +75,6 @@ def test_ocr_package_is_deterministic_and_preserves_onedir_worker(tmp_path: Path
     extracted = tmp_path / "extracted"
     extract_plugin_archive(outputs[0], extracted)
     manifest = load_plugin_manifest(extracted)
-    assert manifest.runtime.execution.platforms == ["darwin/arm64"]
-    assert (extracted / "payload/ocr-worker").read_bytes() == b"worker"
-    assert (extracted / "payload/_internal/libpython.so").read_bytes() == b"library"
+    assert manifest.runtime.execution.platforms == [target_platform]
+    assert (extracted / "payload" / entrypoint).read_bytes() == b"worker"
+    assert (extracted / "payload/_internal" / library).read_bytes() == b"library"

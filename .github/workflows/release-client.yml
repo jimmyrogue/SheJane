@@ -453,6 +453,28 @@ jobs:
           path: ${{ runner.temp }}/rapidocr-runtime-darwin-arm64-a.shejane-runtime-asset
           if-no-files-found: error
 
+  windows-amd64-ocr:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+      - uses: astral-sh/setup-uv@v5
+      - name: Install Runtime test dependencies
+        working-directory: runtime
+        run: uv sync --frozen
+      - name: Build and execute locked Windows OCR artifacts
+        shell: pwsh
+        run: |
+          ./scripts/build-ocr-windows-amd64.ps1 `
+            -OutputDirectory "$env:RUNNER_TEMP/shejane-ocr-output"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ocr-windows-amd64
+          path: ${{ runner.temp }}/shejane-ocr-output
+          if-no-files-found: error
+
   darwin-arm64-speech-model:
     runs-on: macos-15
     steps:
@@ -753,6 +775,7 @@ jobs:
       - linux-arm64-node-runtime
       - linux-arm64-ocr-runtime
       - darwin-arm64-ocr-runtime
+      - windows-amd64-ocr
       - linux-arm64-ocr-worker
       - linux-arm64-office-runtime
       - linux-arm64-pdf-runtime
@@ -968,6 +991,11 @@ jobs:
           name: rapidocr-runtime-darwin-arm64
           path: ${{ runner.temp }}/shejane-rapidocr-runtime-darwin
       - uses: actions/download-artifact@v4
+        if: matrix.platform == 'windows' && matrix.arch == 'x64'
+        with:
+          name: ocr-windows-amd64
+          path: ${{ runner.temp }}/shejane-ocr-windows
+      - uses: actions/download-artifact@v4
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         with:
           name: whisper-runtime-linux-arm64
@@ -1165,6 +1193,12 @@ jobs:
             ./scripts/build-computer-use-builtin.sh
             ./scripts/build-browser-qa-builtin.sh
             ./scripts/build-ocr-builtin.sh
+          elif [[ "${{ matrix.platform }}" == "windows" && "${{ matrix.arch }}" == "x64" ]]; then
+            mkdir -p runtime/plugins/ocr/dist
+            cp "${RUNNER_TEMP}/shejane-ocr-windows/ocr-0.1.0-windows-amd64.shejane-plugin" \
+              runtime/plugins/ocr/dist/
+            cp "${RUNNER_TEMP}/shejane-ocr-windows/rapidocr-runtime-3.9.1-windows-amd64.shejane-runtime-asset" \
+              runtime/plugins/ocr/dist/
           fi
           cd runtime
           uv run python -m PyInstaller shejane-runtime.spec --noconfirm --clean

@@ -119,6 +119,19 @@ if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64
     if not ocr_runtime_asset.is_file():
         raise SystemExit("RapidOCR fixed Runtime Asset must be staged before PyInstaller")
     datas.append((str(ocr_runtime_asset), "builtin-assets"))
+elif sys.platform == "win32" and platform.machine().lower() in {"amd64", "x86_64"}:
+    ocr_package = Path(
+        "plugins/ocr/dist/ocr-0.1.0-windows-amd64.shejane-plugin"
+    )
+    if not ocr_package.is_file():
+        raise SystemExit("Windows OCR fixed capability package must be built before PyInstaller")
+    datas.append((str(ocr_package), "builtin-plugins"))
+    ocr_runtime_asset = Path(
+        "plugins/ocr/dist/rapidocr-runtime-3.9.1-windows-amd64.shejane-runtime-asset"
+    )
+    if not ocr_runtime_asset.is_file():
+        raise SystemExit("Windows RapidOCR fixed Runtime Asset must be staged before PyInstaller")
+    datas.append((str(ocr_runtime_asset), "builtin-assets"))
 # uvicorn loads its loop / protocol / lifespan implementations dynamically.
 hiddenimports += collect_submodules("uvicorn")
 
