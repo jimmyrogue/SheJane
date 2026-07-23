@@ -12,7 +12,7 @@ make test-e2e
 
 命令先运行三个固定插件的执行级 E2E：Browser QA 启动真实 Chromium 并完成打开、填写、点击、截图和关闭；Computer Use 启动独立桥接进程并完成观察、`stateId` 约束下的操作与进程回收；OCR 经生产 Plugin adapter 写入文本与 JSON Artifact，并在当前平台存在 RapidOCR Runtime Asset 时追加真实识别质量、确定性和恶意输入门禁。Browser QA 的固定浏览器或 Computer Use 所需的 Node 缺失会直接失败，不会静默跳过；可设置 `SHEJANE_REQUIRE_NATIVE_OCR_E2E=1` 将原生 OCR 资产缺失也升级为失败。
 
-Windows AMD64 另有强制的 `Windows AMD64 OCR production gate`：在原生 Windows runner 上从锁定输入双构建 Runtime Asset、冻结 Worker、生成 digest-bound 插件，并以冻结 Worker/引擎运行同一套真实质量与 hostile-input 测试。该门禁不依赖开发机已有 Python 包，也不允许缺少原生资产时跳过。
+Windows AMD64 另有强制的 `Windows AMD64 fixed capabilities production gate`：OCR 从锁定输入双构建 Runtime Asset、冻结 Worker、生成 digest-bound 插件，并以冻结 Worker/引擎运行真实质量与 hostile-input 测试；Browser QA 安装 Playwright 1.61.1 固定的 Chromium 1228，双构建 Runtime Asset 后使用最终插件包完成打开、填写、点击、截图和关闭。两条路径都在原生 Windows runner 执行，不依赖开发机已有资产，也不允许缺少原生产物时跳过。
 
 随后脚本会创建临时数据目录、用户目录、workspace 和 Electron `userData`，启动启用了确定性测试模型的 Runtime，等待健康检查，执行 Runtime 契约与崩溃恢复测试，再运行固定版本的官方 MCP conformance `initialize` / `tools_call` / `sse-retry` 场景，最后启动 Vite 和真实 Electron 窗口执行 Playwright。当前一次完整运行包含 109 条 live Runtime black-box test、4 条真实进程恢复 test、3 组官方 MCP conformance 场景和 17 条 Electron critical flow。所有 conformance 调用都经过生产 `_MCPServerSupervisor` 的 Streamable HTTP、目录发现和 Tool adapter，不使用已知失败 baseline。脚本结束时关闭所有进程并清理数据。失败时会打印 Runtime 日志，并把 Playwright 截图、trace、Runtime 日志、完整 diagnostics JSON 和逐行 SSE 事件保留在 `.tmp/e2e-artifacts`；事件行包含 run ID、command ID、seq、event type 和 payload。它不读取真实用户配置、Skill、MCP 或密钥，也不访问模型供应商网络。
 

@@ -25,6 +25,7 @@ RUNTIME_ASSET="${ROOT_DIR}/runtime/plugins/browser-qa/dist/browser-qa-runtime-1.
 
 mkdir -p "$(dirname "${OUTPUT}")"
 uv run --project runtime python runtime/plugins/browser-qa/build_runtime_asset.py \
+  --platform darwin/arm64 \
   --browser "${BROWSERS_ROOT}/chromium-1228" \
   --headless-shell "${BROWSERS_ROOT}/chromium_headless_shell-1228" \
   --output "${RUNTIME_ASSET}"

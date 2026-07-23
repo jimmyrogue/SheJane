@@ -76,12 +76,14 @@ for await (const line of lines) {
     pid: process.pid,
     profile: process.env.SHEJANE_BROWSER_QA_PROFILE,
     proxy: process.env.SHEJANE_BROWSER_QA_PROXY,
+    systemRoot: process.env.SYSTEMROOT,
   } }) + '\\n');
 }
 """,
         encoding="utf-8",
     )
     monkeypatch.setenv("SHEJANE_RUNTIME_NODE_PATH", node)
+    monkeypatch.setenv("SYSTEMROOT", "C:\\Windows")
     profile = tmp_path / "profiles" / "workspace"
     service = BrowserQAService(
         package,
@@ -95,6 +97,7 @@ for await (const line of lines) {
     assert first["pid"] == second["pid"]
     assert first["profile"] == str(profile)
     assert str(first["proxy"]).startswith("http://127.0.0.1:")
+    assert first["systemRoot"] == "C:\\Windows"
 
     await service.aclose()
     with pytest.raises(ProcessLookupError):

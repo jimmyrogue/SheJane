@@ -18,7 +18,11 @@ PLAYWRIGHT_VERSION = "1.61.1"
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--platform", choices=("darwin/arm64",), required=True)
+    parser.add_argument(
+        "--platform",
+        choices=("darwin/arm64", "windows/amd64"),
+        required=True,
+    )
     parser.add_argument("--runtime-asset-digest", required=True)
     parser.add_argument("--playwright", type=Path, required=True)
     parser.add_argument("--playwright-core", type=Path, required=True)

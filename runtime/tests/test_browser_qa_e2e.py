@@ -15,8 +15,9 @@ from shejane_runtime.agent.context_builder import RuntimeContext
 from shejane_runtime.auth import LOCAL_OWNER_PRINCIPAL_ID
 from shejane_runtime.plugins.browser_qa import BrowserQAActionExecutor, BrowserQAService
 from shejane_runtime.plugins.catalog import PluginActionDescriptor
+from shejane_runtime.plugins.package import extract_plugin_archive
 from shejane_runtime.plugins.platforms import current_managed_worker_platform
-from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle
+from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle, RuntimeAssetStore
 from shejane_runtime.plugins.tools import PluginToolAdapter
 from shejane_runtime.store.sqlite import LocalStore
 from shejane_runtime.tools.runtime import RuntimeToolExecution
@@ -98,6 +99,24 @@ def build_test_package(root: Path) -> None:
     )
 
 
+def install_test_artifacts(
+    tmp_path: Path, host_platform: str
+) -> tuple[Path, RuntimeAssetHandle] | None:
+    package_source = os.environ.get("SHEJANE_TEST_BROWSER_QA_PACKAGE")
+    asset_source = os.environ.get("SHEJANE_TEST_BROWSER_QA_RUNTIME_ASSET")
+    if package_source is None and asset_source is None:
+        return None
+    if not package_source or not asset_source:
+        pytest.fail("Browser QA package and Runtime Asset must be supplied together")
+    package = tmp_path / "package"
+    extract_plugin_archive(Path(package_source), package)
+    runtime_asset = RuntimeAssetStore(tmp_path / "asset-store").install(
+        Path(asset_source),
+        target_platform=host_platform,
+    )
+    return package, runtime_asset
+
+
 def action_descriptor(package: Path, action_id: str) -> PluginActionDescriptor:
     template = json.loads(
         (PLUGIN_ROOT / ".shejane-plugin" / "plugin.template.json").read_text(encoding="utf-8")
@@ -137,20 +156,36 @@ async def test_browser_qa_real_chromium_open_act_observe_and_screenshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     node = shutil.which("node")
-    if (
-        node is None
-        or not PLAYWRIGHT.is_dir()
+    artifacts_configured = bool(os.environ.get("SHEJANE_TEST_BROWSER_QA_PACKAGE"))
+    source_runtime_missing = (
+        not PLAYWRIGHT.is_dir()
         or not PLAYWRIGHT_CORE.is_dir()
         or not BROWSER.is_dir()
         or not HEADLESS_SHELL.is_dir()
-    ):
+    )
+    if node is None or (not artifacts_configured and source_runtime_missing):
         if os.environ.get("SHEJANE_REQUIRE_FIXED_PLUGIN_E2E") == "1":
             pytest.fail("pinned local Playwright runtime is required")
         pytest.skip("pinned local Playwright runtime is unavailable")
     host_platform = current_managed_worker_platform()
     assert host_platform is not None
-    package = tmp_path / "package"
-    build_test_package(package)
+    installed = install_test_artifacts(tmp_path, host_platform)
+    if installed is None:
+        package = tmp_path / "package"
+        build_test_package(package)
+        runtime_asset = RuntimeAssetHandle(
+            asset_id="org.shejane.browser-qa.runtime",
+            version="1.61.1+chromium1228.1",
+            platform=host_platform,
+            digest="sha256:" + "a" * 64,
+            root=package,
+            payload=package / "payload",
+            license="Apache-2.0 AND BSD-3-Clause",
+            source_url="https://github.com/microsoft/playwright",
+            sbom=package / "sbom.json",
+        )
+    else:
+        package, runtime_asset = installed
     server = ThreadingHTTPServer(("127.0.0.1", 0), FixtureHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -171,17 +206,7 @@ async def test_browser_qa_real_chromium_open_act_observe_and_screenshot(
         package,
         workspace_root=tmp_path,
         profile_root=tmp_path / "profile",
-        runtime_asset=RuntimeAssetHandle(
-            asset_id="org.shejane.browser-qa.runtime",
-            version="1.61.1+chromium1228.1",
-            platform=host_platform,
-            digest="sha256:" + "a" * 64,
-            root=package,
-            payload=package / "payload",
-            license="Apache-2.0 AND BSD-3-Clause",
-            source_url="https://github.com/microsoft/playwright",
-            sbom=package / "sbom.json",
-        ),
+        runtime_asset=runtime_asset,
         headless=True,
     )
     adapter = PluginToolAdapter(

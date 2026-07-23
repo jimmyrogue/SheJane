@@ -14,6 +14,23 @@ from .executor import ActionExecutor
 MAX_FRAME_BYTES = 24 * 1024 * 1024
 COMPUTER_USE_PLUGIN_ID = "org.shejane.computer-use"
 COMPUTER_USE_PLUGIN_VERSION = "0.2.0"
+_CHILD_ENVIRONMENT_KEYS = (
+    "HOME",
+    "PATH",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+)
 
 
 def is_allowed_computer_use_package(*, plugin_id: str, version: str, handler: str) -> bool:
@@ -257,11 +274,7 @@ class ComputerUseService:
         node = configured_node or shutil.which("node") or ""
         if not node or not Path(node).is_file():
             raise self._error("requires the Runtime-provided Node.js executable")
-        env = {
-            key: os.environ[key]
-            for key in ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE")
-            if key in os.environ
-        }
+        env = {key: os.environ[key] for key in _CHILD_ENVIRONMENT_KEYS if key in os.environ}
         env.update({"ELECTRON_RUN_AS_NODE": "1", **self._extra_environment()})
         self._stderr.clear()
         self._process = await asyncio.create_subprocess_exec(

@@ -15,6 +15,11 @@ ASSET_VERSION = "1.61.1+chromium1228.1"
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--platform",
+        choices=("darwin/arm64", "windows/amd64"),
+        required=True,
+    )
     parser.add_argument("--browser", type=Path, required=True)
     parser.add_argument("--headless-shell", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -44,7 +49,7 @@ def main() -> None:
         executables = sorted(
             path.relative_to(stage).as_posix()
             for path in stage.rglob("*")
-            if not path.is_symlink() and path.is_file() and path.stat().st_mode & 0o111
+            if is_executable(path, args.platform)
         )
         if not executables or len(executables) > 256:
             raise SystemExit("Browser QA Runtime Asset executable inventory is invalid")
@@ -52,7 +57,7 @@ def main() -> None:
             "schema_version": 1,
             "id": "org.shejane.browser-qa.runtime",
             "version": ASSET_VERSION,
-            "platform": "darwin/arm64",
+            "platform": args.platform,
             "license": "Apache-2.0 AND BSD-3-Clause",
             "source_url": "https://github.com/microsoft/playwright",
             "payload": "payload",
@@ -67,10 +72,10 @@ def main() -> None:
             "spdxVersion": "SPDX-2.3",
             "dataLicense": "CC0-1.0",
             "SPDXID": "SPDXRef-DOCUMENT",
-            "name": "shejane-browser-qa-runtime-darwin-arm64",
+            "name": f"shejane-browser-qa-runtime-{args.platform.replace('/', '-')}",
             "documentNamespace": (
                 "https://shejane.org/spdx/runtime-assets/browser-qa/"
-                f"{ASSET_VERSION}/darwin-arm64"
+                f"{ASSET_VERSION}/{args.platform.replace('/', '-')}"
             ),
             "creationInfo": {
                 "created": "2026-07-23T00:00:00Z",
@@ -112,6 +117,14 @@ def main() -> None:
             encoding="utf-8",
         )
         pack_asset(stage, args.output)
+
+
+def is_executable(path: Path, target_platform: str) -> bool:
+    if path.is_symlink() or not path.is_file():
+        return False
+    if target_platform == "windows/amd64":
+        return path.suffix.lower() == ".exe"
+    return bool(path.stat().st_mode & 0o111)
 
 
 def pack_asset(source: Path, output: Path) -> None:

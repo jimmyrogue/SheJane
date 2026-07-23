@@ -34,16 +34,31 @@ def default_computer_use_package() -> Path | None:
 
 
 def default_browser_qa_package() -> Path | None:
+    machine = platform.machine().lower()
+    if sys.platform == "darwin" and machine in {"arm64", "aarch64"}:
+        target = "darwin-arm64"
+    elif sys.platform == "win32" and machine in {"amd64", "x86_64"}:
+        target = "windows-amd64"
+    else:
+        return None
     frozen_root = getattr(sys, "_MEIPASS", None)
     if not frozen_root:
         return None
-    host = f"{sys.platform}-{'arm64' if platform.machine().lower() in {'arm64', 'aarch64'} else 'amd64'}"
-    package = Path(frozen_root) / "builtin-plugins" / f"browser-qa-0.1.0-{host}.shejane-plugin"
+    package = (
+        Path(frozen_root)
+        / "builtin-plugins"
+        / f"browser-qa-0.1.0-{target}.shejane-plugin"
+    )
     return package if package.is_file() else None
 
 
 def default_browser_qa_runtime_asset() -> Path | None:
-    if sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+    machine = platform.machine().lower()
+    if sys.platform == "darwin" and machine in {"arm64", "aarch64"}:
+        target = "darwin-arm64"
+    elif sys.platform == "win32" and machine in {"amd64", "x86_64"}:
+        target = "windows-amd64"
+    else:
         return None
     frozen_root = getattr(sys, "_MEIPASS", None)
     if not frozen_root:
@@ -51,7 +66,7 @@ def default_browser_qa_runtime_asset() -> Path | None:
     asset = (
         Path(frozen_root)
         / "builtin-assets"
-        / "browser-qa-runtime-1.61.1-darwin-arm64.shejane-runtime-asset"
+        / f"browser-qa-runtime-1.61.1-{target}.shejane-runtime-asset"
     )
     return asset if asset.is_file() else None
 

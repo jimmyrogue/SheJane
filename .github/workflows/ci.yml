@@ -160,11 +160,21 @@ jobs:
             exit $exitCode
           }
 
-  windows-ocr:
-    name: Windows AMD64 OCR production gate
+  windows-fixed-capabilities:
+    name: Windows AMD64 fixed capabilities production gate
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - uses: actions/setup-python@v5
         with:
@@ -172,15 +182,20 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
+      - name: Install workspace dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
+
       - name: Install Runtime test dependencies
         working-directory: runtime
         run: uv sync --frozen
 
-      - name: Build and execute locked Windows OCR artifacts
+      - name: Build and execute locked Windows fixed capabilities
         shell: pwsh
         run: |
           ./scripts/build-ocr-windows-amd64.ps1 `
-            -OutputDirectory "$env:RUNNER_TEMP/shejane-ocr-output"
+            -OutputDirectory "$env:RUNNER_TEMP/shejane-fixed-capabilities"
+          ./scripts/build-browser-qa-windows-amd64.ps1 `
+            -OutputDirectory "$env:RUNNER_TEMP/shejane-fixed-capabilities"
 
   # Full black-box Runtime E2E. The repository script owns isolation, startup,
   # readiness, cleanup and failure logs so local and CI runs cannot drift.

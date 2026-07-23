@@ -453,26 +453,38 @@ jobs:
           path: ${{ runner.temp }}/rapidocr-runtime-darwin-arm64-a.shejane-runtime-asset
           if-no-files-found: error
 
-  windows-amd64-ocr:
+  windows-amd64-fixed-plugins:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12.10"
       - uses: astral-sh/setup-uv@v5
+      - name: Install workspace dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
       - name: Install Runtime test dependencies
         working-directory: runtime
         run: uv sync --frozen
-      - name: Build and execute locked Windows OCR artifacts
+      - name: Build and execute locked Windows fixed capabilities
         shell: pwsh
         run: |
           ./scripts/build-ocr-windows-amd64.ps1 `
-            -OutputDirectory "$env:RUNNER_TEMP/shejane-ocr-output"
+            -OutputDirectory "$env:RUNNER_TEMP/shejane-fixed-capabilities"
+          ./scripts/build-browser-qa-windows-amd64.ps1 `
+            -OutputDirectory "$env:RUNNER_TEMP/shejane-fixed-capabilities"
       - uses: actions/upload-artifact@v4
         with:
-          name: ocr-windows-amd64
-          path: ${{ runner.temp }}/shejane-ocr-output
+          name: fixed-plugins-windows-amd64
+          path: ${{ runner.temp }}/shejane-fixed-capabilities
           if-no-files-found: error
 
   darwin-arm64-speech-model:
@@ -775,7 +787,7 @@ jobs:
       - linux-arm64-node-runtime
       - linux-arm64-ocr-runtime
       - darwin-arm64-ocr-runtime
-      - windows-amd64-ocr
+      - windows-amd64-fixed-plugins
       - linux-arm64-ocr-worker
       - linux-arm64-office-runtime
       - linux-arm64-pdf-runtime
@@ -993,8 +1005,8 @@ jobs:
       - uses: actions/download-artifact@v4
         if: matrix.platform == 'windows' && matrix.arch == 'x64'
         with:
-          name: ocr-windows-amd64
-          path: ${{ runner.temp }}/shejane-ocr-windows
+          name: fixed-plugins-windows-amd64
+          path: ${{ runner.temp }}/shejane-fixed-plugins-windows
       - uses: actions/download-artifact@v4
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         with:
@@ -1195,10 +1207,15 @@ jobs:
             ./scripts/build-ocr-builtin.sh
           elif [[ "${{ matrix.platform }}" == "windows" && "${{ matrix.arch }}" == "x64" ]]; then
             mkdir -p runtime/plugins/ocr/dist
-            cp "${RUNNER_TEMP}/shejane-ocr-windows/ocr-0.1.0-windows-amd64.shejane-plugin" \
+            cp "${RUNNER_TEMP}/shejane-fixed-plugins-windows/ocr-0.1.0-windows-amd64.shejane-plugin" \
               runtime/plugins/ocr/dist/
-            cp "${RUNNER_TEMP}/shejane-ocr-windows/rapidocr-runtime-3.9.1-windows-amd64.shejane-runtime-asset" \
+            cp "${RUNNER_TEMP}/shejane-fixed-plugins-windows/rapidocr-runtime-3.9.1-windows-amd64.shejane-runtime-asset" \
               runtime/plugins/ocr/dist/
+            mkdir -p runtime/plugins/browser-qa/dist
+            cp "${RUNNER_TEMP}/shejane-fixed-plugins-windows/browser-qa-0.1.0-windows-amd64.shejane-plugin" \
+              runtime/plugins/browser-qa/dist/
+            cp "${RUNNER_TEMP}/shejane-fixed-plugins-windows/browser-qa-runtime-1.61.1-windows-amd64.shejane-runtime-asset" \
+              runtime/plugins/browser-qa/dist/
           fi
           cd runtime
           uv run python -m PyInstaller shejane-runtime.spec --noconfirm --clean

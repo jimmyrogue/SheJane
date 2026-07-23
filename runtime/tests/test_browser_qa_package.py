@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from shejane_runtime.plugins.manifest import PluginManifest
@@ -42,7 +43,10 @@ def test_browser_qa_manifest_exposes_only_bounded_actions() -> None:
             assert schema["additionalProperties"] is False
 
 
-def test_browser_qa_package_is_deterministic(tmp_path: Path) -> None:
+@pytest.mark.parametrize("target_platform", ["darwin/arm64", "windows/amd64"])
+def test_browser_qa_package_is_deterministic(
+    tmp_path: Path, target_platform: str
+) -> None:
     playwright = tmp_path / "playwright"
     playwright_core = tmp_path / "playwright-core"
     for root, name in (
@@ -61,7 +65,7 @@ def test_browser_qa_package_is_deterministic(tmp_path: Path) -> None:
                 sys.executable,
                 str(BUILDER),
                 "--platform",
-                "darwin/arm64",
+                target_platform,
                 "--playwright",
                 str(playwright),
                 "--playwright-core",
@@ -83,16 +87,24 @@ def test_browser_qa_package_is_deterministic(tmp_path: Path) -> None:
     assert not (extracted / "payload/browsers").exists()
 
 
+@pytest.mark.parametrize(
+    ("target_platform", "executable_name"),
+    [
+        ("darwin/arm64", "chrome"),
+        ("windows/amd64", "chrome.exe"),
+    ],
+)
 def test_browser_qa_runtime_asset_is_deterministic_and_content_addressed(
-    tmp_path: Path,
+    tmp_path: Path, target_platform: str, executable_name: str
 ) -> None:
     browser = tmp_path / "chromium-1228"
     headless_shell = tmp_path / "chromium_headless_shell-1228"
     for root in (browser, headless_shell):
         root.mkdir()
-        executable = root / "chrome"
+        executable = root / executable_name
         executable.write_bytes(b"browser")
-        executable.chmod(0o500)
+        if target_platform == "darwin/arm64":
+            executable.chmod(0o500)
     outputs = [
         tmp_path / "first.shejane-runtime-asset",
         tmp_path / "second.shejane-runtime-asset",
@@ -102,6 +114,8 @@ def test_browser_qa_runtime_asset_is_deterministic_and_content_addressed(
             [
                 sys.executable,
                 str(ASSET_BUILDER),
+                "--platform",
+                target_platform,
                 "--browser",
                 str(browser),
                 "--headless-shell",
@@ -114,8 +128,10 @@ def test_browser_qa_runtime_asset_is_deterministic_and_content_addressed(
 
     assert outputs[0].read_bytes() == outputs[1].read_bytes()
     installed = RuntimeAssetStore(tmp_path / "asset-store").install(
-        outputs[0], target_platform="darwin/arm64"
+        outputs[0], target_platform=target_platform
     )
     assert installed.asset_id == "org.shejane.browser-qa.runtime"
     assert installed.version == "1.61.1+chromium1228.1"
-    assert (installed.payload / "browsers/chromium-1228/chrome").is_file()
+    assert (
+        installed.payload / "browsers" / "chromium-1228" / executable_name
+    ).is_file()
