@@ -1141,7 +1141,7 @@ jobs:
             --worker "${RUNNER_TEMP}/shejane-pdf-worker/pdf-worker" \
             --output "${output}"
           uv run shejane-plugin inspect "${output}"
-      - name: Build and inspect Linux arm64 Media, OCR, Speech, and Cloud Vision packages
+      - name: Build and inspect Linux arm64 Media, Speech, and Cloud Vision packages
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         working-directory: runtime
         shell: bash
@@ -1150,18 +1150,12 @@ jobs:
           packages="${RUNNER_TEMP}/shejane-media-packages"
           mkdir -p "${packages}"
           ffmpeg_digest="$(cat "${RUNNER_TEMP}/shejane-ffmpeg-runtime-digest")"
-          rapidocr_digest="$(cat "${RUNNER_TEMP}/shejane-rapidocr-runtime-digest")"
           whisper_digest="$(cat "${RUNNER_TEMP}/shejane-whisper-runtime-digest")"
           uv run python plugins/media-foundation/build_package.py \
             --platform linux/arm64 \
             --runtime-asset-digest "${ffmpeg_digest}" \
             --worker "${RUNNER_TEMP}/shejane-media-worker/media-foundation-worker" \
             --output "${packages}/media-foundation-0.1.0-linux-arm64.shejane-plugin"
-          uv run python plugins/ocr/build_package.py \
-            --platform linux/arm64 \
-            --runtime-asset-digest "${rapidocr_digest}" \
-            --worker "${RUNNER_TEMP}/shejane-ocr-worker/ocr-worker" \
-            --output "${packages}/ocr-0.1.0-linux-arm64.shejane-plugin"
           uv run python plugins/speech/build_package.py \
             --platform linux/arm64 \
             --ffmpeg-runtime-asset-digest "${ffmpeg_digest}" \

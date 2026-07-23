@@ -78,3 +78,39 @@ def test_ocr_package_is_deterministic_and_preserves_onedir_worker(
     assert manifest.runtime.execution.platforms == [target_platform]
     assert (extracted / "payload" / entrypoint).read_bytes() == b"worker"
     assert (extracted / "payload/_internal" / library).read_bytes() == b"library"
+
+
+def test_ocr_package_rejects_managed_worker_platforms(tmp_path: Path) -> None:
+    worker = tmp_path / "ocr-worker"
+    worker.mkdir()
+    (worker / "ocr-worker").write_bytes(b"worker")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(BUILDER),
+            "--platform",
+            "linux/arm64",
+            "--runtime-asset-digest",
+            "sha256:" + "a" * 64,
+            "--worker",
+            str(worker),
+            "--output",
+            str(tmp_path / "ocr.shejane-plugin"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "invalid choice: 'linux/arm64'" in completed.stderr
+
+
+def test_release_does_not_package_builtin_ocr_as_a_linux_worker() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "release-client.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ocr-0.1.0-linux-arm64.shejane-plugin" not in workflow
+    assert "Run Linux arm64 OCR production gate in packaged macOS VM" in workflow

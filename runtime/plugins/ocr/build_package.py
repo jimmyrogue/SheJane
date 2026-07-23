@@ -12,9 +12,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PLATFORMS = (
     "darwin/arm64",
-    "linux/arm64",
-    "linux/amd64",
-    "windows/arm64",
     "windows/amd64",
 )
 
@@ -42,7 +39,9 @@ def main() -> None:
     if args.output.suffix != ".shejane-plugin":
         parser.error("--output must end in .shejane-plugin")
 
-    entrypoint = "payload/ocr-worker.exe" if args.platform.startswith("windows/") else "payload/ocr-worker"
+    entrypoint = (
+        "payload/ocr-worker.exe" if args.platform.startswith("windows/") else "payload/ocr-worker"
+    )
     worker_entrypoint = worker / Path(entrypoint).name
     if worker_entrypoint.is_symlink() or not worker_entrypoint.is_file():
         parser.error("--worker entrypoint is unavailable")
