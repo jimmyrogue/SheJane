@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -17,6 +18,23 @@ from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle, RuntimeAs
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = REPO_ROOT / "runtime" / "plugins" / "ocr" / "worker" / "ocr_worker.py"
 ASSET_ENV = "SHEJANE_RAPIDOCR_RUNTIME_ASSET"
+DARWIN_BUILDER = (
+    REPO_ROOT / "runtime" / "plugins" / "ocr" / "runtime-assets" / "build_darwin.py"
+)
+
+
+def test_darwin_codesign_targets_framework_bundle(tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("ocr_darwin_builder", DARWIN_BUILDER)
+    assert spec is not None and spec.loader is not None
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    root = tmp_path / "bin"
+    framework = root / "_internal" / "Python.framework"
+
+    assert builder.codesign_target(framework / "Python", root) == framework
+    assert builder.codesign_target(root / "_internal" / "libpython.dylib", root) == (
+        root / "_internal" / "libpython.dylib"
+    )
 
 
 def font(size: int, *candidates: str) -> ImageFont.FreeTypeFont:

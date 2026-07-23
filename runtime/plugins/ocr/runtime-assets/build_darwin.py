@@ -227,6 +227,15 @@ def is_macho(path: Path) -> bool:
     return "Mach-O" in output
 
 
+def codesign_target(path: Path, root: Path) -> Path:
+    for parent in path.parents:
+        if parent == root:
+            break
+        if parent.suffix == ".framework" and path.parent == parent and path.name == parent.stem:
+            return parent
+    return path
+
+
 def sign_and_verify_tree(root: Path, identity: str, lock: dict[str, Any]) -> None:
     machos = [path for path in root.rglob("*") if is_macho(path)]
     if not machos:
@@ -235,7 +244,8 @@ def sign_and_verify_tree(root: Path, identity: str, lock: dict[str, Any]) -> Non
     for path in root.rglob("*"):
         if any(marker in path.name.casefold() for marker in forbidden):
             raise SystemExit(f"OCR engine includes a forbidden optional component: {path.name}")
-    for path in sorted(machos, key=lambda value: len(value.parts), reverse=True):
+    targets = {codesign_target(path, root) for path in machos}
+    for path in sorted(targets, key=lambda value: len(value.parts), reverse=True):
         run(["/usr/bin/codesign", "--force", "--sign", identity, str(path)])
         run(["/usr/bin/codesign", "--verify", "--strict", str(path)])
     executable = root / "ocr-engine"
