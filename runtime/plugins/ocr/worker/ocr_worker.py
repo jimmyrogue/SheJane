@@ -261,6 +261,10 @@ def run_engine(command: list[str], temporary: Path) -> None:
         raise OcrActionError("resource_exhausted", f"OCR engine {overflow[0]} exceeded its limit")
     if returncode != 0:
         message = "OCR engine could not process the selected images"
+        if os.environ.get("SHEJANE_TEST_OCR_DIAGNOSTICS") == "1":
+            diagnostic = stderr.decode("utf-8", errors="backslashreplace")[-2048:]
+            message = f"{message}; engine stderr: {diagnostic}"
+            raise OcrActionError("ocr_failed", message)
         if error_type := safe_engine_error_type(stderr):
             message = f"{message} ({error_type})"
         elif returncode:

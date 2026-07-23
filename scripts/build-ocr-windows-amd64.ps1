@@ -66,6 +66,7 @@ try {
 
     $env:SHEJANE_RAPIDOCR_RUNTIME_ASSET = $firstAsset
     $env:SHEJANE_TEST_OCR_WORKER = Join-Path $worker "ocr-worker.exe"
+    $env:SHEJANE_TEST_OCR_DIAGNOSTICS = "1"
     uv run --project runtime python -m pytest -q runtime/tests/test_ocr_runtime_asset.py
 
     Copy-Item $firstAsset (

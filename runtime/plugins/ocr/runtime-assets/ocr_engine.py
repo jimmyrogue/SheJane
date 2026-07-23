@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import onnxruntime
 from PIL import Image
 from rapidocr import (
     EngineType,
@@ -29,8 +28,6 @@ ENGINE = {
     "model": "PP-OCRv6-medium",
     "provider": "CPUExecutionProvider",
 }
-if onnxruntime.__version__ != "1.27.0":
-    raise RuntimeError("locked ONNX Runtime version is unavailable")
 MAX_INPUTS = 16
 MAX_IMAGE_PIXELS = 50_000_000
 MAX_TOTAL_PIXELS = 160_000_000
