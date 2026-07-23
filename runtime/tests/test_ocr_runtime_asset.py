@@ -230,7 +230,7 @@ async def test_real_rapidocr_asset_recognizes_text_deterministically(tmp_path: P
         result = await executor.invoke(
             invocation(source), input_root=input_root, output_root=output_root
         )
-        assert result["status"] == "succeeded", result
+        assert result["status"] == "succeeded", result.get("error", result)
         assert "SheJane OCR 2026" in result["output"]["images"][0]["full_text"]
         results.append(result["output"])
         artifact_digests.append(
@@ -264,7 +264,7 @@ async def test_real_rapidocr_asset_multilingual_layout_and_rotation_gate(
         multi_invocation([base, rotated]), input_root=input_root, output_root=output_root
     )
 
-    assert result["status"] == "succeeded", result
+    assert result["status"] == "succeeded", result.get("error", result)
     recognized = [image["full_text"] for image in result["output"]["images"]]
     normalized = " ".join(recognized).replace(" ", "").casefold()
     for expected in expected_markers:

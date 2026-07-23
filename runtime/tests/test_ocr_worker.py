@@ -377,7 +377,9 @@ async def test_ocr_worker_reports_silent_engine_exit_code(tmp_path: Path) -> Non
     )
 
     assert result["status"] == "failed", result
-    assert result["error"]["message"].endswith("(exit 0x00000009)")
+    assert result["error"]["message"] == (
+        "OCR engine exited 0x00000009; it could not process the selected images"
+    )
     assert result["artifacts"] == []
 
 

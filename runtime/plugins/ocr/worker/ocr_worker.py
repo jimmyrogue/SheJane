@@ -242,7 +242,10 @@ def run_engine(command: list[str], temporary: Path) -> None:
             if error_type.isidentifier() and len(error_type) <= 100:
                 message = f"{message} ({error_type})"
         elif returncode:
-            message = f"{message} (exit 0x{returncode & 0xFFFFFFFF:08X})"
+            message = (
+                f"OCR engine exited 0x{returncode & 0xFFFFFFFF:08X}; "
+                "it could not process the selected images"
+            )
         raise OcrActionError("ocr_failed", message)
 
 
