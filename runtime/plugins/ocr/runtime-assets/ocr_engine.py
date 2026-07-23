@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sys
 from pathlib import Path
@@ -31,10 +32,37 @@ MAX_INPUTS = 16
 MAX_IMAGE_PIXELS = 50_000_000
 MAX_TOTAL_PIXELS = 160_000_000
 MAX_REQUEST_BYTES = 1024 * 1024
+IMPORT_TARGET_PATTERNS = (
+    re.compile(r"No module named ['\"](?P<module>[A-Za-z0-9_.]+)['\"]"),
+    re.compile(
+        r"cannot import name ['\"](?P<name>[A-Za-z0-9_]+)['\"] "
+        r"from ['\"](?P<module>[A-Za-z0-9_.]+)['\"]"
+    ),
+    re.compile(r"DLL load failed while importing (?P<module>[A-Za-z0-9_.]+):"),
+)
 
 
 def deny_network(*_args: Any, **_kwargs: Any) -> None:
     raise OSError("network access is disabled for the OCR engine")
+
+
+def safe_import_target(exc: ImportError) -> str | None:
+    imported = getattr(exc, "name", None)
+    if isinstance(imported, str) and imported and all(
+        part.isidentifier() for part in imported.split(".")
+    ):
+        return imported
+    message = str(exc)
+    for pattern in IMPORT_TARGET_PATTERNS:
+        if match := pattern.search(message):
+            module = match.group("module")
+            name = match.groupdict().get("name")
+            target = f"{module}.{name}" if name else module
+            if len(target) <= 200 and all(
+                part.isidentifier() for part in target.split(".")
+            ):
+                return target
+    return None
 
 
 def asset_payload() -> Path:
@@ -199,13 +227,7 @@ if __name__ == "__main__":
         main()
     except Exception as exc:
         diagnostic = type(exc).__name__
-        imported = getattr(exc, "name", None)
-        if (
-            isinstance(exc, ImportError)
-            and isinstance(imported, str)
-            and imported
-            and all(part.isidentifier() for part in imported.split("."))
-        ):
+        if isinstance(exc, ImportError) and (imported := safe_import_target(exc)):
             diagnostic = f"{diagnostic}|{imported}"
         print(f"OCR engine failed: {diagnostic}", file=sys.stderr)
         raise SystemExit(2) from None
