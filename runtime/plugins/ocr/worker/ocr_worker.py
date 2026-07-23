@@ -201,9 +201,12 @@ def safe_engine_error_type(raw: bytes) -> str | None:
     for line in reversed(raw.decode("ascii", errors="ignore").splitlines()):
         diagnostic = line.strip()
         if diagnostic.startswith(prefix):
-            error_type = diagnostic.removeprefix(prefix)
+            parts = diagnostic.removeprefix(prefix).split("|", 1)
+            error_type = parts[0]
+            imported = parts[1] if len(parts) == 2 else None
         elif ": " in diagnostic:
             error_type = diagnostic.split(": ", 1)[0]
+            imported = None
         else:
             continue
         if (
@@ -211,6 +214,10 @@ def safe_engine_error_type(raw: bytes) -> str | None:
             and len(error_type) <= 100
             and error_type.endswith(("Error", "Exception"))
         ):
+            if imported and len(imported) <= 200 and all(
+                part.isidentifier() for part in imported.split(".")
+            ):
+                return f"{error_type}: {imported}"
             return error_type
     return None
 

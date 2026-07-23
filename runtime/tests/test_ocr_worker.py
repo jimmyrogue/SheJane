@@ -39,7 +39,7 @@ def fake_asset(tmp_path: Path) -> RuntimeAssetHandle:
 request = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 if request["inputs"][0]["id"] == "engine-failure":
     print("ONNX Runtime warning without sensitive data", file=sys.stderr)
-    print("OCR engine failed: RuntimeError", file=sys.stderr)
+    print("OCR engine failed: ImportError|onnxruntime.capi", file=sys.stderr)
     raise SystemExit(2)
 if request["inputs"][0]["id"] == "native-failure":
     raise SystemExit(9)
@@ -356,7 +356,10 @@ async def test_ocr_worker_reports_bounded_engine_failure_type(tmp_path: Path) ->
     assert result["status"] == "failed", result
     assert result["error"] == {
         "code": "ocr_failed",
-        "message": "OCR engine could not process the selected images (RuntimeError)",
+        "message": (
+            "OCR engine could not process the selected images "
+            "(ImportError: onnxruntime.capi)"
+        ),
         "retryable": False,
     }
     assert result["artifacts"] == []

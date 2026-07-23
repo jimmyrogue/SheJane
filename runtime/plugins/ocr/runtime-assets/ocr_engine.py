@@ -198,5 +198,14 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:
-        print(f"OCR engine failed: {type(exc).__name__}", file=sys.stderr)
+        diagnostic = type(exc).__name__
+        imported = getattr(exc, "name", None)
+        if (
+            isinstance(exc, ImportError)
+            and isinstance(imported, str)
+            and imported
+            and all(part.isidentifier() for part in imported.split("."))
+        ):
+            diagnostic = f"{diagnostic}|{imported}"
+        print(f"OCR engine failed: {diagnostic}", file=sys.stderr)
         raise SystemExit(2) from None
