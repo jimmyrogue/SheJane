@@ -128,6 +128,10 @@ class PluginToolAdapter:
                 "invalid_invocation",
                 "plugin Action requires a compatible attachment",
             )
+        if inputs and "input_id" in arguments:
+            arguments = {**arguments, "input_id": inputs[0]["id"]}
+        elif inputs and "input_ids" in arguments:
+            arguments = {**arguments, "input_ids": [item["id"] for item in inputs]}
         public_inputs = [
             {key: value for key, value in item.items() if key != "source_path"} for item in inputs
         ]
@@ -383,7 +387,14 @@ async def _resolve_inputs(
 
     resolved: list[dict[str, Any]] = []
     for selected_id in selected_ids:
-        selected = next((item for item in compatible if item.get("id") == selected_id), None)
+        selected = next(
+            (
+                item
+                for item in compatible
+                if item.get("id") == selected_id or item.get("virtual_path") == selected_id
+            ),
+            None,
+        )
         if selected is not None:
             resolved.append(selected)
             continue

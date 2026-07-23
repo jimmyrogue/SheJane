@@ -152,6 +152,18 @@ def test_workspace_failures_take_precedence_over_generic_permission_words() -> N
     assert permission["category"] == "permission"
 
 
+def test_os_permission_error_is_not_a_pending_user_approval() -> None:
+    failure = classify_failure_payload(
+        "run.failed",
+        {"error_code": "PermissionError", "message": "[Errno 13] Permission denied"},
+    )
+
+    assert failure["category"] == "fatal"
+    assert failure["action_kind"] == "operator_action"
+    assert failure["recovery_action"] == "diagnostics"
+    assert "approve" not in failure["suggested_action"].lower()
+
+
 def test_memory_confirmation_failure_requires_user_action_without_retry() -> None:
     failure = classify_failure_payload(
         "tool.failed",

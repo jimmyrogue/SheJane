@@ -2804,6 +2804,15 @@ select {
   background: var(--sidebar-accent, var(--muted));
 }
 
+.composer-skill-menu-item.disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.composer-skill-menu-item.disabled:hover {
+  background: transparent;
+}
+
 .composer-skill-menu-name {
   flex: none;
   color: var(--sj-ink, #2B2A28);

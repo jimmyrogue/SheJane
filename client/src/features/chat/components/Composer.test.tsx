@@ -340,17 +340,19 @@ describe('Composer (Lexical skill editor)', () => {
     expect(onDraft).toHaveBeenLastCalledWith(expect.not.stringContaining(previous))
   })
 
-  it('disables new plugin references and commands while steering an active run', async () => {
+  it('keeps plugin commands visible but disabled while steering an active run', async () => {
     prepareTypeaheadLayout()
-    render(<Harness hasActiveRun onAppendInstruction={vi.fn()} />)
+    const onDraft = vi.fn()
+    render(<Harness hasActiveRun onAppendInstruction={vi.fn()} onDraft={onDraft} />)
     const editor = screen.getByRole('textbox')
-    editor.textContent = '@archive'
-    fireEvent.input(editor, { inputType: 'insertText', data: '@archive' })
-    expect(screen.queryByRole('option', { name: /Archive fixture/ })).not.toBeInTheDocument()
-
     editor.textContent = '/archive'
     fireEvent.input(editor, { inputType: 'insertText', data: '/archive' })
-    await waitFor(() => expect(screen.queryByRole('option', { name: /Archive files/ })).not.toBeInTheDocument())
+    const command = await screen.findByRole('option', { name: /Archive files/ })
+    expect(command).toHaveAttribute('aria-disabled', 'true')
+    expect(command).toHaveTextContent('请在新任务中使用')
+    const draftUpdates = onDraft.mock.calls.length
+    fireEvent.click(command)
+    expect(onDraft).toHaveBeenCalledTimes(draftUpdates)
   })
 
   it('deletes a plugin chip atomically', async () => {

@@ -14,6 +14,7 @@ from shejane_runtime.plugins.executor import ManagedWorkerActionExecutor
 from shejane_runtime.plugins.ocr import OCRActionExecutor
 from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle
 from shejane_runtime.plugins.tools import PluginToolAdapter
+from shejane_runtime.runs import _plugin_input_snapshots
 from shejane_runtime.store.sqlite import LocalStore
 from shejane_runtime.tools.runtime import RuntimeToolExecution
 
@@ -144,7 +145,7 @@ def action_descriptor(tmp_path: Path, asset: RuntimeAssetHandle) -> PluginAction
         f"#!/bin/sh\nexec {sys.executable!s} {WORKER!s}\n",
         encoding="utf-8",
     )
-    worker.chmod(0o500)
+    worker.chmod(0o600)
     return PluginActionDescriptor(
         plugin_id="org.shejane.ocr",
         plugin_version="0.1.0",
@@ -181,31 +182,38 @@ async def test_ocr_runtime_tool_e2e_persists_text_and_json_artifacts(tmp_path: P
     asset = fake_asset(tmp_path)
     descriptor = action_descriptor(tmp_path, asset)
     store = await LocalStore.open(tmp_path / "runtime.db")
-    run = await store.create_run(
+    size, digest, blob_key = await store.prepare_run_input_body(source)
+    run, _ = await store.accept_run_command(
         principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        command_id="cmd_ocr_virtual_path",
+        client_message_id="msg_ocr_virtual_path",
+        command_payload={"goal": "recognize the receipt"},
         goal="recognize the receipt",
         workspace_path=None,
+        mode="fast",
+        run_inputs=[
+            {
+                "input_id": "source",
+                "virtual_path": "/attachments/receipt.png",
+                "original_name": source.name,
+                "media_type": "image/png",
+                "bytes": size,
+                "sha256": digest,
+                "blob_key": blob_key,
+            }
+        ],
     )
     context = RuntimeContext(
         store=store,
         run_id=str(run["id"]),
-        plugin_inputs=(
-            {
-                "id": "receipt",
-                "path": "/input/source/receipt.png",
-                "media_type": "image/png",
-                "size_bytes": source.stat().st_size,
-                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                "source_path": str(source),
-            },
-        ),
+        plugin_inputs=await _plugin_input_snapshots(store, str(run["id"])),
     )
     executor = OCRActionExecutor(descriptor.package_root, asset)
     try:
         result = await PluginToolAdapter(executor_factory=lambda _action: executor).invoke(
             descriptor,
             {
-                "input_ids": ["receipt"],
+                "input_ids": ["/attachments/receipt.png"],
                 "minimum_confidence": 0.5,
                 "max_lines": 100,
                 "max_characters": 1_000,

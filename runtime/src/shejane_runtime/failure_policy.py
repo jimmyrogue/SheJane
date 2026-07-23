@@ -106,6 +106,11 @@ def classify_failure_payload(event_type: str, payload: dict[str, Any]) -> dict[s
         suggested_action = (
             "Authorize the correct workspace or choose a path inside an authorized workspace."
         )
+    elif _contains_any(haystack, "permissionerror", "[errno 13]"):
+        category = "fatal"
+        suggested_action = (
+            "Inspect the local executable or file permissions and fix the Runtime installation."
+        )
     elif _contains_any(haystack, "permission", "denied", "approval", "approve"):
         category = "permission"
         recoverable = True

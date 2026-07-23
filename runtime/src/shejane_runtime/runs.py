@@ -216,6 +216,7 @@ async def _plugin_input_snapshots(
             {
                 "id": input_id,
                 "path": f"/input/{input_id}/{name}",
+                "virtual_path": str(item["virtual_path"]),
                 "media_type": str(item["media_type"]),
                 "size_bytes": int(item["bytes"]),
                 "sha256": str(item["sha256"]),
@@ -235,6 +236,7 @@ async def _plugin_input_snapshots(
                 {
                     "id": input_id,
                     "path": f"/input/{input_id}/{source.name}",
+                    "virtual_path": binding["virtual_path"],
                     "media_type": mimetypes.guess_type(source.name)[0]
                     or "application/octet-stream",
                     "size_bytes": size,

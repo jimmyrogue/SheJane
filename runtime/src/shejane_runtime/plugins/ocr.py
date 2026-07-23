@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .executor import ManagedWorkerActionExecutor
+from .platforms import prepare_managed_worker_entrypoint
 from .runtime_assets import RuntimeAssetHandle
 
 OCR_PLUGIN_ID = "org.shejane.ocr"
@@ -20,13 +21,12 @@ class OCRActionExecutor:
     """Execute SheJane's trusted OCR Worker against one pinned native asset."""
 
     def __init__(self, package_root: Path, runtime_asset: RuntimeAssetHandle) -> None:
-        entrypoint = (
-            package_root
-            / "payload"
-            / ("ocr-worker.exe" if runtime_asset.platform.startswith("windows/") else "ocr-worker")
+        relative_entrypoint = (
+            "payload/ocr-worker.exe"
+            if runtime_asset.platform.startswith("windows/")
+            else "payload/ocr-worker"
         )
-        if entrypoint.is_symlink() or not entrypoint.is_file():
-            raise RuntimeError("OCR Worker is missing from the fixed capability package")
+        entrypoint = prepare_managed_worker_entrypoint(package_root, relative_entrypoint)
         self._executor = ManagedWorkerActionExecutor(
             (str(entrypoint),),
             runtime_assets=(runtime_asset,),

@@ -204,7 +204,7 @@ make test-e2e
 git diff --check
 ```
 
-`make test-contract` 会验证真实 Runtime HTTP/SSE 与 SDK，且不启动 Electron。`make test-e2e` 在此基础上继续执行进程恢复、官方 MCP client conformance 和 Playwright Electron 关键路径。详细范围见 [Runtime 端到端测试](./runtime-e2e-testing.md)。
+`make test-contract` 会验证真实 Runtime HTTP/SSE 与 SDK，且不启动 Electron。`make test-fixed-plugins-e2e` 会单独验证 Browser QA、Computer Use 和 OCR 的执行路径；`make test-e2e` 先运行该插件门禁，再继续执行进程恢复、官方 MCP client conformance 和 Playwright Electron 关键路径。详细范围见 [Runtime 端到端测试](./runtime-e2e-testing.md)。
 
 发布前还应确认：
 

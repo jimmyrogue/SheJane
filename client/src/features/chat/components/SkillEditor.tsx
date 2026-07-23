@@ -79,6 +79,7 @@ class ComposerMenuOption extends MenuOption {
   description: string
   plugin?: PluginDetail
   commandId?: string
+  disabled: boolean
   constructor(
     kind: MenuKind,
     id: string,
@@ -86,6 +87,7 @@ class ComposerMenuOption extends MenuOption {
     description: string,
     plugin?: PluginDetail,
     commandId?: string,
+    disabled = false,
   ) {
     super(`${kind}:${id}`)
     this.kind = kind
@@ -94,6 +96,7 @@ class ComposerMenuOption extends MenuOption {
     this.description = description
     this.plugin = plugin
     this.commandId = commandId
+    this.disabled = disabled
   }
 }
 
@@ -276,11 +279,13 @@ function SkillTypeaheadPlugin({
   listSkills,
   listMcpServers,
   listPlugins,
+  pluginCommandsEnabled,
   menuOpenRef,
 }: {
   listSkills: () => Promise<InstalledSkill[]>
   listMcpServers?: () => Promise<McpServerInfo[]>
   listPlugins?: () => Promise<PluginDetail[]>
+  pluginCommandsEnabled: boolean
   menuOpenRef: { current: boolean }
 }) {
   const [editor] = useLexicalComposerContext()
@@ -381,17 +386,21 @@ function SkillTypeaheadPlugin({
               'plugin-command',
               `${plugin.id}:${command.id}`,
               command.title,
-              `${plugin.name} · ${command.description}`,
+              `${plugin.name} · ${command.description}${
+                pluginCommandsEnabled ? '' : ` · ${t('composer.pluginMenu.newTaskOnly')}`
+              }`,
               plugin,
               command.id,
+              !pluginCommandsEnabled,
             ),
         ),
     )
     return [...funcOptions, ...pluginCommandOptions, ...skillOptions, ...mcpOptions]
-  }, [functionsCatalog, skills, mcpServers, plugins, query])
+  }, [functionsCatalog, skills, mcpServers, plugins, pluginCommandsEnabled, query, t])
 
   const onSelectOption = useCallback(
     (option: ComposerMenuOption, textNodeContainingQuery: TextNode | null, closeMenu: () => void) => {
+      if (option.disabled) return
       let replacedPluginCommand = false
       editor.update(() => {
         let node
@@ -475,11 +484,17 @@ function SkillTypeaheadPlugin({
               key={option.key}
               role="option"
               aria-selected={index === selectedIndex}
+              aria-disabled={option.disabled || undefined}
               ref={(element) => option.setRefElement(element)}
-              className={`composer-skill-menu-item${index === selectedIndex ? ' active' : ''}`}
-              onMouseEnter={() => setHighlightedIndex(index)}
+              className={`composer-skill-menu-item${index === selectedIndex ? ' active' : ''}${
+                option.disabled ? ' disabled' : ''
+              }`}
+              onMouseEnter={() => {
+                if (!option.disabled) setHighlightedIndex(index)
+              }}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
+                if (option.disabled) return
                 setHighlightedIndex(index)
                 selectOptionAndCleanUp(option)
               }}
@@ -811,7 +826,8 @@ export function SkillEditor({
           <SkillTypeaheadPlugin
             listSkills={listSkills}
             listMcpServers={listMcpServers}
-            listPlugins={pluginReferencesEnabled ? listPlugins : undefined}
+            listPlugins={listPlugins}
+            pluginCommandsEnabled={pluginReferencesEnabled}
             menuOpenRef={menuOpenRef}
           />
         ) : null}

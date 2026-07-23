@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,6 +15,7 @@ from shejane_runtime.agent.context_builder import RuntimeContext
 from shejane_runtime.auth import LOCAL_OWNER_PRINCIPAL_ID
 from shejane_runtime.plugins.browser_qa import BrowserQAActionExecutor, BrowserQAService
 from shejane_runtime.plugins.catalog import PluginActionDescriptor
+from shejane_runtime.plugins.platforms import current_managed_worker_platform
 from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle
 from shejane_runtime.plugins.tools import PluginToolAdapter
 from shejane_runtime.store.sqlite import LocalStore
@@ -31,10 +34,22 @@ PLAYWRIGHT_CORE = (
     / "node_modules"
     / "playwright-core"
 )
-BROWSER = Path.home() / "Library" / "Caches" / "ms-playwright" / "chromium-1228"
-HEADLESS_SHELL = (
-    Path.home() / "Library" / "Caches" / "ms-playwright" / "chromium_headless_shell-1228"
-)
+
+
+def playwright_browsers_root() -> Path:
+    configured = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "ms-playwright"
+    if sys.platform == "win32":
+        return Path(os.environ["LOCALAPPDATA"]) / "ms-playwright"
+    return Path.home() / ".cache" / "ms-playwright"
+
+
+BROWSERS_ROOT = playwright_browsers_root()
+BROWSER = BROWSERS_ROOT / "chromium-1228"
+HEADLESS_SHELL = BROWSERS_ROOT / "chromium_headless_shell-1228"
 PLUGIN_ROOT = REPO_ROOT / "runtime" / "plugins" / "browser-qa"
 
 
@@ -129,7 +144,11 @@ async def test_browser_qa_real_chromium_open_act_observe_and_screenshot(
         or not BROWSER.is_dir()
         or not HEADLESS_SHELL.is_dir()
     ):
+        if os.environ.get("SHEJANE_REQUIRE_FIXED_PLUGIN_E2E") == "1":
+            pytest.fail("pinned local Playwright runtime is required")
         pytest.skip("pinned local Playwright runtime is unavailable")
+    host_platform = current_managed_worker_platform()
+    assert host_platform is not None
     package = tmp_path / "package"
     build_test_package(package)
     server = ThreadingHTTPServer(("127.0.0.1", 0), FixtureHandler)
@@ -155,7 +174,7 @@ async def test_browser_qa_real_chromium_open_act_observe_and_screenshot(
         runtime_asset=RuntimeAssetHandle(
             asset_id="org.shejane.browser-qa.runtime",
             version="1.61.1+chromium1228.1",
-            platform="darwin/arm64",
+            platform=host_platform,
             digest="sha256:" + "a" * 64,
             root=package,
             payload=package / "payload",

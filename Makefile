@@ -15,7 +15,7 @@
 
 .PHONY: help \
 	dev dev-client dev-runtime restart-runtime doctor \
-	test test-client test-runtime test-runtime-sdk test-contract test-e2e test-e2e-real test-packaged \
+	test test-client test-runtime test-runtime-sdk test-contract test-fixed-plugins-e2e test-e2e test-e2e-real test-packaged \
 	ci build build-client build-runtime build-runtime-sdk package-runtime \
 	lint schemas setup-hooks \
 	release eval \
@@ -59,7 +59,10 @@ test-runtime-sdk: ## Runtime SDK unit tests
 test-contract: ## Real Runtime HTTP/SSE ↔ Runtime SDK contract tests, without Electron
 	SHEJANE_CONTRACT_ONLY=1 ./scripts/test-contract.sh
 
-test-e2e: ## Runtime recovery + contract + Electron Client critical paths
+test-fixed-plugins-e2e: ## Browser QA, Computer Use, and OCR execution paths
+	./scripts/test-fixed-plugins-e2e.sh
+
+test-e2e: test-fixed-plugins-e2e ## Fixed plugins + Runtime recovery + contract + Electron Client paths
 	./scripts/test-contract.sh
 
 test-e2e-real: export SHEJANE_EVAL_MODEL := $(MODEL)
