@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -30,11 +31,24 @@ def test_darwin_codesign_targets_framework_bundle(tmp_path: Path) -> None:
     spec.loader.exec_module(builder)
     root = tmp_path / "bin"
     framework = root / "_internal" / "Python.framework"
+    version = framework / "Versions" / "3.12"
 
     assert builder.codesign_target(framework / "Python", root) == framework
+    assert builder.codesign_target(version / "Python", root) == version
     assert builder.codesign_target(root / "_internal" / "libpython.dylib", root) == (
         root / "_internal" / "libpython.dylib"
     )
+
+    source = tmp_path / "asset"
+    source.mkdir()
+    (source / "Python").write_bytes(b"python")
+    (source / "Current").symlink_to("Python")
+    output = tmp_path / "runtime.shejane-runtime-asset"
+    builder.pack_asset(source, output)
+    with zipfile.ZipFile(output) as archive:
+        current = archive.getinfo("Current")
+        assert current.external_attr >> 16 == 0o120777
+        assert archive.read("Current") == b"Python"
 
 
 def font(size: int, *candidates: str) -> ImageFont.FreeTypeFont:

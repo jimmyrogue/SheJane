@@ -204,6 +204,9 @@ def _prepare_asset_executables(root: Path, manifest: RuntimeAssetManifest) -> No
             mode = executable.stat(follow_symlinks=False).st_mode
             if not stat.S_ISREG(mode):
                 raise OSError
-            os.chmod(executable, 0o500, follow_symlinks=False)
+            try:
+                os.chmod(executable, 0o500, follow_symlinks=False)
+            except NotImplementedError:
+                os.chmod(executable, 0o500)
         except OSError as exc:
             raise InvalidPluginPackage("runtime asset executable cannot be prepared") from exc

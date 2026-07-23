@@ -12,7 +12,9 @@ from shejane_runtime.plugins.platforms import current_managed_worker_execution_p
 from shejane_runtime.plugins.runtime_assets import (
     _MAX_ASSET_ARCHIVE_BYTES,
     RuntimeAssetStore,
+    _prepare_asset_executables,
     canonical_runtime_asset_digest,
+    load_runtime_asset_manifest,
 )
 
 
@@ -66,6 +68,29 @@ def _append_directory(archive_path: Path, name: str) -> None:
 
 def test_runtime_asset_archive_limit_is_separate_from_plugin_packages() -> None:
     assert _MAX_ASSET_ARCHIVE_BYTES == 768 * 1024 * 1024
+
+
+def test_runtime_asset_executable_uses_windows_chmod_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _asset_tree(tmp_path / "source")
+    manifest_path = source / ".shejane-runtime-asset" / "asset.json"
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_data["executables"] = ["payload/libreoffice/program.bin"]
+    manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+    manifest = load_runtime_asset_manifest(source)
+    calls: list[bool] = []
+
+    def windows_chmod(_path: Path, _mode: int, *, follow_symlinks: bool = True) -> None:
+        calls.append(follow_symlinks)
+        if not follow_symlinks:
+            raise NotImplementedError
+
+    monkeypatch.setattr("shejane_runtime.plugins.runtime_assets.os.chmod", windows_chmod)
+
+    _prepare_asset_executables(source, manifest)
+
+    assert calls == [False, True]
 
 
 def test_runtime_asset_store_installs_and_resolves_exact_digest(tmp_path: Path) -> None:

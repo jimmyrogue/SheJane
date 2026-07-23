@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import shutil
 import stat
@@ -231,8 +232,13 @@ def codesign_target(path: Path, root: Path) -> Path:
     for parent in path.parents:
         if parent == root:
             break
-        if parent.suffix == ".framework" and path.parent == parent and path.name == parent.stem:
+        if parent.suffix != ".framework" or path.name != parent.stem:
+            continue
+        relative = path.relative_to(parent)
+        if path.parent == parent:
             return parent
+        if len(relative.parts) == 3 and relative.parts[0] == "Versions":
+            return parent / "Versions" / relative.parts[1]
     return path
 
 
@@ -407,7 +413,12 @@ def pack_asset(source: Path, output: Path) -> None:
         with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
             for path in sorted(source.rglob("*")):
                 relative = path.relative_to(source).as_posix()
-                if path.is_dir():
+                if path.is_symlink():
+                    archive.writestr(
+                        zip_info(relative, stat.S_IFLNK | 0o777),
+                        os.readlink(path),
+                    )
+                elif path.is_dir():
                     archive.writestr(zip_info(relative + "/", stat.S_IFDIR | 0o700), b"")
                 elif path.is_file():
                     mode = 0o500 if path.stat().st_mode & 0o111 else 0o600
@@ -450,7 +461,7 @@ def main() -> None:
         built = build_engine(work, packages, ROOT / "ocr_engine.py", env, uv_path)
         stage = work / "asset"
         payload = stage / "payload"
-        shutil.copytree(built, payload / "bin")
+        shutil.copytree(built, payload / "bin", symlinks=True)
         model_destination = payload / "models"
         model_destination.mkdir()
         for model in models:
