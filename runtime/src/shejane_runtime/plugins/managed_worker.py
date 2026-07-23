@@ -234,6 +234,8 @@ async def invoke_managed_worker(
             for name in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP"):
                 if value := os.environ.get(name):
                     process_environment[name] = value
+            if diagnostics := os.environ.get("SHEJANE_TEST_OCR_DIAGNOSTICS"):
+                process_environment["SHEJANE_TEST_OCR_DIAGNOSTICS"] = diagnostics
         process = await asyncio.create_subprocess_exec(
             *command,
             stdin=asyncio.subprocess.PIPE,
