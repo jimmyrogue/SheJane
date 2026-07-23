@@ -196,8 +196,6 @@ def build_engine(
             "antlr4",
             "--hidden-import",
             "rapidocr.inference_engine.onnxruntime",
-            "--collect-all",
-            "onnxruntime",
             "--collect-data",
             "certifi",
             "--add-data",

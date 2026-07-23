@@ -66,8 +66,13 @@ try {
 
     $env:SHEJANE_RAPIDOCR_RUNTIME_ASSET = $firstAsset
     $env:SHEJANE_TEST_OCR_WORKER = Join-Path $worker "ocr-worker.exe"
-    $env:SHEJANE_TEST_OCR_DIAGNOSTICS = "1"
-    uv run --project runtime python -m pytest -q runtime/tests/test_ocr_runtime_asset.py
+    $testRoot = Join-Path $env:RUNNER_TEMP "sj-ocr-test"
+    if (Test-Path $testRoot) {
+        throw "Windows OCR test workspace already exists: $testRoot"
+    }
+    uv run --project runtime python -m pytest -q `
+        --basetemp $testRoot `
+        runtime/tests/test_ocr_runtime_asset.py
 
     Copy-Item $firstAsset (
         Join-Path $OutputDirectory "rapidocr-runtime-3.9.1-windows-amd64.shejane-runtime-asset"
