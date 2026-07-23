@@ -719,13 +719,19 @@ async def lifespan(app: FastAPI):
     await coordinator.mcp_catalog.hydrate()
     coordinator.mcp_catalog.request_refresh()
     scheduler = ScheduledRunDispatcher(store=store, coordinator=coordinator)
-    app.state.store = store
-    app.state.plugin_registry = PluginRegistry(
+    plugin_registry = PluginRegistry(
         store=store,
         data_dir=settings.data_dir,
         runtime_version=__version__,
         computer_use_package=settings.computer_use_package,
+        browser_qa_package=settings.browser_qa_package,
+        browser_qa_runtime_asset=settings.browser_qa_runtime_asset,
+        ocr_package=settings.ocr_package,
+        ocr_runtime_asset=settings.ocr_runtime_asset,
     )
+    await plugin_registry.initialize_fixed_capabilities(LOCAL_OWNER_PRINCIPAL_ID)
+    app.state.store = store
+    app.state.plugin_registry = plugin_registry
     app.state.settings = settings
     app.state.checkpointer = checkpointer
     app.state.agent_store = agent_store

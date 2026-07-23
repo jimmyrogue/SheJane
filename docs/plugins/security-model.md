@@ -92,6 +92,10 @@ JSON-RPC frames, stderr, exit status, staged files, and child processes are host
 
 The first-party adapter and its pinned native helper have the current user's explicit macOS Accessibility and Screen Recording grants. This is intentionally stronger authority than a Worker. Every Action still uses frozen package identity, an exact Runtime allowlisted digest, schema validation, P10 review/receipt, bounded frames/timeouts, one Run-scoped service, and P11 shutdown. Unknown handlers and modified payload bytes fail closed.
 
+### TB6b: Runtime to Browser QA and fixed OCR helpers
+
+Browser QA runs a pinned Chromium in a dedicated profile and forces HTTP/HTTPS connections through a loopback Runtime proxy. The proxy validates and pins public destinations per connection; private, loopback, link-local, credential-bearing, and unsupported URLs fail closed. Page text and console/network evidence remain untrusted data. Fixed OCR runs only SheJane's allowlisted Worker against one exact native RapidOCR Runtime Asset; Runtime owns input materialization, time/output bounds, schema validation, Artifact promotion, and process cleanup. Neither reserved adapter can be selected by an external plugin package.
+
 ### TB7: Plugin output to model and user interface
 
 Structured output, logs, names, media metadata, and errors may contain prompt injection, terminal escapes, misleading text, or secret-looking material. They are data, not trusted instructions or markup.

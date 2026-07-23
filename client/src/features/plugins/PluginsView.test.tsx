@@ -192,6 +192,26 @@ describe('PluginsView', () => {
     expect(setEnabled).not.toHaveBeenCalled()
   })
 
+  it('does not offer removal for the fixed OCR capability', async () => {
+    const ocrPlugin: PluginSummary = {
+      ...plugin,
+      id: 'org.shejane.ocr',
+      name: 'OCR',
+      execution_kind: 'managed_worker',
+    }
+    render(
+      <I18nProvider>
+        <PluginsView
+          listPlugins={vi.fn().mockResolvedValue([ocrPlugin])}
+          removePlugin={vi.fn().mockResolvedValue(undefined)}
+        />
+      </I18nProvider>,
+    )
+
+    await screen.findByText('OCR')
+    expect(screen.queryByRole('button', { name: '移除插件：OCR' })).not.toBeInTheDocument()
+  })
+
   it('rechecks permission state when the user returns from System Settings', async () => {
     const awaitingUser: PluginReadinessSnapshot = {
       state: 'awaiting_user',

@@ -22,6 +22,11 @@ import {
 
 type SetupActionID = PluginSetupActionID
 const COMPUTER_USE_PLUGIN_ID = 'org.shejane.computer-use'
+const FIXED_PLUGIN_IDS = new Set([
+  COMPUTER_USE_PLUGIN_ID,
+  'org.shejane.browser-qa',
+  'org.shejane.ocr',
+])
 
 interface ComputerUseSetup {
   plugin: PluginSummary
@@ -306,7 +311,7 @@ export function PluginsView({
                     <div className="skill-card-desc">{plugin.description}</div>
                   </div>
                   <div className="skill-card-footer">
-                    {removePlugin && plugin.execution_kind !== 'builtin' ? (
+                    {removePlugin && !FIXED_PLUGIN_IDS.has(plugin.id) ? (
                       <Button
                         type="button"
                         size="icon-sm"

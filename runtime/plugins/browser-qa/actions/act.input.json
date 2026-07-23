@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state_id", "action"],
+  "properties": {
+    "state_id": {"type": "string", "minLength": 1, "maxLength": 100},
+    "action": {"type": "string", "enum": ["click", "fill", "select", "press", "scroll"]},
+    "ref": {"type": "string", "minLength": 1, "maxLength": 32},
+    "value": {"type": "string", "maxLength": 4000}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"action": {"enum": ["click", "fill", "select", "press"]}}},
+      "then": {"required": ["ref"]}
+    },
+    {
+      "if": {"properties": {"action": {"enum": ["fill", "select", "press", "scroll"]}}},
+      "then": {"required": ["value"]}
+    }
+  ]
+}

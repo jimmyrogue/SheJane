@@ -1,8 +1,7 @@
 """Tool registry — flat list of `BaseTool` instances for create_agent.
 
-Phase 2' assembles the trivial + custom + toolkit tools. MCP and browser-use
-are added behind a flag (so the runtime can boot even when their dependencies
-are misconfigured).
+Phase 2' assembles the trivial + custom + toolkit tools. MCP and fixed plugin
+Actions are attached later from their Runtime-owned catalogs.
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ from langchain_core.tools import BaseTool
 from ..agent.backends import MODEL_FILE_READ_MAX_MB
 from ..store.sqlite import LocalStore
 from ..tool_schemas import tool_input_schema
-from .browser import make_browser_tool_if_configured
 from .memory import MEMORY_TOOLS
 from .office import OFFICE_READ_TOOLS, OFFICE_WRITE_TOOLS
 from .progress import PROGRESS_TOOLS, make_progress_tool
@@ -47,18 +45,14 @@ def core_tools() -> list[BaseTool]:
     return tools
 
 
-async def build_tools(
-    *,
-    browser_llm: Any = None,
-    browser_headless: bool = True,
-) -> list[BaseTool]:
+async def build_tools() -> list[BaseTool]:
     """Assemble the Runtime's static per-run toolset.
 
     All Runtime tool categories: local utilities + web
     (fetch + optional Tavily) + task.verify + skill.use + image.*.
     Runtime-owned MCP tools are supplied separately by MCPToolCatalog.
-    `browser.task` is intentionally omitted until both browser-use and a
-    browser-specific LLM binding are configured.
+    Browser QA is supplied through the immutable plugin catalog, not this
+    static Runtime tool list.
 
     """
     tools: list[BaseTool] = []
@@ -75,10 +69,6 @@ async def build_tools(
     # (auto-added by create_deep_agent), so we do NOT add FileManagementToolkit
     # tools here — that would collide on `read_file` / `write_file` names.
     # web.fetch remains a local, SSRF-guarded tool.
-
-    browser_tool = make_browser_tool_if_configured(llm=browser_llm, headless=browser_headless)
-    if browser_tool is not None:
-        tools.append(browser_tool)
 
     return tools
 

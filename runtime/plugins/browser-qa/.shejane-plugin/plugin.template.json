@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "org.shejane.browser-qa",
+  "version": "__PLUGIN_VERSION__",
+  "name": "Browser QA",
+  "description": "Open, operate, and inspect web pages in an isolated SheJane browser.",
+  "license": "Apache-2.0",
+  "publisher": {"id": "org.shejane", "name": "SheJane"},
+  "runtime": {
+    "min_version": "0.1.0",
+    "execution": {
+      "kind": "builtin",
+      "handler": "browser_qa",
+      "platforms": ["__PLATFORM__"],
+      "runtime_assets": [
+        {
+          "id": "org.shejane.browser-qa.runtime",
+          "version": "1.61.1+chromium1228.1",
+          "digest": "__RUNTIME_ASSET_DIGEST__"
+        }
+      ]
+    }
+  },
+  "contributions": {
+    "actions": [
+      {"id":"open","title":"Open page","description":"Open one public HTTP or HTTPS page in the isolated SheJane browser.","input_schema":"actions/open.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["browser.observe"],"limits":{"timeout_ms":60000,"memory_mb":1024,"output_mb":8}},
+      {"id":"observe","title":"Observe page","description":"Read a bounded visible-text and interactive-element snapshot with fresh refs.","input_schema":"actions/observe.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["browser.observe"],"limits":{"timeout_ms":30000,"memory_mb":1024,"output_mb":8}},
+      {"id":"act","title":"Act on page","description":"Perform one checked browser action against a fresh page-state ref.","input_schema":"actions/act.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["external"],"determinism":"nondeterministic","capabilities":["browser.control"],"limits":{"timeout_ms":60000,"memory_mb":1024,"output_mb":8}},
+      {"id":"inspect","title":"Inspect page evidence","description":"Read bounded console, failed-network, or screenshot evidence from the active page.","input_schema":"actions/inspect.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["read","external"],"determinism":"nondeterministic","capabilities":["browser.observe"],"limits":{"timeout_ms":30000,"memory_mb":1024,"output_mb":16}},
+      {"id":"close","title":"Close browser","description":"Close the active Browser QA context and release its process resources.","input_schema":"actions/close.input.json","output_schema":"actions/result.output.json","consumes":[],"produces":[],"effects":["external"],"determinism":"nondeterministic","capabilities":["browser.control"],"limits":{"timeout_ms":15000,"memory_mb":256,"output_mb":2}}
+    ],
+    "commands": [
+      {"id":"browser-qa","title":"Use Browser QA","description":"Inspect, operate, and verify a web page through bounded browser actions.","instructions":"commands/browser-qa.md","required_actions":["open","observe","act","inspect","close"]}
+    ]
+  }
+}

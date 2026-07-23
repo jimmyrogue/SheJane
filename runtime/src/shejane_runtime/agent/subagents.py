@@ -147,13 +147,17 @@ def _builtin_subagents(
     research_tool_names = {
         "web.fetch",
         "web.search",
-        "browser.task",
         "task.verify",
         "time.now",
         "fs.read",
         "read_file",
     }
-    research_tools = [t for t in main_tools if t.name in research_tool_names]
+    research_tools = [
+        tool
+        for tool in main_tools
+        if tool.name in research_tool_names
+        or tool.name.startswith("plugin.org.shejane.browser-qa.")
+    ]
 
     subagents: list[SubAgent] = [
         {

@@ -20,6 +20,14 @@ def test_runtime_cli_accepts_desktop_owned_launch_values(tmp_path: Path) -> None
             str(tmp_path / "linux" / "manifest.json"),
             "--computer-use-package",
             str(tmp_path / "computer-use.shejane-plugin"),
+            "--browser-qa-package",
+            str(tmp_path / "browser-qa.shejane-plugin"),
+            "--browser-qa-runtime-asset",
+            str(tmp_path / "browser-qa.shejane-runtime-asset"),
+            "--ocr-package",
+            str(tmp_path / "ocr.shejane-plugin"),
+            "--ocr-runtime-asset",
+            str(tmp_path / "rapidocr.shejane-runtime-asset"),
             "--validate-managed-worker-vm-assets",
         ]
     )
@@ -31,6 +39,10 @@ def test_runtime_cli_accepts_desktop_owned_launch_values(tmp_path: Path) -> None
     assert args.managed_worker_vm_assets == tmp_path / "manifest.json"
     assert args.managed_worker_linux_assets == tmp_path / "linux" / "manifest.json"
     assert args.computer_use_package == tmp_path / "computer-use.shejane-plugin"
+    assert args.browser_qa_package == tmp_path / "browser-qa.shejane-plugin"
+    assert args.browser_qa_runtime_asset == tmp_path / "browser-qa.shejane-runtime-asset"
+    assert args.ocr_package == tmp_path / "ocr.shejane-plugin"
+    assert args.ocr_runtime_asset == tmp_path / "rapidocr.shejane-runtime-asset"
     assert args.validate_managed_worker_vm_assets is True
 
 

@@ -690,23 +690,7 @@ def test_mcp_config_file_loaded(monkeypatch: Any, tmp_path: Path) -> None:
     assert config["demo"]["transport"] == "stdio"
 
 
-# --- browser-use integration ---
-
-
-def test_browser_tool_stub_without_llm() -> None:
-    """make_browser_tool(llm=None) returns a tool that reports unavailable."""
-    import asyncio
-
-    from shejane_runtime.tools.browser import make_browser_tool
-
-    tool = make_browser_tool(llm=None)
-    assert tool.name == "browser.task"
-    out = asyncio.run(tool.ainvoke({"task": "open https://example.com"}))
-    assert out["ok"] == "false"
-    assert "Phase 3" in out["error"] or "not installed" in out["error"]
-
-
-def test_browser_tool_hidden_from_registry_until_configured(client: TestClient) -> None:
+def test_browser_qa_is_not_a_static_tool(client: TestClient) -> None:
     r = client.get(
         "/v1/tools",
         headers={"Authorization": "Bearer test-pairing-token"},

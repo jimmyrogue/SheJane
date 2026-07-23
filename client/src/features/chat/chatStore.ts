@@ -788,7 +788,12 @@ function toolActionLabel(tool: string, t: Translator): string {
     'memory.write': t('chat.tool.memory.write'),
     'image.generate': t('chat.tool.image.generate'),
     'image.edit': t('chat.tool.image.edit'),
-    'browser.task': t('chat.tool.browser.task'),
+    'plugin.org.shejane.browser-qa.open': t('chat.tool.browserQa.open'),
+    'plugin.org.shejane.browser-qa.observe': t('chat.tool.browserQa.observe'),
+    'plugin.org.shejane.browser-qa.act': t('chat.tool.browserQa.act'),
+    'plugin.org.shejane.browser-qa.inspect': t('chat.tool.browserQa.inspect'),
+    'plugin.org.shejane.browser-qa.close': t('chat.tool.browserQa.close'),
+    'plugin.org.shejane.ocr.ocr.recognize_images': t('chat.tool.ocr.recognize'),
     // Office tools — read + outline + read_range + 10 write tools.
     'office.read': t('chat.tool.office.read'),
     'office.outline': t('chat.tool.office.outline'),

@@ -23,6 +23,7 @@ RUNTIME_ENV=(
   "SHELL=${SHELL:-/bin/zsh}"
   "PYTHONUNBUFFERED=1"
 )
+RUNTIME_FIXED_CAPABILITY_ARGS=()
 [[ -n "${SHEJANE_RUNTIME_MCP_SERVERS:-}" ]] && RUNTIME_ENV+=("SHEJANE_RUNTIME_MCP_SERVERS=$SHEJANE_RUNTIME_MCP_SERVERS")
 [[ -n "${SHEJANE_RUNTIME_SKILLS_PATH:-}" ]] && RUNTIME_ENV+=("SHEJANE_RUNTIME_SKILLS_PATH=$SHEJANE_RUNTIME_SKILLS_PATH")
 RUNTIME_ENV+=("SHEJANE_RUNTIME_NODE_PATH=$(command -v node)")
@@ -52,6 +53,20 @@ require_command() {
     echo "Missing required command: $1" >&2
     exit 127
   fi
+}
+
+prepare_fixed_capability_args() {
+  RUNTIME_FIXED_CAPABILITY_ARGS=()
+  local flag path
+  while IFS='|' read -r flag path; do
+    [[ -f "$path" ]] && RUNTIME_FIXED_CAPABILITY_ARGS+=("$flag" "$path")
+  done <<EOF
+--computer-use-package|${ROOT_DIR}/runtime/plugins/computer-use/dist/computer-use-0.2.0-darwin-arm64.shejane-plugin
+--browser-qa-package|${ROOT_DIR}/runtime/plugins/browser-qa/dist/browser-qa-0.1.0-darwin-arm64.shejane-plugin
+--browser-qa-runtime-asset|${ROOT_DIR}/runtime/plugins/browser-qa/dist/browser-qa-runtime-1.61.1-darwin-arm64.shejane-runtime-asset
+--ocr-package|${ROOT_DIR}/runtime/plugins/ocr/dist/ocr-0.1.0-darwin-arm64.shejane-plugin
+--ocr-runtime-asset|${ROOT_DIR}/runtime/plugins/ocr/dist/rapidocr-runtime-3.9.1-darwin-arm64.shejane-runtime-asset
+EOF
 }
 
 ensure_node_modules() {
@@ -126,11 +141,12 @@ start_runtime() {
   local log_file="${LOG_DIR}/runtime.log"
   echo "Starting Runtime at ${RUNTIME_URL}"
   "${ROOT_DIR}/scripts/build-computer-use-builtin.sh"
+  prepare_fixed_capability_args
   (
     cd "${ROOT_DIR}/runtime"
     "${RUNTIME_ENV[@]}" uv run shejane-runtime \
       --host 127.0.0.1 --port "$RUNTIME_PORT" --token "$TOKEN" \
-      --computer-use-package "${ROOT_DIR}/runtime/plugins/computer-use/dist/computer-use-0.2.0-darwin-arm64.shejane-plugin" \
+      "${RUNTIME_FIXED_CAPABILITY_ARGS[@]}" \
       >"$log_file" 2>&1
   ) &
   PIDS+=("$!")
@@ -236,10 +252,12 @@ restart_runtime() {
   fi
 
   echo "→ Starting Runtime at ${RUNTIME_URL}"
+  prepare_fixed_capability_args
   (
     cd "${ROOT_DIR}/runtime"
     nohup "${RUNTIME_ENV[@]}" uv run shejane-runtime \
       --host 127.0.0.1 --port "$RUNTIME_PORT" --token "$TOKEN" \
+      "${RUNTIME_FIXED_CAPABILITY_ARGS[@]}" \
       >"$log_file" 2>&1 &
     echo "$!" >"${LOG_DIR}/runtime.pid"
   )

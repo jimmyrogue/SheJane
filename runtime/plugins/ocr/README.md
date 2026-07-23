@@ -11,6 +11,6 @@ the PDF plugin, then pass those same-Run PNG Artifact IDs to this plugin.
 
 `build_package.py` creates a deterministic platform-specific `.shejane-plugin`
 archive from a PyInstaller onedir Worker and an exact Runtime Asset digest. The
-Linux/arm64 candidate passes multilingual/layout/orientation, hostile-input,
-cancellation, and deterministic replay Gates in the production macOS VM; it remains
-unpublished until the signed/notarized release workflow succeeds.
+SheJane-maintained package is executed by the fixed OCR host adapter; arbitrary
+third-party packages cannot select that adapter. This keeps the general Managed
+Worker release gate closed while allowing the trusted, native macOS OCR capability.

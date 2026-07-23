@@ -139,8 +139,19 @@ class BuiltinExecution(_StrictModel):
     """A Runtime-authorized host adapter restricted to one exact package digest."""
 
     kind: Literal["builtin"]
-    handler: Literal["computer_use"]
+    handler: Literal["browser_qa", "computer_use", "ocr"]
     platforms: list[HostPlatform] = Field(min_length=1, max_length=1)
+    runtime_assets: list[RuntimeAssetReference] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def require_unique_runtime_assets(self) -> BuiltinExecution:
+        identities = [(asset.id, asset.version, asset.digest) for asset in self.runtime_assets]
+        if len(identities) != len(set(identities)):
+            raise ValueError("built-in runtime assets must be unique")
+        ids = [asset.id for asset in self.runtime_assets]
+        if len(ids) != len(set(ids)):
+            raise ValueError("built-in runtime asset ids must be unique")
+        return self
 
 
 class PluginRuntime(_StrictModel):

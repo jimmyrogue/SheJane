@@ -13,6 +13,7 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from ..store.sqlite import LocalStore, PluginStateError, PluginVersionConflictError
+from .browser_qa import BROWSER_QA_PLUGIN_ID, is_allowed_browser_qa_package
 from .computer_use import (
     COMPUTER_USE_PLUGIN_ID,
     ComputerUseError,
@@ -21,6 +22,7 @@ from .computer_use import (
     is_allowed_computer_use_package,
 )
 from .manifest import load_plugin_manifest
+from .ocr import OCR_PLUGIN_ID, is_allowed_ocr_package
 from .package import (
     SIGNATURE_PATH,
     InvalidPluginPackage,
@@ -63,14 +65,30 @@ class PluginRegistry:
         data_dir: Path,
         runtime_version: str,
         computer_use_package: Path | None = None,
+        browser_qa_package: Path | None = None,
+        browser_qa_runtime_asset: Path | None = None,
+        ocr_package: Path | None = None,
+        ocr_runtime_asset: Path | None = None,
     ) -> None:
         self._store = store
         self._root = data_dir / "plugins"
         self._data_dir = data_dir
         self._runtime_version = runtime_version
         self._runtime_assets = RuntimeAssetStore(data_dir)
-        self._computer_use_package = computer_use_package
-        self._computer_use_lock = asyncio.Lock()
+        self._fixed_packages = {
+            plugin_id: package
+            for plugin_id, package in (
+                (COMPUTER_USE_PLUGIN_ID, computer_use_package),
+                (BROWSER_QA_PLUGIN_ID, browser_qa_package),
+                (OCR_PLUGIN_ID, ocr_package),
+            )
+            if package is not None
+        }
+        self._fixed_runtime_assets = tuple(
+            path for path in (browser_qa_runtime_asset, ocr_runtime_asset) if path is not None
+        )
+        self._fixed_capabilities_ready_for: set[str] = set()
+        self._fixed_capability_lock = asyncio.Lock()
 
     async def install_runtime_asset(
         self,
@@ -195,10 +213,13 @@ class PluginRegistry:
         try:
             extract_plugin_archive(source, package_root)
             manifest = load_plugin_manifest(package_root)
-            if manifest.id == COMPUTER_USE_PLUGIN_ID and not allow_builtin:
+            if (
+                manifest.id in {COMPUTER_USE_PLUGIN_ID, BROWSER_QA_PLUGIN_ID, OCR_PLUGIN_ID}
+                and not allow_builtin
+            ):
                 raise PluginRegistryError(
                     "builtin_capability_managed",
-                    "Computer Use is managed by this SheJane Runtime",
+                    "This fixed capability is managed by the SheJane Runtime",
                     status_code=409,
                 )
             digest = canonical_package_digest(package_root)
@@ -267,10 +288,15 @@ class PluginRegistry:
                         status_code=409,
                     )
             elif manifest.runtime.execution.kind == "builtin":
-                if not is_allowed_computer_use_package(
-                    plugin_id=manifest.id,
-                    version=manifest.version,
-                    handler=manifest.runtime.execution.handler,
+                identity = {
+                    "plugin_id": manifest.id,
+                    "version": manifest.version,
+                    "handler": manifest.runtime.execution.handler,
+                }
+                if not (
+                    is_allowed_computer_use_package(**identity)
+                    or is_allowed_browser_qa_package(**identity)
+                    or is_allowed_ocr_package(**identity)
                 ):
                     raise PluginRegistryError(
                         "builtin_plugin_not_allowed",
@@ -283,6 +309,21 @@ class PluginRegistry:
                         "Built-in plugin does not target this operating system and architecture",
                         status_code=409,
                     )
+                target_platform = manifest.runtime.execution.platforms[0]
+                for reference in manifest.runtime.execution.runtime_assets:
+                    try:
+                        self._runtime_assets.resolve(
+                            asset_id=reference.id,
+                            version=reference.version,
+                            platform=target_platform,
+                            digest=reference.digest,
+                        )
+                    except InvalidPluginPackage as exc:
+                        raise PluginRegistryError(
+                            "plugin_runtime_asset_unavailable",
+                            f"required runtime asset {reference.id} is unavailable",
+                            status_code=409,
+                        ) from exc
             try:
                 compatible = Version(self._runtime_version) >= Version(manifest.runtime.min_version)
             except InvalidVersion as exc:
@@ -415,12 +456,10 @@ class PluginRegistry:
             raise PluginRegistryError(exc.code, str(exc), status_code=status_code) from exc
 
     async def list(self, *, principal_id: str) -> list[dict[str, Any]]:
-        await self._ensure_computer_use(principal_id)
         records = await self._store.list_plugins(principal_id=principal_id)
         return [_plugin_summary(record) for record in records]
 
     async def inspect(self, *, principal_id: str, plugin_id: str) -> dict[str, Any]:
-        await self._ensure_computer_use(principal_id)
         record = await self._store.get_plugin(principal_id=principal_id, plugin_id=plugin_id)
         if record is None:
             raise PluginRegistryError(
@@ -477,7 +516,6 @@ class PluginRegistry:
         expected_digest: str | None,
         enabled: bool,
     ) -> dict[str, Any]:
-        await self._ensure_computer_use(principal_id)
         if plugin_id == COMPUTER_USE_PLUGIN_ID and enabled:
             readiness = await self.computer_use_readiness(principal_id=principal_id)
             if readiness["state"] != "ready":
@@ -602,68 +640,104 @@ class PluginRegistry:
         )
 
     async def _ensure_computer_use(self, principal_id: str) -> Path | None:
-        source = self._computer_use_package
+        source = self._fixed_packages.get(COMPUTER_USE_PLUGIN_ID)
         if source is None or not source.is_file():
             return None
-        async with self._computer_use_lock:
-            prepared = await asyncio.to_thread(
-                self._ingest_package,
-                str(source),
-                True,
-                None,
-                True,
-            )
-            current = await self._store.get_plugin(
-                principal_id=principal_id, plugin_id=COMPUTER_USE_PLUGIN_ID
-            )
-            payload = {
-                "type": "runtime.builtin.ensure",
-                "plugin_id": COMPUTER_USE_PLUGIN_ID,
-                "digest": prepared.digest,
-            }
-            try:
-                if current is None:
-                    await self._store.install_plugin_command(
-                        principal_id=principal_id,
-                        command_id=f"builtin-install:{prepared.digest}",
-                        command_payload=payload,
-                        manifest=prepared.manifest,
-                        digest=prepared.digest,
-                        signature_status="unsigned",
-                        signer_key_id=None,
-                        compatibility=prepared.compatibility,
-                        source="runtime_builtin",
-                        command_type="runtime.builtin.ensure",
-                        receipt_type="runtime.builtin.ensure",
+        async with self._fixed_capability_lock:
+            return await self._ensure_fixed_plugin(principal_id, COMPUTER_USE_PLUGIN_ID, source)
+
+    async def initialize_fixed_capabilities(self, principal_id: str) -> None:
+        if principal_id in self._fixed_capabilities_ready_for:
+            return
+        async with self._fixed_capability_lock:
+            if principal_id in self._fixed_capabilities_ready_for:
+                return
+            for source in self._fixed_runtime_assets:
+                if not source.is_file():
+                    raise PluginRegistryError(
+                        "builtin_capability_unavailable",
+                        "fixed capability Runtime Asset is unavailable",
+                        status_code=409,
                     )
-                elif current["digest"] != prepared.digest:
-                    await self._store.update_plugin_command(
-                        principal_id=principal_id,
-                        command_id=f"builtin-update:{prepared.digest}",
-                        command_payload=payload,
-                        plugin_id=COMPUTER_USE_PLUGIN_ID,
-                        manifest=prepared.manifest,
-                        digest=prepared.digest,
-                        signature_status="unsigned",
-                        signer_key_id=None,
-                        compatibility=prepared.compatibility,
-                        source="runtime_builtin",
-                        command_type="runtime.builtin.ensure",
-                        receipt_type="runtime.builtin.ensure",
+                try:
+                    await asyncio.to_thread(
+                        self._runtime_assets.install,
+                        source,
+                        target_platform=current_managed_worker_platform(),
                     )
-            except (PluginStateError, PluginVersionConflictError) as exc:
-                await self._discard_new_blob(prepared)
-                raise PluginRegistryError(
-                    "builtin_capability_unavailable", str(exc), status_code=409
-                ) from exc
-            return prepared.destination
+                except InvalidPluginPackage as exc:
+                    raise PluginRegistryError(
+                        "builtin_capability_unavailable", str(exc), status_code=409
+                    ) from exc
+            for plugin_id, source in self._fixed_packages.items():
+                if source.is_file():
+                    await self._ensure_fixed_plugin(principal_id, plugin_id, source)
+            self._fixed_capabilities_ready_for.add(principal_id)
+
+    async def _ensure_fixed_plugin(self, principal_id: str, plugin_id: str, source: Path) -> Path:
+        prepared = await asyncio.to_thread(
+            self._ingest_package,
+            str(source),
+            True,
+            None,
+            True,
+        )
+        if prepared.manifest["id"] != plugin_id:
+            await self._discard_new_blob(prepared)
+            raise PluginRegistryError(
+                "builtin_capability_unavailable",
+                "fixed capability package identity changed",
+                status_code=409,
+            )
+        current = await self._store.get_plugin(principal_id=principal_id, plugin_id=plugin_id)
+        payload = {
+            "type": "runtime.builtin.ensure",
+            "plugin_id": plugin_id,
+            "digest": prepared.digest,
+        }
+        try:
+            if current is None:
+                await self._store.install_plugin_command(
+                    principal_id=principal_id,
+                    command_id=f"builtin-install:{prepared.digest}",
+                    command_payload=payload,
+                    manifest=prepared.manifest,
+                    digest=prepared.digest,
+                    signature_status="unsigned",
+                    signer_key_id=None,
+                    compatibility=prepared.compatibility,
+                    source="runtime_builtin",
+                    command_type="runtime.builtin.ensure",
+                    receipt_type="runtime.builtin.ensure",
+                )
+            elif current["digest"] != prepared.digest:
+                await self._store.update_plugin_command(
+                    principal_id=principal_id,
+                    command_id=f"builtin-update:{prepared.digest}",
+                    command_payload=payload,
+                    plugin_id=plugin_id,
+                    manifest=prepared.manifest,
+                    digest=prepared.digest,
+                    signature_status="unsigned",
+                    signer_key_id=None,
+                    compatibility=prepared.compatibility,
+                    source="runtime_builtin",
+                    command_type="runtime.builtin.ensure",
+                    receipt_type="runtime.builtin.ensure",
+                )
+        except (PluginStateError, PluginVersionConflictError) as exc:
+            await self._discard_new_blob(prepared)
+            raise PluginRegistryError(
+                "builtin_capability_unavailable", str(exc), status_code=409
+            ) from exc
+        return prepared.destination
 
     @staticmethod
     def _reject_builtin_mutation(plugin_id: str) -> None:
-        if plugin_id == COMPUTER_USE_PLUGIN_ID:
+        if plugin_id in {COMPUTER_USE_PLUGIN_ID, BROWSER_QA_PLUGIN_ID, OCR_PLUGIN_ID}:
             raise PluginRegistryError(
                 "builtin_capability_managed",
-                "Computer Use is managed by this SheJane Runtime",
+                "This fixed capability is managed by the SheJane Runtime",
                 status_code=409,
             )
 

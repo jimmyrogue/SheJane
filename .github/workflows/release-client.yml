@@ -382,6 +382,77 @@ jobs:
           path: ${{ runner.temp }}/rapidocr-runtime-linux-arm64-a.shejane-runtime-asset
           if-no-files-found: error
 
+  darwin-arm64-ocr-runtime:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.14"
+      - name: Fetch content-locked macOS OCR packages and models
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheelhouse="${RUNNER_TEMP}/shejane-ocr-wheelhouse"
+          models="${RUNNER_TEMP}/shejane-ocr-models"
+          mkdir -p "${wheelhouse}" "${models}"
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          root = Path.cwd()
+          wheelhouse = Path(os.environ["RUNNER_TEMP"]) / "shejane-ocr-wheelhouse"
+          lock = json.loads(
+              (root / "runtime/plugins/ocr/runtime-assets/rapidocr-3.9.1.lock.json").read_text()
+          )
+          for item in lock["packages"]:
+              filename = item["filename"]
+              project = (
+                  "antlr4-python3-runtime"
+                  if filename.startswith("antlr4-python3-runtime-")
+                  else filename.split("-", 1)[0].replace("_", "-")
+              )
+              with urllib.request.urlopen(f"https://pypi.org/pypi/{project}/json") as response:
+                  metadata = json.load(response)
+              candidates = [
+                  file
+                  for release in metadata["releases"].values()
+                  for file in release
+                  if file["filename"] == filename
+              ]
+              if len(candidates) != 1:
+                  raise SystemExit(f"locked PyPI file is unavailable: {filename}")
+              urllib.request.urlretrieve(candidates[0]["url"], wheelhouse / filename)
+          PY
+          while IFS=$'\t' read -r url filename; do
+            curl --fail --location --retry 5 --proto '=https' --proto-redir '=https' --tlsv1.2 \
+              "${url}" --output "${models}/${filename}"
+          done < <(jq -r '.models[] | [.source_url, .filename] | @tsv' \
+            runtime/plugins/ocr/runtime-assets/rapidocr-3.9.1.lock.json)
+      - name: Build reproducible macOS arm64 RapidOCR Runtime Asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          first="${RUNNER_TEMP}/rapidocr-runtime-darwin-arm64-a.shejane-runtime-asset"
+          second="${RUNNER_TEMP}/rapidocr-runtime-darwin-arm64-b.shejane-runtime-asset"
+          for output in "${first}" "${second}"; do
+            python runtime/plugins/ocr/runtime-assets/build_darwin.py \
+              --wheelhouse "${RUNNER_TEMP}/shejane-ocr-wheelhouse" \
+              --model-dir "${RUNNER_TEMP}/shejane-ocr-models" \
+              --output "${output}"
+          done
+          cmp "${first}" "${second}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocr-runtime-darwin-arm64
+          path: ${{ runner.temp }}/rapidocr-runtime-darwin-arm64-a.shejane-runtime-asset
+          if-no-files-found: error
+
   darwin-arm64-speech-model:
     runs-on: macos-15
     steps:
@@ -681,6 +752,7 @@ jobs:
       - linux-arm64-media-worker
       - linux-arm64-node-runtime
       - linux-arm64-ocr-runtime
+      - darwin-arm64-ocr-runtime
       - linux-arm64-ocr-worker
       - linux-arm64-office-runtime
       - linux-arm64-pdf-runtime
@@ -728,11 +800,9 @@ jobs:
           go-version: "1.26.5"
       - uses: astral-sh/setup-uv@v5
       - run: pnpm install --frozen-lockfile
-      - name: Build Runtime
+      - name: Sync Runtime dependencies
         working-directory: runtime
-        run: |
-          uv sync --frozen
-          uv run python -m PyInstaller shejane-runtime.spec --noconfirm --clean
+        run: uv sync --frozen
       - name: Set Client version
         if: github.ref_type == 'tag'
         working-directory: client
@@ -892,6 +962,11 @@ jobs:
         with:
           name: rapidocr-runtime-linux-arm64
           path: ${{ runner.temp }}/shejane-rapidocr-runtime
+      - uses: actions/download-artifact@v4
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        with:
+          name: rapidocr-runtime-darwin-arm64
+          path: ${{ runner.temp }}/shejane-rapidocr-runtime-darwin
       - uses: actions/download-artifact@v4
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         with:
@@ -1080,6 +1155,19 @@ jobs:
             --guest-rootfs "${inputs}/guest-rootfs.ext4" \
             --codesign-identity "${SHEJANE_CODESIGN_IDENTITY}" \
             --output ../client/build/vm-assets-arm64
+      - name: Build Runtime with fixed capability packages
+        shell: bash
+        env:
+          SHEJANE_RAPIDOCR_RUNTIME_ASSET: ${{ runner.temp }}/shejane-rapidocr-runtime-darwin/rapidocr-runtime-darwin-arm64-a.shejane-runtime-asset
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.platform }}" == "macos" && "${{ matrix.arch }}" == "arm64" ]]; then
+            ./scripts/build-computer-use-builtin.sh
+            ./scripts/build-browser-qa-builtin.sh
+            ./scripts/build-ocr-builtin.sh
+          fi
+          cd runtime
+          uv run python -m PyInstaller shejane-runtime.spec --noconfirm --clean
       - name: Package Client
         working-directory: client
         shell: bash

@@ -9,8 +9,8 @@
   "runtime": {
     "min_version": "0.1.0",
     "execution": {
-      "kind": "managed_worker",
-      "entrypoint": "__ENTRYPOINT__",
+      "kind": "builtin",
+      "handler": "ocr",
       "platforms": ["__PLATFORM__"],
       "runtime_assets": [
         {

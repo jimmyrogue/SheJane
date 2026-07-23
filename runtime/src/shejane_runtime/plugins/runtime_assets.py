@@ -114,6 +114,7 @@ class RuntimeAssetStore:
         source: Path,
         *,
         expected_digest: str | None = None,
+        target_platform: str | None = None,
     ) -> RuntimeAssetHandle:
         if source.suffix != ".shejane-runtime-asset":
             raise InvalidPluginPackage("runtime asset source must be a .shejane-runtime-asset ZIP")
@@ -135,7 +136,7 @@ class RuntimeAssetStore:
                 max_files=_MAX_ASSET_FILES,
             )
             manifest = load_runtime_asset_manifest(asset_root)
-            current = current_managed_worker_execution_platform()
+            current = target_platform or current_managed_worker_execution_platform()
             if current is None or manifest.platform != current:
                 raise InvalidPluginPackage("runtime asset does not target this platform")
             digest = canonical_runtime_asset_digest(asset_root)

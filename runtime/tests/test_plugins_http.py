@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -13,8 +14,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
 from shejane_runtime.config import reset_settings_for_tests
+from shejane_runtime.plugins.catalog import PluginCatalog
+from shejane_runtime.plugins.identity import plugin_action_catalog_hash
+from shejane_runtime.plugins.manifest import load_plugin_manifest
 from shejane_runtime.plugins.package import canonical_package_digest, extract_plugin_archive
 from shejane_runtime.plugins.platforms import current_managed_worker_execution_platform
+from shejane_runtime.plugins.runtime_assets import RuntimeAssetStore
 from shejane_runtime.runs import RunCoordinator
 from shejane_runtime.server import create_app
 from shejane_runtime.store.sqlite import LocalStore
@@ -51,13 +56,19 @@ def _pack_fixture(
                     archive.write(path, relative)
 
 
-def _pack_runtime_asset(destination: Path) -> None:
-    platform = current_managed_worker_execution_platform() or "linux/arm64"
+def _pack_runtime_asset(
+    destination: Path,
+    *,
+    asset_id: str = "org.libreoffice.runtime",
+    version: str = "25.8.7",
+    platform: str | None = None,
+) -> None:
+    target_platform = platform or current_managed_worker_execution_platform() or "linux/arm64"
     manifest = {
         "schema_version": 1,
-        "id": "org.libreoffice.runtime",
-        "version": "25.8.7",
-        "platform": platform,
+        "id": asset_id,
+        "version": version,
+        "platform": target_platform,
         "license": "MPL-2.0",
         "source_url": "https://www.libreoffice.org/",
         "payload": "payload/libreoffice",
@@ -73,6 +84,57 @@ def _pack_runtime_asset(destination: Path) -> None:
             json.dumps({"spdxVersion": "SPDX-2.3"}),
         )
         archive.writestr("payload/libreoffice/program.bin", "pinned")
+
+
+def _pack_ocr_builtin(destination: Path, digest: str) -> None:
+    manifest = {
+        "schema_version": 1,
+        "id": "org.shejane.ocr",
+        "version": "0.1.0",
+        "name": "OCR",
+        "description": "Extract text from images locally.",
+        "license": "Apache-2.0",
+        "publisher": {"id": "org.shejane", "name": "SheJane"},
+        "runtime": {
+            "min_version": "0.1.0",
+            "execution": {
+                "kind": "builtin",
+                "handler": "ocr",
+                "platforms": ["darwin/arm64"],
+                "runtime_assets": [
+                    {
+                        "id": "org.rapidocr.runtime",
+                        "version": "3.9.1+ppocrv6-medium.1",
+                        "digest": digest,
+                    }
+                ],
+            },
+        },
+        "contributions": {
+            "actions": [
+                {
+                    "id": "ocr.recognize_images",
+                    "title": "Recognize image text",
+                    "description": "Recognize text in selected images.",
+                    "input_schema": "actions/input.json",
+                    "output_schema": "actions/output.json",
+                    "consumes": ["image/png"],
+                    "produces": ["text/plain", "application/json"],
+                    "effects": ["read", "artifact"],
+                    "determinism": "input_stable",
+                    "capabilities": ["input.read", "artifact.write"],
+                    "limits": {"timeout_ms": 300000, "memory_mb": 2048, "output_mb": 64},
+                }
+            ],
+            "commands": [],
+        },
+    }
+    schema = {"type": "object", "additionalProperties": True}
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(".shejane-plugin/plugin.json", json.dumps(manifest))
+        archive.writestr("actions/input.json", json.dumps(schema))
+        archive.writestr("actions/output.json", json.dumps(schema))
+        archive.writestr("payload/ocr-worker", "#!/bin/sh\nexit 0\n")
 
 
 def _pack_worker_with_runtime_asset(destination: Path, digest: str) -> None:
@@ -109,6 +171,57 @@ def _pack_computer_use_builtin(destination: Path) -> None:
             for path in sorted((COMPUTER_USE / folder).rglob("*")):
                 if path.is_file():
                     archive.write(path, path.relative_to(COMPUTER_USE).as_posix())
+        archive.writestr("payload/bridge-server.mjs", "process.exit(0)\n")
+
+
+def _pack_browser_qa_builtin(destination: Path, digest: str) -> None:
+    manifest = {
+        "schema_version": 1,
+        "id": "org.shejane.browser-qa",
+        "version": "0.1.0",
+        "name": "Browser QA",
+        "description": "Open, operate, and inspect web pages in an isolated SheJane browser.",
+        "license": "Apache-2.0",
+        "publisher": {"id": "org.shejane", "name": "SheJane"},
+        "runtime": {
+            "min_version": "0.1.0",
+            "execution": {
+                "kind": "builtin",
+                "handler": "browser_qa",
+                "platforms": ["darwin/arm64"],
+                "runtime_assets": [
+                    {
+                        "id": "org.shejane.browser-qa.runtime",
+                        "version": "1.61.1+chromium1228.1",
+                        "digest": digest,
+                    }
+                ],
+            },
+        },
+        "contributions": {
+            "actions": [
+                {
+                    "id": "open",
+                    "title": "Open page",
+                    "description": "Open one public HTTP or HTTPS page.",
+                    "input_schema": "actions/open.input.json",
+                    "output_schema": "actions/result.output.json",
+                    "consumes": [],
+                    "produces": [],
+                    "effects": ["read", "external"],
+                    "determinism": "nondeterministic",
+                    "capabilities": ["browser.observe"],
+                    "limits": {"timeout_ms": 60000, "memory_mb": 512, "output_mb": 8},
+                }
+            ],
+            "commands": [],
+        },
+    }
+    schema = {"type": "object", "additionalProperties": True}
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(".shejane-plugin/plugin.json", json.dumps(manifest))
+        archive.writestr("actions/open.input.json", json.dumps(schema))
+        archive.writestr("actions/result.output.json", json.dumps(schema))
         archive.writestr("payload/bridge-server.mjs", "process.exit(0)\n")
 
 
@@ -183,6 +296,167 @@ def test_computer_use_is_runtime_managed_and_cannot_be_installed_or_removed(
                 "type": "plugin.remove",
                 "command_id": "cmd_remove_builtin",
                 "plugin_id": "org.shejane.computer-use",
+                "expected_digest": plugin["digest"],
+            },
+        )
+        assert remove.status_code == 409
+        assert remove.json()["detail"]["code"] == "builtin_capability_managed"
+
+
+def test_browser_qa_is_runtime_managed_and_cannot_be_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asset = tmp_path / "browser-qa.shejane-runtime-asset"
+    _pack_runtime_asset(
+        asset,
+        asset_id="org.shejane.browser-qa.runtime",
+        version="1.61.1+chromium1228.1",
+        platform="darwin/arm64",
+    )
+    digest = (
+        RuntimeAssetStore(tmp_path / "browser-asset-store")
+        .install(asset, target_platform="darwin/arm64")
+        .digest
+    )
+    package = tmp_path / "browser-qa.shejane-plugin"
+    _pack_browser_qa_builtin(package, digest)
+    monkeypatch.setattr(
+        "shejane_runtime.plugins.registry.current_managed_worker_platform",
+        lambda: "darwin/arm64",
+    )
+    settings = reset_settings_for_tests(
+        SHEJANE_RUNTIME_TOKEN="tok",
+        data_dir=tmp_path / "runtime",
+        computer_use_package=None,
+        browser_qa_package=package,
+        browser_qa_runtime_asset=asset,
+    )
+    with TestClient(create_app(settings)) as builtin_client:
+        listed = builtin_client.get("/v1/plugins", headers=AUTH)
+        assert listed.status_code == 200, listed.text
+        plugin = listed.json()["plugins"][0]
+        assert plugin["id"] == "org.shejane.browser-qa"
+        assert plugin["execution_kind"] == "builtin"
+        assert plugin["enabled"] is False
+
+        package_root = (
+            settings.data_dir / "plugins" / "packages" / plugin["digest"].removeprefix("sha256:")
+        )
+        manifest = load_plugin_manifest(package_root).model_dump(mode="json")
+
+        async def verify_catalog_asset() -> None:
+            binding = {
+                "plugin_id": plugin["id"],
+                "version": plugin["version"],
+                "digest": plugin["digest"],
+                "action_catalog_hash": plugin_action_catalog_hash(
+                    manifest, plugin_digest=plugin["digest"]
+                ),
+            }
+            async with PluginCatalog(settings.data_dir).acquire_snapshot(
+                [binding], execution_context=object()
+            ) as lease:
+                assert lease.actions[0].runtime_assets[0].asset_id == (
+                    "org.shejane.browser-qa.runtime"
+                )
+
+        asyncio.run(verify_catalog_asset())
+
+        remove = builtin_client.post(
+            "/v1/commands",
+            headers=AUTH,
+            json={
+                "type": "plugin.remove",
+                "command_id": "cmd_remove_browser_qa",
+                "plugin_id": "org.shejane.browser-qa",
+                "expected_digest": plugin["digest"],
+            },
+        )
+        assert remove.status_code == 409
+        assert remove.json()["detail"]["code"] == "builtin_capability_managed"
+
+
+def test_plugin_list_does_not_reconcile_fixed_packages_after_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asset = tmp_path / "browser-qa.shejane-runtime-asset"
+    _pack_runtime_asset(
+        asset,
+        asset_id="org.shejane.browser-qa.runtime",
+        version="1.61.1+chromium1228.1",
+        platform="darwin/arm64",
+    )
+    digest = (
+        RuntimeAssetStore(tmp_path / "asset-store")
+        .install(asset, target_platform="darwin/arm64")
+        .digest
+    )
+    package = tmp_path / "browser-qa.shejane-plugin"
+    _pack_browser_qa_builtin(package, digest)
+    monkeypatch.setattr(
+        "shejane_runtime.plugins.registry.current_managed_worker_platform",
+        lambda: "darwin/arm64",
+    )
+    settings = reset_settings_for_tests(
+        SHEJANE_RUNTIME_TOKEN="tok",
+        data_dir=tmp_path / "runtime",
+        computer_use_package=None,
+        browser_qa_package=package,
+        browser_qa_runtime_asset=asset,
+    )
+
+    with TestClient(create_app(settings)) as builtin_client:
+        package.unlink()
+        asset.unlink()
+
+        listed = builtin_client.get("/v1/plugins", headers=AUTH)
+
+    assert listed.status_code == 200, listed.text
+    assert [plugin["id"] for plugin in listed.json()["plugins"]] == ["org.shejane.browser-qa"]
+
+
+def test_ocr_asset_and_plugin_are_runtime_managed_and_cannot_be_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asset = tmp_path / "rapidocr.shejane-runtime-asset"
+    _pack_runtime_asset(
+        asset,
+        asset_id="org.rapidocr.runtime",
+        version="3.9.1+ppocrv6-medium.1",
+        platform="darwin/arm64",
+    )
+    digest = (
+        RuntimeAssetStore(tmp_path / "asset-store")
+        .install(asset, target_platform="darwin/arm64")
+        .digest
+    )
+    package = tmp_path / "ocr.shejane-plugin"
+    _pack_ocr_builtin(package, digest)
+    monkeypatch.setattr(
+        "shejane_runtime.plugins.registry.current_managed_worker_platform",
+        lambda: "darwin/arm64",
+    )
+    settings = reset_settings_for_tests(
+        SHEJANE_RUNTIME_TOKEN="tok",
+        data_dir=tmp_path / "runtime",
+        computer_use_package=None,
+        ocr_runtime_asset=asset,
+        ocr_package=package,
+    )
+    with TestClient(create_app(settings)) as builtin_client:
+        listed = builtin_client.get("/v1/plugins", headers=AUTH)
+        assert listed.status_code == 200, listed.text
+        plugin = listed.json()["plugins"][0]
+        assert plugin["id"] == "org.shejane.ocr"
+        assert plugin["execution_kind"] == "builtin"
+
+        remove = builtin_client.post(
+            "/v1/commands",
+            headers=AUTH,
+            json={
+                "type": "plugin.remove",
+                "command_id": "cmd_remove_ocr",
+                "plugin_id": "org.shejane.ocr",
                 "expected_digest": plugin["digest"],
             },
         )

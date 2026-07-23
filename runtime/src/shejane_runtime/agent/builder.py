@@ -78,10 +78,12 @@ from ..middleware.tool_review import ToolReviewMiddleware
 from ..middleware.tool_visibility import ToolVisibilityMiddleware, delivered_plugin_tool_name
 from ..model_credentials import CredentialStoreError, get_model_api_key
 from ..model_profiles import apply_known_model_profile_defaults
+from ..plugins.browser_qa import BrowserQAActionExecutor, BrowserQAService
 from ..plugins.catalog import PluginExecutionLease
 from ..plugins.computer_use import ComputerUseActionExecutor, ComputerUseService
 from ..plugins.linux_cgroup import load_linux_cgroup_resources
 from ..plugins.macos_vm import load_macos_vm_resources
+from ..plugins.ocr import OCRActionExecutor
 from ..plugins.platforms import current_managed_worker_platform
 from ..plugins.sandbox_runtime import SandboxRuntimeError, configured_srt_launcher
 from ..plugins.tools import PluginActionError, PluginToolAdapter, build_plugin_tool
@@ -978,10 +980,7 @@ async def build_agent(
     if workspace_root is None and resource_stack is None:
         raise RuntimeError("no-workspace execution requires a resource stack")
 
-    tools = await build_tools(
-        browser_llm=None,  # browser sub-agent LLM is Phase 8'+ work
-        browser_headless=settings.browser_headless,
-    )
+    tools = await build_tools()
     catalog = mcp_catalog or MCPToolCatalog(settings.data_dir)
     if mcp_catalog is None and resource_stack is not None:
         resource_stack.push_async_callback(catalog.close)
@@ -1043,30 +1042,65 @@ async def build_agent(
             raise PluginActionError("executor_unavailable", str(exc)) from exc
 
     actions = plugin_lease.actions if plugin_lease else ()
-    computer_use_service = None
-    if any(action.execution_kind == "builtin" for action in actions):
+    builtin_services: dict[str, ComputerUseService] = {}
+    builtin_actions = [action for action in actions if action.execution_kind == "builtin"]
+    if builtin_actions:
         if resource_stack is None:
             raise PluginActionError(
-                "executor_unavailable", "Computer Use requires a Runtime resource stack"
+                "executor_unavailable", "Built-in plugins require a Runtime resource stack"
             )
-        computer_package = next(
-            action.package_root for action in actions if action.execution_kind == "builtin"
-        )
-        computer_use_service = ComputerUseService(
-            computer_package,
-            workspace_root=workspace_root or settings.data_dir,
-        )
-        resource_stack.push_async_callback(computer_use_service.aclose)
+        for action in builtin_actions:
+            handler = action.execution_handler
+            if handler == "ocr":
+                if len(action.runtime_assets) != 1:
+                    raise PluginActionError(
+                        "executor_unavailable", "OCR requires one fixed Runtime Asset"
+                    )
+                continue
+            if handler in builtin_services:
+                continue
+            if handler == "computer_use":
+                service: ComputerUseService = ComputerUseService(
+                    action.package_root,
+                    workspace_root=workspace_root or settings.data_dir,
+                )
+            elif handler == "browser_qa":
+                if len(action.runtime_assets) != 1:
+                    raise PluginActionError(
+                        "executor_unavailable", "Browser QA requires one fixed Runtime Asset"
+                    )
+                workspace_identity = hashlib.sha256(
+                    str(workspace_root or settings.data_dir).encode("utf-8")
+                ).hexdigest()[:24]
+                service = BrowserQAService(
+                    action.package_root,
+                    workspace_root=Path(workspace_root) if workspace_root else settings.data_dir,
+                    profile_root=settings.data_dir / "browser-qa" / "profiles" / workspace_identity,
+                    runtime_asset=action.runtime_assets[0],
+                    headless=settings.browser_headless,
+                )
+            else:
+                raise PluginActionError(
+                    "executor_unavailable", f"Unknown built-in plugin handler: {handler}"
+                )
+            builtin_services[str(handler)] = service
+            resource_stack.push_async_callback(service.aclose)
 
     plugin_tools = []
     for action in actions:
         adapter = None
         if action.execution_kind == "builtin":
-            assert computer_use_service is not None
-            adapter = PluginToolAdapter(
-                executor_factory=lambda selected, service=computer_use_service: (
-                    ComputerUseActionExecutor(service, selected.action_id)
+            if action.execution_handler == "ocr":
+                executor = OCRActionExecutor(action.package_root, action.runtime_assets[0])
+            else:
+                service = builtin_services[str(action.execution_handler)]
+                executor = (
+                    BrowserQAActionExecutor(service, action.action_id)
+                    if action.execution_handler == "browser_qa"
+                    else ComputerUseActionExecutor(service, action.action_id)
                 )
+            adapter = PluginToolAdapter(
+                executor_factory=lambda _selected, executor=executor: executor
             )
         plugin_tools.append(
             build_plugin_tool(

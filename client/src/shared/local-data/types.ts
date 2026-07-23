@@ -28,7 +28,7 @@ export interface AgentToolDetail {
   /** Optional full string (full path, full URL) for the title=
    *  tooltip when the user hovers the truncated text. */
   tooltip?: string
-  /** Web tools (web.fetch, browser.open, open.url, browser.task) ask
+  /** Web tools (web.fetch, Browser QA plugin actions, open.url) ask
    *  the renderer to draw the default IconWorld glyph alongside the
    *  host. We don't fetch real favicons — privacy + no external deps. */
   showWebIcon?: boolean

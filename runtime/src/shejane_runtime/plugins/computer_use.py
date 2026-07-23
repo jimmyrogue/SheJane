@@ -171,6 +171,9 @@ class ComputerUseReadiness:
 
 
 class ComputerUseService:
+    error_type = ComputerUseError
+    service_name = "computer-use"
+
     def __init__(self, package_root: Path, *, workspace_root: Path) -> None:
         self._package_root = package_root.resolve(strict=True)
         self._workspace_root = workspace_root.resolve(strict=True)
@@ -201,7 +204,7 @@ class ComputerUseService:
                 + b"\n"
             )
             if len(frame) > MAX_FRAME_BYTES:
-                raise ComputerUseError("computer-use request exceeds the protocol limit")
+                raise self._error("request exceeds the protocol limit")
             process.stdin.write(frame)
             await process.stdin.drain()
             try:
@@ -210,53 +213,56 @@ class ComputerUseService:
                 )
             except TimeoutError:
                 await self.aclose()
-                raise ComputerUseError("computer-use action timed out") from None
+                raise self._error("action timed out") from None
             except ValueError:
                 await self.aclose()
-                raise ComputerUseError("computer-use response exceeds the protocol limit") from None
+                raise self._error("response exceeds the protocol limit") from None
             if not raw:
                 detail = self._stderr.decode(errors="replace").strip()
                 await self.aclose()
-                raise ComputerUseError(detail or "computer-use service exited unexpectedly")
+                raise self.error_type(detail or f"{self.service_name} service exited unexpectedly")
             if len(raw) > MAX_FRAME_BYTES:
                 await self.aclose()
-                raise ComputerUseError("computer-use response exceeds the protocol limit")
+                raise self._error("response exceeds the protocol limit")
             try:
                 response = json.loads(raw)
             except json.JSONDecodeError as exc:
                 await self.aclose()
-                raise ComputerUseError("computer-use service returned invalid JSON") from exc
+                raise self._error("service returned invalid JSON") from exc
             if not isinstance(response, dict) or response.get("id") != request_id:
                 await self.aclose()
-                raise ComputerUseError("computer-use response identity changed")
+                raise self._error("response identity changed")
             if isinstance(response.get("error"), dict):
-                raise ComputerUseError(str(response["error"].get("message") or "action failed"))
+                raise self.error_type(str(response["error"].get("message") or "action failed"))
             if "result" not in response:
-                raise ComputerUseError("computer-use service omitted its result")
+                raise self._error("service omitted its result")
             return response["result"]
+
+    def _error(self, message: str) -> ComputerUseError:
+        return self.error_type(f"{self.service_name} {message}")
+
+    def _extra_environment(self) -> dict[str, str]:
+        return {
+            "SHEJANE_COMPUTER_USE_PACKAGE_ROOT": str(self._package_root),
+            "SHEJANE_COMPUTER_USE_WORKSPACE": str(self._workspace_root),
+        }
 
     async def _ensure_process(self) -> asyncio.subprocess.Process:
         if self._process is not None and self._process.returncode is None:
             return self._process
         bridge = self._package_root / "payload" / "bridge-server.mjs"
         if not bridge.is_file():
-            raise ComputerUseError("computer-use bridge is missing from the plugin package")
+            raise self._error("bridge is missing from the plugin package")
         configured_node = os.environ.get("SHEJANE_RUNTIME_NODE_PATH", "").strip()
         node = configured_node or shutil.which("node") or ""
         if not node or not Path(node).is_file():
-            raise ComputerUseError("computer-use requires the Runtime-provided Node.js executable")
+            raise self._error("requires the Runtime-provided Node.js executable")
         env = {
             key: os.environ[key]
             for key in ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE")
             if key in os.environ
         }
-        env.update(
-            {
-                "ELECTRON_RUN_AS_NODE": "1",
-                "SHEJANE_COMPUTER_USE_PACKAGE_ROOT": str(self._package_root),
-                "SHEJANE_COMPUTER_USE_WORKSPACE": str(self._workspace_root),
-            }
-        )
+        env.update({"ELECTRON_RUN_AS_NODE": "1", **self._extra_environment()})
         self._stderr.clear()
         self._process = await asyncio.create_subprocess_exec(
             node,

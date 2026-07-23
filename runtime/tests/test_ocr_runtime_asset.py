@@ -11,11 +11,23 @@ from PIL import Image, ImageDraw, ImageFont
 
 from shejane_runtime.plugins.executor import ManagedWorkerActionExecutor
 from shejane_runtime.plugins.macos_vm import load_macos_vm_resources
+from shejane_runtime.plugins.platforms import current_managed_worker_platform
 from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle, RuntimeAssetStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = REPO_ROOT / "runtime" / "plugins" / "ocr" / "worker" / "ocr_worker.py"
 ASSET_ENV = "SHEJANE_RAPIDOCR_RUNTIME_ASSET"
+
+
+def install_asset(data_dir: Path, archive: Path) -> RuntimeAssetHandle:
+    return RuntimeAssetStore(data_dir).install(
+        archive,
+        target_platform=(
+            None
+            if os.environ.get("SHEJANE_TEST_MACOS_VM_ASSETS")
+            else current_managed_worker_platform()
+        ),
+    )
 
 
 def real_executor(asset: RuntimeAssetHandle) -> ManagedWorkerActionExecutor:
@@ -118,7 +130,7 @@ def write_quality_images(base: Path, rotated: Path) -> None:
 @pytest.mark.skipif(not os.environ.get(ASSET_ENV), reason=f"{ASSET_ENV} is not set")
 async def test_real_rapidocr_asset_recognizes_text_deterministically(tmp_path: Path) -> None:
     archive = Path(os.environ[ASSET_ENV]).resolve(strict=True)
-    asset = RuntimeAssetStore(tmp_path / "data").install(archive)
+    asset = install_asset(tmp_path / "data", archive)
     executor = real_executor(asset)
     input_root = tmp_path / "input"
     source = input_root / "source" / "text.png"
@@ -153,7 +165,7 @@ async def test_real_rapidocr_asset_multilingual_layout_and_rotation_gate(
     tmp_path: Path,
 ) -> None:
     archive = Path(os.environ[ASSET_ENV]).resolve(strict=True)
-    asset = RuntimeAssetStore(tmp_path / "data").install(archive)
+    asset = install_asset(tmp_path / "data", archive)
     executor = real_executor(asset)
     input_root = tmp_path / "input"
     base = input_root / "source" / "quality.png"
@@ -196,7 +208,7 @@ async def test_real_rapidocr_asset_hostile_images_fail_closed(
     tmp_path: Path, payload: bytes
 ) -> None:
     archive = Path(os.environ[ASSET_ENV]).resolve(strict=True)
-    asset = RuntimeAssetStore(tmp_path / "data").install(archive)
+    asset = install_asset(tmp_path / "data", archive)
     executor = real_executor(asset)
     input_root = tmp_path / "input"
     source = input_root / "source" / "hostile.png"
@@ -221,7 +233,7 @@ async def test_real_rapidocr_asset_hostile_images_fail_closed(
 )
 async def test_real_rapidocr_asset_cancellation_discards_partial_output(tmp_path: Path) -> None:
     archive = Path(os.environ[ASSET_ENV]).resolve(strict=True)
-    asset = RuntimeAssetStore(tmp_path / "data").install(archive)
+    asset = install_asset(tmp_path / "data", archive)
     executor = real_executor(asset)
     input_root = tmp_path / "input"
     source = input_root / "source" / "text.png"

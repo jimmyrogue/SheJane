@@ -36,6 +36,26 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="bundled fixed Computer Use capability package",
     )
     parser.add_argument(
+        "--browser-qa-package",
+        type=Path,
+        help="bundled fixed Browser QA capability package",
+    )
+    parser.add_argument(
+        "--browser-qa-runtime-asset",
+        type=Path,
+        help="bundled fixed Browser QA Runtime Asset",
+    )
+    parser.add_argument(
+        "--ocr-package",
+        type=Path,
+        help="bundled fixed OCR capability package",
+    )
+    parser.add_argument(
+        "--ocr-runtime-asset",
+        type=Path,
+        help="bundled fixed RapidOCR Runtime Asset",
+    )
+    parser.add_argument(
         "--validate-managed-worker-vm-assets",
         action="store_true",
         help="validate the bundled macOS VM asset set and exit",
@@ -57,6 +77,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "managed_worker_vm_assets": args.managed_worker_vm_assets,
             "managed_worker_linux_assets": args.managed_worker_linux_assets,
             "computer_use_package": args.computer_use_package,
+            "browser_qa_package": args.browser_qa_package,
+            "browser_qa_runtime_asset": args.browser_qa_runtime_asset,
+            "ocr_package": args.ocr_package,
+            "ocr_runtime_asset": args.ocr_runtime_asset,
         }.items()
         if value is not None
     }

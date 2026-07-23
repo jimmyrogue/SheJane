@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
+from shejane_runtime.agent.context_builder import RuntimeContext
+from shejane_runtime.auth import LOCAL_OWNER_PRINCIPAL_ID
+from shejane_runtime.plugins.catalog import PluginActionDescriptor
 from shejane_runtime.plugins.executor import ManagedWorkerActionExecutor
+from shejane_runtime.plugins.ocr import OCRActionExecutor
 from shejane_runtime.plugins.runtime_assets import RuntimeAssetHandle
+from shejane_runtime.plugins.tools import PluginToolAdapter
+from shejane_runtime.store.sqlite import LocalStore
+from shejane_runtime.tools.runtime import RuntimeToolExecution
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKER = REPO_ROOT / "runtime" / "plugins" / "ocr" / "worker" / "ocr_worker.py"
+PLUGIN_ROOT = REPO_ROOT / "runtime" / "plugins" / "ocr"
 
 
 def executable(path: Path, source: str) -> None:
@@ -120,6 +129,112 @@ def image_sources(tmp_path: Path) -> tuple[Path, Path, list[tuple[str, Path, str
             ("second", second, "image/jpeg"),
         ],
     )
+
+
+def action_descriptor(tmp_path: Path, asset: RuntimeAssetHandle) -> PluginActionDescriptor:
+    template = json.loads(
+        (PLUGIN_ROOT / ".shejane-plugin" / "plugin.template.json").read_text(encoding="utf-8")
+    )
+    action = template["contributions"]["actions"][0]
+    package_root = tmp_path / "plugins" / "packages" / ("b" * 64)
+    payload = package_root / "payload"
+    payload.mkdir(parents=True)
+    worker = payload / "ocr-worker"
+    worker.write_text(
+        f"#!/bin/sh\nexec {sys.executable!s} {WORKER!s}\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o500)
+    return PluginActionDescriptor(
+        plugin_id="org.shejane.ocr",
+        plugin_version="0.1.0",
+        plugin_digest="sha256:" + "b" * 64,
+        action_id=action["id"],
+        tool_name="plugin.org.shejane.ocr.ocr.recognize_images",
+        title=action["title"],
+        description=action["description"],
+        action_schema_digest="sha256:" + "c" * 64,
+        input_schema=json.loads((PLUGIN_ROOT / action["input_schema"]).read_text(encoding="utf-8")),
+        output_schema=json.loads(
+            (PLUGIN_ROOT / action["output_schema"]).read_text(encoding="utf-8")
+        ),
+        consumes=tuple(action["consumes"]),
+        produces=tuple(action["produces"]),
+        effects=tuple(action["effects"]),
+        determinism=action["determinism"],
+        capabilities=tuple(action["capabilities"]),
+        limits=action["limits"],
+        package_root=package_root,
+        entrypoint=WORKER,
+        entrypoint_digest="sha256:" + "d" * 64,
+        execution_kind="builtin",
+        execution_handler="ocr",
+        runtime_assets=(asset,),
+        model_binding=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ocr_runtime_tool_e2e_persists_text_and_json_artifacts(tmp_path: Path) -> None:
+    source = tmp_path / "receipt.png"
+    source.write_bytes(b"fake png")
+    asset = fake_asset(tmp_path)
+    descriptor = action_descriptor(tmp_path, asset)
+    store = await LocalStore.open(tmp_path / "runtime.db")
+    run = await store.create_run(
+        principal_id=LOCAL_OWNER_PRINCIPAL_ID,
+        goal="recognize the receipt",
+        workspace_path=None,
+    )
+    context = RuntimeContext(
+        store=store,
+        run_id=str(run["id"]),
+        plugin_inputs=(
+            {
+                "id": "receipt",
+                "path": "/input/source/receipt.png",
+                "media_type": "image/png",
+                "size_bytes": source.stat().st_size,
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "source_path": str(source),
+            },
+        ),
+    )
+    executor = OCRActionExecutor(descriptor.package_root, asset)
+    try:
+        result = await PluginToolAdapter(executor_factory=lambda _action: executor).invoke(
+            descriptor,
+            {
+                "input_ids": ["receipt"],
+                "minimum_confidence": 0.5,
+                "max_lines": 100,
+                "max_characters": 1_000,
+                "include_text_artifact": True,
+                "include_json_artifact": True,
+            },
+            RuntimeToolExecution(
+                context=context,
+                operation_id="toolop_ocr",
+                tool_call_id="call_ocr",
+            ),
+        )
+    finally:
+        await store.close()
+
+    assert result["status"] == "succeeded"
+    assert result["output"]["images"][0]["full_text"] == "page 1 primary"
+    assert [artifact["name"] for artifact in result["artifacts"]] == [
+        "ocr.txt",
+        "ocr.json",
+    ]
+    assert result["provenance"]["runtime_assets"] == [
+        {
+            "id": "org.rapidocr.runtime",
+            "version": "3.9.1+ppocrv6-medium.1",
+            "digest": "sha256:" + "a" * 64,
+            "platform": "darwin/arm64",
+        }
+    ]
 
 
 @pytest.mark.asyncio

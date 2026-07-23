@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PLATFORMS = (
+    "darwin/arm64",
     "linux/arm64",
     "linux/amd64",
     "windows/arm64",
@@ -67,7 +68,6 @@ def main() -> None:
         manifest = (ROOT / ".shejane-plugin" / "plugin.template.json").read_text(encoding="utf-8")
         manifest = (
             manifest.replace("__PLUGIN_VERSION__", args.version)
-            .replace("__ENTRYPOINT__", entrypoint)
             .replace("__PLATFORM__", args.platform)
             .replace("__RUNTIME_ASSET_DIGEST__", args.runtime_asset_digest)
         )

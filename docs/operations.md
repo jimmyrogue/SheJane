@@ -103,7 +103,7 @@ Runtime 接受单个 `.shejane-plugin` ZIP，通过 `plugin.install` Command 安
 
 第三方插件以 `.shejane-plugin` 文件分发。用户下载、接收或自行构建后，从“插件”页本地导入；Runtime 不维护远程插件来源、索引或来源公钥。普通插件继续执行上述签名或未签名确认策略。
 
-Computer Use 是 Runtime 随应用提供的固定能力，不属于外部插件分发面。Runtime 只自动接纳构建时固定的 `org.shejane.computer-use` 版本、平台和 `computer_use` 适配器；外部安装、更新、回滚和移除都会被拒绝，因此不再要求用户确认该内置包的发布者签名。包仍进入内容寻址存储并冻结到 Run，不能携带另一种宿主执行器。
+Computer Use、Browser QA 和 OCR 是 Runtime 随应用提供的固定能力，不属于外部插件分发面。Runtime 只自动接纳构建时固定的身份、版本、平台和 `computer_use` / `browser_qa` / `ocr` 适配器；外部安装、更新、回滚和移除都会被拒绝，因此不要求用户确认这些内置包的发布者签名。包和 OCR Runtime Asset 仍进入内容寻址存储并冻结到 Run，不能携带另一种宿主执行器。
 
 macOS 首版固定 `injaneity/pi-computer-use` 提交 `9f59ed0eeac09b115897732c46b794ee8ca4e5b0`（0.5.0/MIT），只向模型暴露八个 state-scoped 桌面 Action。启用时由“插件”页依次完成 Helper、屏幕录制、辅助功能三步；每次用户操作最多触发一个系统授权，返回 SheJane 后自动复检。安装器把 Helper 固定在 `~/Applications/pi-computer-use.app`，并保留稳定的 macOS 代码签名身份；这里不能用“内置包免验签”替代 Helper 签名，否则系统可能把升级后的 Helper 视为新应用并重复要求 TCC 授权。每个 Run 只保持一个服务，P11 关闭；所有桌面 Action 继续经过参数校验、审批和持久回执。当前只完成 macOS arm64，其他平台不属于已发布能力。
 
@@ -131,7 +131,7 @@ Media Foundation 现在有真实 `linux/arm64` 执行候选：`org.ffmpeg.runtim
 
 PDF 插件现在有 `linux/arm64` 真实执行候选：独立 `org.mupdf.runtime` 从固定 SHA-256 的官方 HTTPS MuPDF 1.27.2 源码构建（上游未提供与 FFmpeg 相同的 PGP 验证流程），冻结 Debian OCI/toolchain/package closure，离线双构建，并携带完整对应源码、许可、SBOM 与 build provenance。Asset 归档逐字节一致；冻结 onedir Worker 已在 macOS arm64 的生产 VM 中通过 inspect、Unicode 页窗文本、无文本层 OCR 标记、精确选页 PNG golden、hostile/truncated corpus、中途取消无部分输出和取消后重放。最终签名/公证 `.app` 的动态 VM Gate 已保留给 self-hosted Mac；真实 release runner、Linux amd64、Windows 尚未完成，所以仍不是已发布产品能力。详见 `docs/plugins/phase6-pdf-research.md`。
 
-OCR 现在也有真实 `linux/arm64` 候选：`org.rapidocr.runtime` 固定 RapidOCR 3.9.1、ONNX Runtime 1.27.0、PP-OCRv6 medium、CPU 单线程和三个精确模型，离线构建并拒绝 Tesseract/Leptonica。完整 Asset 双构建一致（archive `c2e86a0a...23cb`，canonical asset `sha256:5a11d711...b148`）；冻结 Worker 已在生产 VM 中通过确定性重放、中英文、低对比度、多栏、手写风格、180° 方向、hostile 图片、取消无部分输出和取消后重放。最终 `.app` 动态 Gate 已保留给 self-hosted Mac，但尚无真实签名/公证执行证据；日文/真实手写广度及其他平台仍需独立 Gate，所以 Registry 继续关闭。详见 `docs/plugins/phase6-ocr-research.md`。
+OCR 的固定 macOS arm64 路径使用原生、内容锁定的 `org.rapidocr.runtime`：RapidOCR 3.9.1、ONNX Runtime 1.27.0、PP-OCRv6 medium、CPU provider 和三个精确模型，离线双构建并拒绝 Tesseract/Leptonica。受信任的固定 OCR Worker 由 `ocr` host adapter 启动，输入仍由 Runtime 物化，输出仍经严格 schema 和 Artifact 提升；它不会绕过或打开第三方 Managed Worker 的 VM release gate。Linux/arm64 VM 候选及其多语言、布局、方向、hostile-input 与取消 Gate 继续保留作独立平台验证。详见 `docs/plugins/phase6-ocr-research.md`。
 
 Speech 现在有真实 `linux/arm64` 候选：`speech.transcribe` 固定 `whisper.cpp 1.8.6`、`large-v3-turbo Q5_0`、CPU 单线程 greedy，并复用精确 FFmpeg 资产做 16 kHz 单声道 PCM 归一化。官方 checkpoint 转换/量化模型 SHA-256 固定为 `39422170...a7e2`；两份 525 MiB Asset 完全一致（archive `883900b6...5cdd`，canonical asset `sha256:dc6ec9da...4f11`）。生产 VM 已通过重复转写/Artifact hash、显式中英文、带背景噪声/双音干扰和四秒停顿的日文 `auto`、66.7 秒且 45% 音量的印度英语技术长文、hostile 音频、取消清理、300 秒双运行预算，以及真实 Media→Speech 文件 Artifact 组合；引擎报告 7,200,001ms 会在 Artifact 创建前拒绝。专名仍可能误识别，`initial_prompt` 不提供词典保证；真实音乐、混合语种/拉丁文字、真实编码两小时边界及过量输出仍待补。最终 `.app` 动态 Gate 已保留给 self-hosted Mac，但真实签名/公证 runner 尚未运行，因此不得宣称为已发布能力。详见 `docs/plugins/phase6-speech-research.md`。
 

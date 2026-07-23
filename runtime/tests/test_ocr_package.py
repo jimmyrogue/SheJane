@@ -19,12 +19,12 @@ def test_ocr_manifest_and_action_schemas_are_strict() -> None:
     template = (ROOT / ".shejane-plugin" / "plugin.template.json").read_text(encoding="utf-8")
     manifest = PluginManifest.model_validate_json(
         template.replace("__PLUGIN_VERSION__", "0.1.0")
-        .replace("__ENTRYPOINT__", "payload/ocr-worker")
-        .replace("__PLATFORM__", "linux/arm64")
+        .replace("__PLATFORM__", "darwin/arm64")
         .replace("__RUNTIME_ASSET_DIGEST__", "sha256:" + "a" * 64)
     )
 
-    assert manifest.runtime.execution.kind == "managed_worker"
+    assert manifest.runtime.execution.kind == "builtin"
+    assert manifest.runtime.execution.handler == "ocr"
     assert manifest.runtime.execution.runtime_assets[0].id == "org.rapidocr.runtime"
     assert {action.id for action in manifest.contributions.actions} == {"ocr.recognize_images"}
     for action in manifest.contributions.actions:
@@ -47,7 +47,7 @@ def test_ocr_package_is_deterministic_and_preserves_onedir_worker(tmp_path: Path
                 sys.executable,
                 str(BUILDER),
                 "--platform",
-                "linux/arm64",
+                "darwin/arm64",
                 "--runtime-asset-digest",
                 "sha256:" + "a" * 64,
                 "--worker",
@@ -62,6 +62,6 @@ def test_ocr_package_is_deterministic_and_preserves_onedir_worker(tmp_path: Path
     extracted = tmp_path / "extracted"
     extract_plugin_archive(outputs[0], extracted)
     manifest = load_plugin_manifest(extracted)
-    assert manifest.runtime.execution.platforms == ["linux/arm64"]
+    assert manifest.runtime.execution.platforms == ["darwin/arm64"]
     assert (extracted / "payload/ocr-worker").read_bytes() == b"worker"
     assert (extracted / "payload/_internal/libpython.so").read_bytes() == b"library"

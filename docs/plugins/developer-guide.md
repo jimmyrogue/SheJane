@@ -7,7 +7,7 @@ A SheJane plugin packages one or more deterministic Actions. Developers choose t
 - choose **WASI** for focused transformations with a small dependency surface;
 - choose **Managed Worker** for native libraries, Python/Node ecosystems, or heavyweight document and media processing.
 
-The first-party [Computer Use plugin](../../runtime/plugins/computer-use) demonstrates the reserved `builtin` form. Its package supplies immutable schemas and pinned upstream assets, while the Runtime owns the only allowed host adapter and P11 lifecycle.
+The first-party [Computer Use](../../runtime/plugins/computer-use), [Browser QA](../../runtime/plugins/browser-qa), and [OCR](../../runtime/plugins/ocr) plugins demonstrate the reserved `builtin` form. Their packages supply immutable schemas and pinned assets, while the Runtime owns the only allowed host adapters and P11 lifecycle. External packages cannot claim these identities or handlers.
 
 This is not an “official versus community” distinction. Every package follows the same manifest, Action, authorization, receipt, and Artifact rules.
 

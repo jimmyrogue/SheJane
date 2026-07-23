@@ -87,6 +87,8 @@ build-runtime: ## Sync the Python Runtime environment
 
 package-runtime: ## Freeze Runtime into runtime/dist/shejane-runtime/
 	./scripts/build-computer-use-builtin.sh
+	./scripts/build-browser-qa-builtin.sh
+	./scripts/build-ocr-builtin.sh
 	./scripts/build-linux-managed-worker-launcher.sh
 	cd runtime && uv run python -m PyInstaller shejane-runtime.spec --noconfirm --clean
 	@echo "✅ Runtime frozen → runtime/dist/shejane-runtime/ (run it on THIS OS/arch only)"

@@ -95,6 +95,30 @@ if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64
     if not computer_use_package.is_file():
         raise SystemExit("Computer Use fixed capability package must be built before PyInstaller")
     datas.append((str(computer_use_package), "builtin-plugins"))
+    browser_qa_package = Path(
+        "plugins/browser-qa/dist/browser-qa-0.1.0-darwin-arm64.shejane-plugin"
+    )
+    if not browser_qa_package.is_file():
+        raise SystemExit("Browser QA fixed capability package must be built before PyInstaller")
+    datas.append((str(browser_qa_package), "builtin-plugins"))
+    browser_qa_runtime_asset = Path(
+        "plugins/browser-qa/dist/browser-qa-runtime-1.61.1-darwin-arm64.shejane-runtime-asset"
+    )
+    if not browser_qa_runtime_asset.is_file():
+        raise SystemExit("Browser QA fixed Runtime Asset must be built before PyInstaller")
+    datas.append((str(browser_qa_runtime_asset), "builtin-assets"))
+    ocr_package = Path(
+        "plugins/ocr/dist/ocr-0.1.0-darwin-arm64.shejane-plugin"
+    )
+    if not ocr_package.is_file():
+        raise SystemExit("OCR fixed capability package must be built before PyInstaller")
+    datas.append((str(ocr_package), "builtin-plugins"))
+    ocr_runtime_asset = Path(
+        "plugins/ocr/dist/rapidocr-runtime-3.9.1-darwin-arm64.shejane-runtime-asset"
+    )
+    if not ocr_runtime_asset.is_file():
+        raise SystemExit("RapidOCR fixed Runtime Asset must be staged before PyInstaller")
+    datas.append((str(ocr_runtime_asset), "builtin-assets"))
 # uvicorn loads its loop / protocol / lifespan implementations dynamically.
 hiddenimports += collect_submodules("uvicorn")
 
@@ -106,9 +130,8 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    # The agentic-browser feature is optional + stubbed (see pyproject
-    # [project.optional-dependencies].browser); never bundle it in the desktop
-    # build even if a dev froze from an env that has it installed.
+    # Browser QA carries pinned Playwright code and Chromium in its fixed package
+    # and Runtime Asset. Never absorb a developer's ambient copy into Runtime.
     excludes=["browser_use", "playwright"],
     noarchive=False,
 )

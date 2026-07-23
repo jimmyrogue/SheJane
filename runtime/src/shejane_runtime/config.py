@@ -33,6 +33,53 @@ def default_computer_use_package() -> Path | None:
     return package if package.is_file() else None
 
 
+def default_browser_qa_package() -> Path | None:
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if not frozen_root:
+        return None
+    host = f"{sys.platform}-{'arm64' if platform.machine().lower() in {'arm64', 'aarch64'} else 'amd64'}"
+    package = Path(frozen_root) / "builtin-plugins" / f"browser-qa-0.1.0-{host}.shejane-plugin"
+    return package if package.is_file() else None
+
+
+def default_browser_qa_runtime_asset() -> Path | None:
+    if sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+        return None
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if not frozen_root:
+        return None
+    asset = (
+        Path(frozen_root)
+        / "builtin-assets"
+        / "browser-qa-runtime-1.61.1-darwin-arm64.shejane-runtime-asset"
+    )
+    return asset if asset.is_file() else None
+
+
+def default_ocr_package() -> Path | None:
+    if sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+        return None
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if not frozen_root:
+        return None
+    package = Path(frozen_root) / "builtin-plugins" / "ocr-0.1.0-darwin-arm64.shejane-plugin"
+    return package if package.is_file() else None
+
+
+def default_ocr_runtime_asset() -> Path | None:
+    if sys.platform != "darwin" or platform.machine().lower() not in {"arm64", "aarch64"}:
+        return None
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if not frozen_root:
+        return None
+    asset = (
+        Path(frozen_root)
+        / "builtin-assets"
+        / "rapidocr-runtime-3.9.1-darwin-arm64.shejane-runtime-asset"
+    )
+    return asset if asset.is_file() else None
+
+
 def clamp_run_budget(field: str, value: int) -> int:
     lower, upper = RUN_BUDGET_LIMITS[field]
     return max(lower, min(upper, value))
@@ -79,9 +126,19 @@ class Settings(BaseSettings):
     managed_worker_vm_assets: Path | None = None
     managed_worker_linux_assets: Path | None = None
     computer_use_package: Path | None = Field(default_factory=default_computer_use_package)
+    browser_qa_package: Path | None = Field(default_factory=default_browser_qa_package)
+    browser_qa_runtime_asset: Path | None = Field(default_factory=default_browser_qa_runtime_asset)
+    ocr_package: Path | None = Field(default_factory=default_ocr_package)
+    ocr_runtime_asset: Path | None = Field(default_factory=default_ocr_runtime_asset)
 
     @field_validator(
-        "managed_worker_vm_assets", "managed_worker_linux_assets", "computer_use_package"
+        "managed_worker_vm_assets",
+        "managed_worker_linux_assets",
+        "computer_use_package",
+        "browser_qa_package",
+        "browser_qa_runtime_asset",
+        "ocr_package",
+        "ocr_runtime_asset",
     )
     @classmethod
     def require_absolute_vm_assets(cls, value: Path | None) -> Path | None:

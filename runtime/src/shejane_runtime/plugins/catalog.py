@@ -12,9 +12,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from .browser_qa import is_allowed_browser_qa_package
 from .computer_use import is_allowed_computer_use_package
 from .identity import plugin_action_catalog_hash
 from .manifest import load_plugin_manifest
+from .ocr import is_allowed_ocr_package
 from .package import InvalidPluginPackage, canonical_package_digest
 from .platforms import current_managed_worker_execution_platform, current_managed_worker_platform
 from .runtime_assets import RuntimeAssetHandle, RuntimeAssetStore
@@ -59,6 +61,7 @@ class PluginActionDescriptor:
     entrypoint: Path
     entrypoint_digest: str
     execution_kind: str
+    execution_handler: str | None
     runtime_assets: tuple[RuntimeAssetHandle, ...]
     model_binding: Mapping[str, Any] | None
 
@@ -183,20 +186,43 @@ class PluginCatalog:
                 _freeze_mapping(raw_model_binding) if isinstance(raw_model_binding, dict) else None
             )
             package_runtime_assets: tuple[RuntimeAssetHandle, ...] = ()
+            execution_platform: str | None = None
             if execution["kind"] == "managed_worker":
-                current_platform = current_managed_worker_execution_platform()
-                if current_platform is None or execution["platforms"] != [current_platform]:
+                execution_platform = current_managed_worker_execution_platform()
+                if execution_platform is None or execution["platforms"] != [execution_platform]:
                     raise PluginCatalogError(
                         "plugin_platform_incompatible",
                         f"plugin {binding['plugin_id']} does not target this platform",
                     )
+            elif execution["kind"] == "builtin":
+                identity = {
+                    "plugin_id": str(binding["plugin_id"]),
+                    "version": str(binding["version"]),
+                    "handler": str(execution["handler"]),
+                }
+                if not (
+                    is_allowed_computer_use_package(**identity)
+                    or is_allowed_browser_qa_package(**identity)
+                    or is_allowed_ocr_package(**identity)
+                ):
+                    raise PluginCatalogError(
+                        "plugin_version_unavailable",
+                        f"plugin {binding['plugin_id']} is not an allowlisted built-in package",
+                    )
+                execution_platform = current_managed_worker_platform()
+                if execution_platform is None or execution["platforms"] != [execution_platform]:
+                    raise PluginCatalogError(
+                        "plugin_platform_incompatible",
+                        f"plugin {binding['plugin_id']} does not target this host platform",
+                    )
+            if execution_platform is not None:
                 resolved_assets: list[RuntimeAssetHandle] = []
                 for reference in execution.get("runtime_assets", []):
                     try:
                         asset = self._runtime_assets.resolve(
                             asset_id=str(reference["id"]),
                             version=str(reference["version"]),
-                            platform=current_platform,
+                            platform=execution_platform,
                             digest=str(reference["digest"]),
                         )
                     except InvalidPluginPackage as exc:
@@ -207,21 +233,6 @@ class PluginCatalog:
                     runtime_assets_by_digest.setdefault(asset.digest, asset)
                     resolved_assets.append(asset)
                 package_runtime_assets = tuple(resolved_assets)
-            elif execution["kind"] == "builtin":
-                if not is_allowed_computer_use_package(
-                    plugin_id=str(binding["plugin_id"]),
-                    version=str(binding["version"]),
-                    handler=str(execution["handler"]),
-                ):
-                    raise PluginCatalogError(
-                        "plugin_version_unavailable",
-                        f"plugin {binding['plugin_id']} is not an allowlisted built-in package",
-                    )
-                if execution["platforms"] != [current_managed_worker_platform()]:
-                    raise PluginCatalogError(
-                        "plugin_platform_incompatible",
-                        f"plugin {binding['plugin_id']} does not target this host platform",
-                    )
             entrypoint = package_root / execution.get("entrypoint", ".shejane-plugin/plugin.json")
             packages.append(
                 PluginPackageHandle(
@@ -262,6 +273,9 @@ class PluginCatalog:
                         entrypoint=entrypoint,
                         entrypoint_digest=_file_digest(entrypoint),
                         execution_kind=str(execution["kind"]),
+                        execution_handler=(
+                            str(execution["handler"]) if execution["kind"] == "builtin" else None
+                        ),
                         runtime_assets=package_runtime_assets,
                         model_binding=model_binding,
                     )

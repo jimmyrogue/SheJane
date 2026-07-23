@@ -19,6 +19,7 @@ from langgraph.config import get_stream_writer
 
 from ..store.sqlite import LocalStore
 from ..tools.runtime import RuntimeToolExecution, current_runtime_tool_execution
+from .browser_qa import BrowserQAError
 from .catalog import PluginActionDescriptor
 from .computer_use import ComputerUseError
 from .executor import ActionExecutor, ManagedWorkerActionExecutor, WasiActionExecutor
@@ -37,6 +38,8 @@ _V1_PLATFORM_CAPABILITIES = frozenset(
     {
         "input.read",
         "artifact.write",
+        "browser.control",
+        "browser.observe",
         "model.vision.invoke",
         "computer.observe",
         "computer.control",
@@ -227,6 +230,8 @@ class PluginToolAdapter:
                     "protocol_violation",
                     "Managed Worker violated the execution protocol",
                 ) from exc
+            except BrowserQAError as exc:
+                raise PluginActionError("browser_qa_failed", str(exc)) from exc
             except ComputerUseError as exc:
                 raise PluginActionError("computer_use_failed", str(exc)) from exc
             _validate_result_identity(result, invocation)
@@ -291,7 +296,17 @@ class PluginToolAdapter:
                 "provenance": provenance,
             }
             images = output.get("images") if isinstance(output, dict) else None
-            if action.execution_kind == "builtin" and isinstance(images, list) and images:
+            model_images = (
+                isinstance(images, list)
+                and bool(images)
+                and all(
+                    isinstance(image, dict)
+                    and isinstance(image.get("base64"), str)
+                    and isinstance(image.get("mime_type"), str)
+                    for image in images
+                )
+            )
+            if action.execution_kind == "builtin" and model_images:
                 text_output = dict(output)
                 del text_output["images"]
                 response["output"] = text_output
